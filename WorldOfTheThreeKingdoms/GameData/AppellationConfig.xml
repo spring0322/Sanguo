@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<AppellationConfig>
+  <!-- 
+    Rule Types:
+    - FactionRank: Compare faction.guanjue. Value "Max" (Emperor), "MaxMinusOne" (King).
+    - Relation: Check relationship. Values: "Father", "SwornBrother", "ClosePerson" (for Zi).
+    - Identity: Check identity. Value: "Leader".
+    
+    Priority determines order of checking (Lower number = Higher priority).
+  -->
+
+  <!-- 皇帝 -->
+  <Rule Priority="10">
+    <ConditionType>FactionRank</ConditionType>
+    <ConditionValue>Max</ConditionValue>
+    <Address>陛下</Address>
+    <SelfAddress>微臣</SelfAddress>
+  </Rule>
+  
+  <!-- 王 -->
+  <Rule Priority="20">
+    <ConditionType>FactionRank</ConditionType>
+    <ConditionValue>MaxMinusOne</ConditionValue>
+    <Address>大王</Address>
+    <SelfAddress>臣</SelfAddress>
+  </Rule>
+
+  <!-- 主公 (Default for Leader if not Emperor/King, checked after Relations) -->
+  <Rule Priority="30">
+    <ConditionType>Identity</ConditionType>
+    <ConditionValue>Leader</ConditionValue>
+    <Address>主公</Address>
+    <SelfAddress>臣</SelfAddress>
+  </Rule>
+
+  <!-- 父亲 (Higher priority than Leader) -->
+  <Rule Priority="24">
+    <ConditionType>Relation</ConditionType>
+    <ConditionValue>Father</ConditionValue>
+    <Address>父亲</Address>
+    <SelfAddress>儿</SelfAddress>
+  </Rule>
+  
+  <!-- 我儿 (Son addressing) -->
+  <Rule Priority="45">
+    <ConditionType>Relation</ConditionType>
+    <ConditionValue>Son</ConditionValue>
+    <Address>我儿</Address> 
+    <SelfAddress>为父</SelfAddress>
+  </Rule>
+
+  <!-- 义兄弟 (Higher priority than Leader) -->
+  <Rule Priority="25">
+    <ConditionType>Relation</ConditionType>
+    <ConditionValue>SwornBrother</ConditionValue>
+    <Address>义兄</Address> 
+    <SelfAddress>愚弟</SelfAddress>
+  </Rule>
+
+  <!-- 亲近武将 (表字) -->
+  <Rule Priority="60">
+    <ConditionType>Relation</ConditionType>
+    <ConditionValue>ClosePerson</ConditionValue>
+    <Address>Zi</Address> <!-- "Zi" is keyword to use Courtesy Name -->
+    <SelfAddress>我</SelfAddress>
+  </Rule>
+
+</AppellationConfig>

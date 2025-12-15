@@ -1,0 +1,365 @@
+
+        #region 智能流言系统
+
+        /// <summary>
+        /// 触发智能流言流程
+        /// </summary>
+        public void TriggerIntelligentGossip()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[TriggerIntelligentGossip] 开始智能流言流程");
+                
+                var faction = Session.Current.Scenario.CurrentPlayer;
+                if (faction == null) 
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentGossip] 当前玩家势力为null，退出");
+                    return;
+                }
+
+                Architecture sourceArchitecture = this.CurrentArchitecture;
+                
+                if (sourceArchitecture == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentGossip] 执行建筑为null，退出");
+                    return;
+                }
+
+                if (sourceArchitecture.BelongedFaction != faction)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentGossip] 执行建筑不属于当前玩家，退出");
+                    return;
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentGossip] 执行建筑: {sourceArchitecture.Name}");
+
+                // 获取所有可能的流言目标建筑
+                ArchitectureList gossipTargets = GetAllPossibleGossipTargets(sourceArchitecture, faction);
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentGossip] 所有可能的目标建筑数量: {gossipTargets.Count}");
+                
+                if (gossipTargets.Count == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentGossip] 没有可流言的目标建筑");
+                    ShowNoGossipTargetsDialog(faction);
+                    return;
+                }
+                
+                // 第一步：让玩家选择要流言的目标建筑
+                System.Diagnostics.Debug.WriteLine("[TriggerIntelligentGossip] 显示目标建筑选择界面");
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.Architecture, 
+                    FrameFunction.GetGossipTargetForAnalysis, // 选择目标后进行军师分析
+                    false, true, true, false, 
+                    gossipTargets, 
+                    null, 
+                    "选择流言目标", 
+                    "Architecture"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentGossip] 错误: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentGossip] 堆栈: {ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// 获取所有可能的流言目标建筑
+        /// </summary>
+        private ArchitectureList GetAllPossibleGossipTargets(Architecture sourceArchitecture, Faction playerFaction)
+        {
+            ArchitectureList targets = new ArchitectureList();
+
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetAllPossibleGossipTargets] 开始获取目标，执行建筑: {sourceArchitecture.Name}");
+                
+                // 遍历所有建筑，查找敌方建筑
+                foreach (Architecture architecture in Session.Current.Scenario.Architectures)
+                {
+                    // 只能对敌方建筑使用流言
+                    if (!sourceArchitecture.IsFriendly(architecture.BelongedFaction) && architecture.BelongedFaction != null)
+                    {
+                        targets.Add(architecture);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetAllPossibleGossipTargets] 错误: {ex.Message}");
+            }
+            
+            return targets;
+        }
+
+        /// <summary>
+        /// 【第二步】玩家选择目标后，进行军师分析和智能推荐执行人员
+        /// </summary>
+        public void PerformGossipAnalysisAndRecommendation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[PerformGossipAnalysisAndRecommendation] 开始军师分析");
+                
+                var faction = Session.Current.Scenario.CurrentPlayer;
+                var targetArchitecture = this.CurrentArchitecture; // 玩家选择的目标建筑
+                
+                // 获取执行流言的建筑
+                // 修复：优先使用已设置的CurrentSourceArchitecture
+                Architecture sourceArchitecture = this.CurrentSourceArchitecture;
+                if (sourceArchitecture == null && faction.Architectures.Count > 0)
+                {
+                    sourceArchitecture = faction.Architectures[0] as Architecture;
+                }
+                
+                if (targetArchitecture == null || sourceArchitecture == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformGossipAnalysisAndRecommendation] 目标建筑或源建筑为null");
+                    return;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[PerformGossipAnalysisAndRecommendation] 流言目标: {targetArchitecture.Name}");
+                System.Diagnostics.Debug.WriteLine($"[PerformGossipAnalysisAndRecommendation] 执行建筑: {sourceArchitecture.Name}");
+
+                // 获取军师（智力最高的人物）
+                var advisor = GetBestAdvisor(sourceArchitecture);
+                if (advisor == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformGossipAnalysisAndRecommendation] 没有找到军师，直接显示人员选择");
+                    ShowExecutorSelectionForGossip(sourceArchitecture, targetArchitecture);
+                    return;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[PerformGossipAnalysisAndRecommendation] 军师: {advisor.Name} (智力: {advisor.Intelligence})");
+
+                // 进行军师分析
+                var analysisResult = PerformGossipAnalysis(advisor, targetArchitecture, sourceArchitecture);
+                
+                System.Diagnostics.Debug.WriteLine($"[PerformGossipAnalysisAndRecommendation] 分析结果: 推荐执行人员={analysisResult.BestCandidate?.Name ?? "无"}, 预测成功率={analysisResult.BestScore}%");
+
+                // 根据分析结果决定下一步
+                if (analysisResult.BestScore >= 60)
+                {
+                    ShowAdvisorGossipSupport(analysisResult, sourceArchitecture);
+                }
+                else if (analysisResult.BestScore >= 30)
+                {
+                    ShowAdvisorGossipSupport(analysisResult, sourceArchitecture);
+                }
+                else
+                {
+                    ShowAdvisorGossipDissuasion(analysisResult, sourceArchitecture);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformGossipAnalysisAndRecommendation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 执行军师流言分析
+        /// </summary>
+        private GossipAnalysisResult PerformGossipAnalysis(Person advisor, Architecture target, Architecture sourceArchitecture)
+        {
+            var result = new GossipAnalysisResult
+            {
+                TargetArchitecture = target,
+                Advisor = advisor
+            };
+
+            Person bestCandidate = null;
+            int bestScore = 0;
+
+            // 分析每个可能的执行人员
+            foreach (Person candidate in sourceArchitecture.PersonsExcludeNvGuan)
+            {
+                // 计算实际成功率 (流言通常与智力或魅力有关，此处假设主要看智力)
+                int actualScore = CalculateGossipSuccessRate(candidate, target);
+                
+                if (actualScore > bestScore)
+                {
+                    bestScore = actualScore;
+                    bestCandidate = candidate;
+                }
+            }
+
+            result.BestCandidate = bestCandidate;
+            result.BestScore = bestScore;
+            result.HasSuitableCandidate = bestScore >= 50; 
+
+            return result;
+        }
+
+        /// <summary>
+        /// 计算流言成功率 (简化算法)
+        /// </summary>
+        private int CalculateGossipSuccessRate(Person executor, Architecture target)
+        {
+            // 假设流言主要依赖执行者的智力与目标的民心/治安/统治度
+            // 如果Person有GossipAbility则用之，否则用Intelligence
+            int executorAbility = executor.Intelligence; 
+            int targetDefense = target.Domination; 
+            
+            if (executorAbility <= 50) return 0; // 能力太低
+            
+            // 简单的对抗公式
+            double successRate = (double)executorAbility / (executorAbility + targetDefense * 0.5) * 100;
+            return Math.Max(0, Math.Min(100, (int)successRate));
+        }
+
+        /// <summary>
+        /// 显示军师支持流言的对话
+        /// </summary>
+        private void ShowAdvisorGossipSupport(GossipAnalysisResult result, Architecture sourceArchitecture)
+        {
+            if (this.Plugins?.tupianwenziPlugin == null)
+            {
+                ShowExecutorSelectionWithGossipRecommendation(sourceArchitecture, result.TargetArchitecture, result.BestCandidate);
+                return;
+            }
+
+            string message;
+            if (result.BestCandidate != null)
+            {
+                message = $"{result.Advisor.Name}：主公，{result.TargetArchitecture.Name}人心浮动。若派{result.BestCandidate.Name}前往散布流言，定能成功。";
+            }
+            else
+            {
+                message = $"{result.Advisor.Name}：主公，{result.TargetArchitecture.Name}防备松懈，我军可派人前往散布流言，动摇其军心。";
+            }
+
+            this.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                result.Advisor, 
+                result.Advisor, 
+                message, 
+                "听取建议", 
+                "暂时罢了", 
+                ""
+            );
+            
+            // 设置回调
+            this.Plugins.tupianwenziPlugin.SetBranchEvent(
+                () => ShowExecutorSelectionWithGossipRecommendation(sourceArchitecture, result.TargetArchitecture, result.BestCandidate), // 听取建议 -> 显示带推荐的选择界面
+                () => { System.Diagnostics.Debug.WriteLine("玩家取消流言操作"); } // 暂时罢了 -> 取消
+            );
+
+            this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
+            this.Plugins.tupianwenziPlugin.IsShowing = true;
+        }
+
+        /// <summary>
+        /// 显示军师劝阻流言的对话
+        /// </summary>
+        private void ShowAdvisorGossipDissuasion(GossipAnalysisResult result, Architecture sourceArchitecture)
+        {
+            if (this.Plugins?.tupianwenziPlugin == null)
+            {
+                ShowExecutorSelectionForGossip(sourceArchitecture, result.TargetArchitecture);
+                return;
+            }
+
+            string message = $"{result.Advisor.Name}：主公，{result.TargetArchitecture.Name}统治稳固，此时流言恐怕难以奏效，甚至可能打草惊蛇。";
+
+            this.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                result.Advisor, 
+                result.Advisor, 
+                message, 
+                "仍要尝试", 
+                "听从建议", 
+                ""
+            );
+            
+            // 设置回调
+            this.Plugins.tupianwenziPlugin.SetBranchEvent(
+                () => ShowExecutorSelectionForGossip(sourceArchitecture, result.TargetArchitecture), // 仍要尝试 -> 显示普通选择界面
+                () => { System.Diagnostics.Debug.WriteLine("玩家听从劝阻取消流言"); } // 听从建议 -> 取消
+            );
+
+            this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
+            this.Plugins.tupianwenziPlugin.IsShowing = true;
+        }
+
+        /// <summary>
+        /// 显示执行人员选择界面（带推荐）
+        /// </summary>
+        private void ShowExecutorSelectionWithGossipRecommendation(Architecture sourceArchitecture, Architecture targetArchitecture, Person recommendedPerson)
+        {
+            try
+            {
+                var preSelectedList = new GameObjectList();
+                if (recommendedPerson != null)
+                    preSelectedList.Add(recommendedPerson);
+                
+                this.Plugins.TabListPlugin.SetSelectedItemMaxCount(sourceArchitecture.GossipPersonMaxCount);
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.Person, 
+                    FrameFunction.PersonManualHire,  // 统一使用PersonManualHire
+                    true, true, true, true,
+                    sourceArchitecture.PersonsExcludeNvGuan, 
+                    preSelectedList,
+                    $"流言 {targetArchitecture.Name}（军师推荐：{recommendedPerson?.Name}）", 
+                    "流言"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowExecutorSelectionWithGossipRecommendation] 错误: {ex.Message}");
+                ShowExecutorSelectionForGossip(sourceArchitecture, targetArchitecture);
+            }
+        }
+
+        /// <summary>
+        /// 显示执行人员选择界面（普通）
+        /// </summary>
+        private void ShowExecutorSelectionForGossip(Architecture sourceArchitecture, Architecture targetArchitecture)
+        {
+            try
+            {
+                this.Plugins.TabListPlugin.SetSelectedItemMaxCount(sourceArchitecture.GossipPersonMaxCount);
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.Person, 
+                    FrameFunction.PersonManualHire, // 统一使用PersonManualHire
+                    true, true, true, true,
+                    sourceArchitecture.PersonsExcludeNvGuan, 
+                    null, 
+                    $"流言 {targetArchitecture.Name}", 
+                    "流言"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowExecutorSelectionForGossip] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 显示没有可流言目标的对话框
+        /// </summary>
+        private void ShowNoGossipTargetsDialog(Faction faction)
+        {
+            try
+            {
+                Person speaker = faction.Advisor ?? faction.Leader;
+                if (speaker == null || this.Plugins?.tupianwenziPlugin == null)
+                    return;
+
+                string message = $"{speaker.Name}：主公，此地并无可施展流言的敌方势力。";
+
+                this.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                    speaker, speaker, message, "知道了", "", ""
+                );
+                this.Plugins.tupianwenziPlugin.SetBranchEvent(null, null);
+                this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
+                this.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowNoGossipTargetsDialog] 错误: {ex.Message}");
+            }
+        }
+
+        #endregion

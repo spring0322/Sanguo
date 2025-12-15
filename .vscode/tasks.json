@@ -1,0 +1,68 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/.vscode/build_with_vs_msbuild.ps1",
+                "-SolutionPath",
+                "${workspaceFolder}/WorldOfTheThreeKingdoms/WorldOfTheThreeKingdoms.csproj",
+                "-Configuration",
+                "Debug",
+                "-Platform",
+                "x86"
+            ],
+            "problemMatcher": ["$msCompile"],
+            "options": { "cwd": "${workspaceFolder}" }
+        },
+        {
+            "label": "run-game-debug",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/.vscode/run_game.ps1",
+                "-ExePath",
+                "${workspaceFolder}/WorldOfTheThreeKingdoms/bin/Win/WorldOfTheThreeKingdoms.exe"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "build-and-run",
+            "dependsOn": [
+                "build",
+                "run-game-debug"
+            ],
+            "dependsOrder": "sequence"
+        },
+        {
+            "label": "build-release",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/.vscode/build_with_vs_msbuild.ps1",
+                "-SolutionPath",
+                "${workspaceFolder}/WorldOfTheThreeKingdoms/WorldOfTheThreeKingdoms.csproj",
+                "-Configuration",
+                "Release",
+                "-Platform",
+                "x86"
+            ],
+            "problemMatcher": ["$msCompile"],
+            "options": { "cwd": "${workspaceFolder}" }
+        }
+    ]
+}
