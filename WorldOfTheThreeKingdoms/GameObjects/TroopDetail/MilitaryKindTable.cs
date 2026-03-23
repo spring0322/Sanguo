@@ -9,8 +9,17 @@ namespace GameObjects.TroopDetail
     [DataContract]
     public class MilitaryKindTable
     {
+        private Dictionary<int, MilitaryKind> _militaryKinds;
+        
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, MilitaryKind> MilitaryKinds = new Dictionary<int, MilitaryKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, MilitaryKind>))]
+        public Dictionary<int, MilitaryKind> MilitaryKinds 
+        { 
+            get => _militaryKinds ??= []; 
+            set => _militaryKinds = value ?? []; 
+        }
 
         public bool AddMilitaryKind(MilitaryKind militaryKind)
         {
@@ -74,36 +83,55 @@ namespace GameObjects.TroopDetail
 
         public void AddBasicMilitaryKinds()
         {
-            this.AddMilitaryKind(Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKindList().GetGameObject(0) as MilitaryKind);
-            this.AddMilitaryKind(Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKindList().GetGameObject(1) as MilitaryKind);
-            this.AddMilitaryKind(Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKindList().GetGameObject(2) as MilitaryKind);
-            this.AddMilitaryKind(Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKindList().GetGameObject(30) as MilitaryKind);
+            // 🔥 技术性修复：避免ArgumentNullException和IndexOutOfRangeException
+            var militaryKindList = Session.Current.Scenario?.GameCommonData?.AllMilitaryKinds?.GetMilitaryKindList();
+            if (militaryKindList != null)
+            {
+                var mk0 = militaryKindList.GetGameObject(0) is MilitaryKind ? (MilitaryKind)militaryKindList.GetGameObject(0) : null;
+                if (mk0 != null) this.AddMilitaryKind(mk0);
+                
+                var mk1 = militaryKindList.GetGameObject(1) is MilitaryKind ? (MilitaryKind)militaryKindList.GetGameObject(1) : null;
+                if (mk1 != null) this.AddMilitaryKind(mk1);
+                
+                var mk2 = militaryKindList.GetGameObject(2) is MilitaryKind ? (MilitaryKind)militaryKindList.GetGameObject(2) : null;
+                if (mk2 != null) this.AddMilitaryKind(mk2);
+                
+                var mk30 = militaryKindList.GetGameObject(30) is MilitaryKind ? (MilitaryKind)militaryKindList.GetGameObject(30) : null;
+                if (mk30 != null) this.AddMilitaryKind(mk30);
+            }
         }
 
         public List<string> LoadFromString(MilitaryKindTable allMilitaryKinds, string militaryKindIDs)
         {
-            List<string> errorMsg = new List<string>();
+            List<string> errorMsg = [];
 
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(militaryKindIDs)) return errorMsg;
+
+            char[] separator = [' ', '\n', '\r', '\t'];
             string[] strArray = militaryKindIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             MilitaryKind kind = null;
             try
             {
                 for (int i = 0; i < strArray.Length; i++)
                 {
-                    if (allMilitaryKinds.MilitaryKinds.TryGetValue(int.Parse(strArray[i]), out kind))
+                    int militaryKindID = int.Parse(strArray[i]);
+                    
+                    if (allMilitaryKinds.MilitaryKinds.TryGetValue(militaryKindID, out kind))
                     {
                         this.AddMilitaryKind(kind);
                     }
                     else
                     {
-                        errorMsg.Add("兵种ID" + int.Parse(strArray[i]) + "不存在");
+                        string error = $"兵种ID {militaryKindID} 不存在";
+                        errorMsg.Add(error);
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                errorMsg.Add("兵种一栏应为半型空格分隔的影响ID");
+                string error = "兵种一栏应为半型空格分隔的兵种ID";
+                errorMsg.Add(error);
             }
 
             return errorMsg;
@@ -120,4 +148,5 @@ namespace GameObjects.TroopDetail
         }
     }
 }
+
 

@@ -1,5 +1,6 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -8,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind399 : InfluenceKind
     {
+        [DataMember]
         private float rate;
 
         public override void ApplyInfluenceKind(Troop troop)
@@ -43,7 +45,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             if (!this.IsVaild(destination))
             {
@@ -54,7 +56,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             foreach (Troop troop in source.GetAreaStratagemTroops(destination, true))
             {
                 float rate = ((float) troop.InjuryQuantity) / ((float) troop.Army.Kind.MinScale);
-                int num4 = source.GetStratagemSuccessChanceCredit(troop, false, false, false);
+                int num4 = source.GetStratagemSuccessChanceCredit(stratagem, troop, false, false, false);
                 if (num4 > 0)
                 {
                     if (rate > this.rate)

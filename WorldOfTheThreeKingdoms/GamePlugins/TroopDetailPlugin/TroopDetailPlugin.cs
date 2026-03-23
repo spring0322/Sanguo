@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -137,7 +137,7 @@ namespace TroopDetailPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(xmlNodes, out font, out color);
 			this.troopDetail.TroopNameText = new FreeText(font, color);
 			this.troopDetail.TroopNameText.Position = rectangle;
-			this.troopDetail.TroopNameText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), xmlNodes.Attributes.GetNamedItem("Align").Value);
+			this.troopDetail.TroopNameText.Align = Enum.Parse<TextAlign>(xmlNodes.Attributes.GetNamedItem("Align").Value);
 			xmlNodes = nextSibling.ChildNodes.Item(2);
 			this.troopDetail.PortraitClient = StaticMethods.LoadRectangleFromXMLNode(xmlNodes);
 			xmlNodes = nextSibling.ChildNodes.Item(3);
@@ -155,14 +155,14 @@ namespace TroopDetailPlugin
                 StaticMethods.LoadFontAndColorFromXMLNode(xmlNodes1, out font, out color);
 				labelText.Label = new FreeText(font, color);
 				labelText.Label.Position = rectangle;
-				labelText.Label.Align = (TextAlign)Enum.Parse(typeof(TextAlign), xmlNodes1.Attributes.GetNamedItem("Align").Value);
+				labelText.Label.Align = Enum.Parse<TextAlign>(xmlNodes1.Attributes.GetNamedItem("Align").Value);
 				labelText.Label.Text = xmlNodes1.Attributes.GetNamedItem("Label").Value;
 				xmlNodes1 = xmlNodes.ChildNodes.Item(num + 1);
 				rectangle = StaticMethods.LoadRectangleFromXMLNode(xmlNodes1);
                 StaticMethods.LoadFontAndColorFromXMLNode(xmlNodes1, out font, out color);
 				labelText.Text = new FreeText(font, color);
 				labelText.Text.Position = rectangle;
-				labelText.Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), xmlNodes1.Attributes.GetNamedItem("Align").Value);
+				labelText.Text.Align = Enum.Parse<TextAlign>(xmlNodes1.Attributes.GetNamedItem("Align").Value);
 				labelText.PropertyName = xmlNodes1.Attributes.GetNamedItem("PropertyName").Value;
 				this.troopDetail.LabelTexts.Add(labelText);
 				num = num + 2;
@@ -266,7 +266,7 @@ namespace TroopDetailPlugin
 
 		public void SetTroop(object troop)
 		{
-			this.troopDetail.SetTroop(troop as Troop);
+			this.troopDetail.SetTroop((troop is Troop ? (Troop)troop : null));
 		}
 
 		public void Update(GameTime gameTime)
@@ -274,3 +274,4 @@ namespace TroopDetailPlugin
 		}
 	}
 }
+

@@ -1,5 +1,5 @@
-﻿using GameFreeText;
-using GameGlobal;
+using GameFreeText;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -94,15 +94,21 @@ namespace ScreenBlindPlugin
 
         internal void Update()
         {
-            if (Session.Current.Scenario.Date.Season == GameSeason.春)
+
+
+            var date = Session.Current.Scenario.Date;
+            
+
+
+            if (date.Season == GameSeason.春)
             {
                 this.SeasonTexture = this.SpringTexture;
             }
-            else if (Session.Current.Scenario.Date.Season == GameSeason.夏 )
+            else if (date.Season == GameSeason.夏)
             {
                 this.SeasonTexture = this.SummerTexture;
             }
-            else if (Session.Current.Scenario.Date.Season == GameSeason.秋 )
+            else if (date.Season == GameSeason.秋)
             {
                 this.SeasonTexture = this.AutumnTexture;
             }
@@ -110,7 +116,9 @@ namespace ScreenBlindPlugin
             {
                 this.SeasonTexture = this.WinterTexture;
             }
-            this.DateText.Text = Session.Current.Scenario.Date.ToDateString();
+            
+            this.DateText.Text = date.ToDateString();
+            
             if (Session.Current.Scenario.CurrentFaction != null)
             {
                 if ((Session.Current.Scenario.CurrentFaction == Session.Current.Scenario.CurrentPlayer) || Session.GlobalVariables.SkyEye)

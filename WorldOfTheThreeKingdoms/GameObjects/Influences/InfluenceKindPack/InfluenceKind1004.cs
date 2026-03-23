@@ -8,11 +8,16 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind1004 : InfluenceKind
     {
+        [DataMember]
         private int increment;
 
         public override void ApplyInfluenceKind(Architecture architecture)
         {
+
+            
             architecture.IncrementOfDominationCeiling += this.increment;
+            
+
         }
 
         public override void PurifyInfluenceKind(Architecture architecture)
@@ -26,10 +31,10 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             {
                 this.increment = int.Parse(parameter);
             }
-            catch
+            catch (Exception ex)
             {
+                
             }
         }
     }
 }
-

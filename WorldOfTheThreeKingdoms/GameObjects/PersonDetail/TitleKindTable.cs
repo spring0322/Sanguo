@@ -8,8 +8,11 @@ namespace GameObjects.PersonDetail
     [DataContract]
     public class TitleKindTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, TitleKind> TitleKinds = new Dictionary<int, TitleKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, TitleKind>))]
+        public Dictionary<int, TitleKind> TitleKinds = [];
 
         public bool AddTitleKind(TitleKind title)
         {
@@ -45,6 +48,9 @@ namespace GameObjects.PersonDetail
 
         public void LoadFromString(TitleKindTable allTitles, string titleIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(titleIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = titleIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             TitleKind title = null;

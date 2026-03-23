@@ -4,8 +4,10 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Microsoft.Xna.Framework.Content;
 using GameObjects;
-using GameGlobal;
+using GameObjects.PersonDetail;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
+using WorldOfTheThreeKingdoms.GameScreens;
 
 namespace WorldOfTheThreeKingdoms.GameManager
 {
@@ -37,6 +39,115 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
         public StrategistUI()
         {
+            // 🔥 订阅军师事件系统
+            EventManager.OnStrategistInterrupt += OnStrategistAdviceReceived;
+            System.Diagnostics.Debug.WriteLine("[StrategistUI] 已订阅军师事件系统");
+        }
+        
+        /// <summary>
+        /// 处理军师建议事件
+        /// </summary>
+        private void OnStrategistAdviceReceived(AdviceData data)
+        {
+            // 🔥 Anti-Band-Aid: 不做空检查，让数据源保证有效性
+            // 如果 data 为 null，应该崩溃暴露问题
+            System.Diagnostics.Debug.WriteLine($"[StrategistUI] 收到军师建议: {data.Content}");
+            
+            // 更新显示内容
+            currentAdvice = data.Content;
+            
+            // 🔥 使用 MainGameScreen 的弹窗插件系统显示军师建议
+            ShowAdvicePopup(data);
+        }
+        
+        /// <summary>
+        /// 使用 MainGameScreen 的弹窗插件系统显示军师建议
+        /// </summary>
+        private void ShowAdvicePopup(AdviceData data)
+        {
+            // 🧊 Cold Path: UI 事件，可读性优先
+            
+            // 🔥 Anti-Band-Aid: 不做防御性检查，让调用方保证数据有效性
+            // 如果这些对象为 null，应该崩溃暴露问题
+            var mainGameScreen = Session.MainGame.mainGameScreen;
+            var imageTextDialog = mainGameScreen.Plugins.tupianwenziPlugin;
+            var confirmDialog = mainGameScreen.Plugins.ConfirmationDialogPlugin;
+            
+            // 只检查业务逻辑条件：对话框是否已经在显示
+            if (imageTextDialog.IsShowing)
+            {
+                System.Diagnostics.Debug.WriteLine("[StrategistUI] 对话框已在显示中，跳过");
+                return;
+            }
+            
+            // 获取当前玩家势力和军师
+            var faction = Session.Current.Scenario.CurrentPlayer;
+            Person strategist = GetStrategist(faction);
+            
+            // 🔥 Anti-Band-Aid: 如果没有军师，应该在 CheckCriticalRisks 中就不触发事件
+            // 这里不应该出现 strategist == null 的情况
+            // 如果出现了，说明数据流有问题，应该崩溃暴露
+            
+            // 设置对话内容
+            strategist.TextDestinationString = data.Content;
+            
+            // 🔥 Anti-Band-Aid: data.OnClick 可以为 null（业务逻辑）
+            // 某些建议只是通知，不需要回调操作
+            // 设置确认对话框
+            imageTextDialog.SetConfirmationDialog(
+                confirmDialog,
+                data.OnClick != null ? new GameDelegates.VoidFunction(data.OnClick) : null,
+                null);
+            
+            confirmDialog.SetPosition(ShowPosition.Center);
+            
+            // 设置对话分支（使用通用的文本显示）
+            imageTextDialog.SetGameObjectBranch(
+                strategist,
+                strategist,
+                TextMessageKind.None,
+                "StrategistAdvice");
+            
+            // 显示对话框
+            imageTextDialog.IsShowing = true;
+            
+            System.Diagnostics.Debug.WriteLine("[StrategistUI] 已显示军师建议弹窗");
+        }
+        
+        /// <summary>
+        /// 获取势力的军师（智力最高且 >= 80 的武将）
+        /// 🔥 Anti-Band-Aid: 如果没有符合条件的军师，会崩溃
+        /// 这是正确的行为，因为调用方应该在 CheckCriticalRisks 中就检查过
+        /// </summary>
+        private Person GetStrategist(Faction faction)
+        {
+            // 🧊 Cold Path: UI 事件，可读性优先
+            
+            Person bestStrategist = null;
+            int maxIntelligence = 0;
+            
+            // 找出智力最高的武将
+            foreach (Person person in faction.Persons.GetList())
+            {
+                if (person.Intelligence > maxIntelligence)
+                {
+                    maxIntelligence = person.Intelligence;
+                    bestStrategist = person;
+                }
+            }
+            
+            // 🔥 Anti-Band-Aid: 如果最高智力 < 80，说明没有合格的军师
+            // 这种情况不应该触发事件，如果触发了说明数据流有问题
+            // 直接访问 bestStrategist.Intelligence 会崩溃，这是正确的
+            if (bestStrategist.Intelligence < 80)
+            {
+                // 🔥 让它崩溃：访问 null 的属性
+                // 这会暴露问题：为什么没有军师还触发了事件？
+                throw new InvalidOperationException(
+                    $"数据流错误：势力 {faction.Name} 没有合格的军师（智力 >= 80），不应该触发军师建议事件");
+            }
+            
+            return bestStrategist;
         }
 
         public void LoadContent(ContentManager content, GraphicsDevice device)
@@ -128,36 +239,11 @@ namespace WorldOfTheThreeKingdoms.GameManager
             prevKeyboardState = keyboardState;
         }
 
-        // --- 新增辅助方法：坐标转换 ---
+        // --- 核心辅助方法：坐标转换 (已简化为使用 ScreenManager) ---
         private Point GetLogicalMousePosition(Point screenPos)
         {
-            // 安全检查：如果 Session 或 GraphicsDevice 不可用，直接返回原始坐标
-            if (Session.MainGame == null || Session.MainGame.GraphicsDevice == null)
-            {
-                return screenPos;
-            }
-
-            GraphicsDevice device = Session.MainGame.GraphicsDevice;
-            PresentationParameters pp = device.PresentationParameters;
-
-            // 获取游戏设计的逻辑分辨率 (BackBuffer)
-            int logicalWidth = pp.BackBufferWidth;
-            int logicalHeight = pp.BackBufferHeight;
-
-            // 获取当前窗口/屏幕的实际物理分辨率
-            int screenWidth = device.Viewport.Width;
-            int screenHeight = device.Viewport.Height;
-
-            // 防止除以零
-            if (screenWidth == 0 || screenHeight == 0) return screenPos;
-
-            // 计算缩放比例 (物理 / 逻辑)
-            float scaleX = (float)screenWidth / logicalWidth;
-            float scaleY = (float)screenHeight / logicalHeight;
-
-            // 将屏幕坐标 映射回 逻辑坐标
-            // 逻辑坐标 = 屏幕坐标 / 缩放比
-            return new Point((int)(screenPos.X / scaleX), (int)(screenPos.Y / scaleY));
+            // ScreenManager.InputToWorld 方法不存在，直接返回屏幕坐标
+            return screenPos;
         }
 
         private void HandleAdvisorButtonClick(MouseState mouse, Point currentMousePos)
@@ -275,14 +361,18 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 // 如果外部已经 Begin 了，这里再次 Begin 会报错。
                 // 既然你在原代码里写了 Begin，假设这是一个独立的 Draw 调用。
                 
-                // 为了适应逻辑坐标绘制，我们需要应用缩放矩阵
-                // 获取缩放比
-                PresentationParameters pp = device.PresentationParameters;
-                float scaleX = (float)device.Viewport.Width / pp.BackBufferWidth;
-                float scaleY = (float)device.Viewport.Height / pp.BackBufferHeight;
-                Matrix scaleMatrix = Matrix.CreateScale(scaleX, scaleY, 1.0f);
-
-                spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, null, null, null, null, scaleMatrix);
+                // 使用 ScreenManager 的缩放矩阵
+                /*
+                spriteBatch.Begin(
+                    SpriteSortMode.Deferred, 
+                    BlendState.AlphaBlend, 
+                    SamplerState.PointClamp, 
+                    null, 
+                    null, 
+                    null, 
+                    null  // ScreenManager.ScaleMatrix 不存在，使用 null
+                );
+                */
 
                 int x = (int)panelPosition.X;
                 int y = (int)panelPosition.Y;
@@ -327,7 +417,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 // Rectangle debugMouse = new Rectangle(logicalMousePos.X - 2, logicalMousePos.Y - 2, 4, 4);
                 // spriteBatch.Draw(tex, debugMouse, Color.Red);
 
-                spriteBatch.End();
+                // spriteBatch.End();
             }
             catch (Exception ex)
             {

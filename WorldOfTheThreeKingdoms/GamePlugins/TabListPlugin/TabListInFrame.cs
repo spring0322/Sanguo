@@ -1,5 +1,5 @@
-using GameFreeText;
-using GameGlobal;
+﻿using GameFreeText;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -27,6 +27,7 @@ namespace TabListPlugin
         internal int columnspliterWidth;
         internal TextAlign ColumnTextAlign;
         
+
         public Font ColumnTextBuilder = new Font();
 
         internal Color ColumnTextColor;
@@ -92,6 +93,13 @@ namespace TabListPlugin
         internal Rectangle VisibleLowerClient;
         private bool WidthCanShrink = true;
 
+        // 🎯 褒赏提示相关字段
+        private string tooltipText = "";
+        private Point tooltipPosition;
+        private bool showTooltip = false;
+        private int tooltipDelayFrames = 0;
+        private const int TOOLTIP_DELAY = 30; // 30帧延迟（约0.5秒）
+
         public void AddRows()
         {
             if (this.gameObjectList != null)
@@ -122,7 +130,20 @@ namespace TabListPlugin
             if (MultiSelecting)
             {
                 selectallX = this.listKindToDisplay.AllColumns[0].ColumnTextList[0].Position.X;
-                selectallY = base.RealClient.Bottom + (int)(1.2f * rowHeight);
+                
+                // 调整全选按钮位置，避免与地图选择按钮重叠
+                // 如果启用了地图选择按钮，将全选按钮放在其后面（右侧）
+                if (this.MapViewSelectorButtonEnabled)
+                {
+                    // 将全选按钮放在地图选择按钮的右侧，避免重叠
+                    selectallX = base.RealClient.X + this.MapViewSelectorButtonPosition.X + 230; // 地图按钮宽度 + 间距（增大避免重叠）
+                    selectallY = base.RealClient.Y + this.MapViewSelectorButtonPosition.Y;
+                }
+                else
+                {
+                    // 如果没有地图选择按钮，使用原来的位置
+                    selectallY = base.RealClient.Bottom + (int)(1.2f * rowHeight);
+                }
             }
             base.Draw();
             if (this.listKindToDisplay != null)
@@ -135,6 +156,72 @@ namespace TabListPlugin
                     CacheManager.DrawString(Session.Current.Font, selectallstring, new Vector2(selectallX, selectallY), Color.White, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0f);
                 }
             }
+            
+            // 🎯 绘制褒赏提示
+            if (showTooltip && !string.IsNullOrEmpty(tooltipText))
+            {
+                DrawTooltip();
+            }
+        }
+
+        private static PlatformTexture dummyTexture;
+        private static PlatformTexture GetDummyTexture()
+        {
+            if (dummyTexture == null)
+            {
+                var tex2d = new Texture2D(Session.MainGame.GraphicsDevice, 1, 1);
+                tex2d.SetData(new[] { Color.White });
+                dummyTexture = new PlatformTexture(tex2d);
+            }
+            return dummyTexture;
+        }
+
+        // 🎯 绘制褒赏提示框
+        private void DrawTooltip()
+        {
+            Vector2 textSize = Session.Current.Font.MeasureString(tooltipText);
+            int padding = 10;
+            int tooltipWidth = (int)textSize.X + padding * 2;
+            int tooltipHeight = (int)textSize.Y + padding * 2;
+            
+            // 调整tooltip位置，避免超出屏幕
+            int tooltipX = tooltipPosition.X + 15;
+            int tooltipY = tooltipPosition.Y + 15;
+            
+            if (tooltipX + tooltipWidth > Session.MainGame.GraphicsDevice.Viewport.Width)
+            {
+                tooltipX = tooltipPosition.X - tooltipWidth - 5;
+            }
+            if (tooltipY + tooltipHeight > Session.MainGame.GraphicsDevice.Viewport.Height)
+            {
+                tooltipY = tooltipPosition.Y - tooltipHeight - 5;
+            }
+            
+            PlatformTexture tex = GetDummyTexture();
+            Rectangle tooltipRect = new Rectangle(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+            
+            // 绘制背景（半透明黑色）- 直接传递参数避免分配
+            CacheManager.Draw(tex, tooltipRect, null, new Color(0, 0, 0, 200), 0f, Vector2.Zero, SpriteEffects.None, 0.001f);
+            
+            // 绘制边框（金色）- 简单的4条边
+            int borderSize = 2;
+            Color borderColor = Color.Gold;
+            CacheManager.Draw(tex, new Rectangle(tooltipRect.Left, tooltipRect.Top, tooltipRect.Width, borderSize), null, borderColor, 0f, Vector2.Zero, SpriteEffects.None, 0.0009f); // 顶
+            CacheManager.Draw(tex, new Rectangle(tooltipRect.Left, tooltipRect.Bottom - borderSize, tooltipRect.Width, borderSize), null, borderColor, 0f, Vector2.Zero, SpriteEffects.None, 0.0009f); // 底
+            CacheManager.Draw(tex, new Rectangle(tooltipRect.Left, tooltipRect.Top, borderSize, tooltipRect.Height), null, borderColor, 0f, Vector2.Zero, SpriteEffects.None, 0.0009f); // 左
+            CacheManager.Draw(tex, new Rectangle(tooltipRect.Right - borderSize, tooltipRect.Top, borderSize, tooltipRect.Height), null, borderColor, 0f, Vector2.Zero, SpriteEffects.None, 0.0009f); // 右
+            
+            // 绘制文本 - 直接传递参数避免分配
+            CacheManager.DrawString(
+                Session.Current.Font, 
+                tooltipText, 
+                new Vector2(tooltipX + padding, tooltipY + padding), 
+                Color.White, 
+                0f, 
+                Vector2.Zero, 
+                1f, 
+                SpriteEffects.None, 
+                0.0008f);
         }
 
         public void EnlargeRectanglesHeight()
@@ -288,11 +375,23 @@ namespace TabListPlugin
 
         public void InitialValues(GameObjectList gameObjectList, GameObjectList selectedObjectList, int scrollValue, string title)
         {
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.InitialValues] 开始初始化");
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.InitialValues] gameObjectList.Count = {gameObjectList.Count}");
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.InitialValues] title = {title}");
+            
             this.SubKinds.Clear();
             this.SetObjectList(gameObjectList);
             this.SetSelectedObjectList(selectedObjectList);
             this.oldScrollValue = scrollValue;
             this.Title = title;
+            
+            // 初始化时更新全选按钮状态
+            if (this.MultiSelecting)
+            {
+                this.UpdateSelectAllButtonState();
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.InitialValues] 初始化完成");
         }
 
         public void LoadFromXMLNode(XmlNode rootNode)
@@ -319,6 +418,55 @@ namespace TabListPlugin
                 item.ShowPortrait = bool.Parse(node.Attributes.GetNamedItem("ShowPortrait").Value);
                 item.LoadFromXMLNode(node);
                 this.ListKinds.Add(item);
+
+            }
+
+        }
+
+        internal void EnsureInfluenceListKind()
+        {
+            // Manually inject Influence ListKind if not present (ID 18)
+            if (this.GetListKindByID(18) == null)
+            {
+                ListKind influenceKind = new ListKind(this);
+                influenceKind.ID = 18;
+                influenceKind.Name = "Influence";
+                influenceKind.DisplayName = "影响";
+                influenceKind.ShowPortrait = false;
+
+                // ID Column
+                Column colID = new Column(this);
+                colID.ID = 1;
+                colID.Name = "ID";
+                colID.DisplayName = "ID";
+                colID.IsNumber = true;
+                colID.MinWidth = 50;
+                colID.Text.Text = "ID";
+                colID.Editable = false;
+                influenceKind.AllColumns.Add(colID);
+
+                // Name Column
+                Column colName = new Column(this);
+                colName.ID = 2;
+                colName.Name = "Description"; // Try Description as Property if Name is generic
+                colName.DisplayName = "描述";
+                colName.IsNumber = false;
+                colName.MinWidth = 400;
+                colName.Text.Text = "描述";
+                colName.Editable = false;
+                influenceKind.AllColumns.Add(colName);
+                
+                // Tabs
+                Tab tab = new Tab(this, influenceKind);
+                tab.ID = 0;
+                tab.Name = "All";
+                tab.DisplayName = "全部";
+                tab.Columns.Add(colID);
+                tab.Columns.Add(colName);
+                tab.Selected = true;
+                influenceKind.Tabs.Add(tab);
+
+                this.ListKinds.Add(influenceKind);
             }
         }
 
@@ -386,6 +534,8 @@ namespace TabListPlugin
             if (this.MultiSelecting)
             {
                 this.SelectedItemList = this.gameObjectList.GetSelectedList();
+                // 更新全选按钮状态
+                this.UpdateSelectAllButtonState();
             }
             else if (base.OKButtonEnabled)
             {
@@ -414,6 +564,41 @@ namespace TabListPlugin
                         }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 检查是否所有项目都被选中
+        /// </summary>
+        private bool IsAllItemsSelected()
+        {
+            if (this.gameObjectList == null || this.gameObjectList.Count == 0)
+                return false;
+            
+            foreach (GameObject obj in this.gameObjectList)
+            {
+                if (!obj.Selected)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 更新全选按钮的状态（文字和图标）
+        /// </summary>
+        private void UpdateSelectAllButtonState()
+        {
+            if (this.IsAllItemsSelected())
+            {
+                // 所有项目都被选中，显示"取消全选"
+                SellectAllTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TabList\Data\CheckBoxSelected.png");
+                selectallstring = "取消全选";
+            }
+            else
+            {
+                // 不是所有项目都被选中，显示"全选"
+                SellectAllTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TabList\Data\CheckBox.png");
+                selectallstring = " 全 选 ";
             }
         }
         
@@ -471,6 +656,15 @@ namespace TabListPlugin
                         gameObjectByPosition = this.GetGameObjectByPosition(position);
                         if (gameObjectByPosition != null)
                         {
+                            // 🎯 褒赏限制：仅在褒赏功能中，已褒赏的武将不可再次勾选
+                            if (base.Function == FrameFunction.GetRewardPerson && 
+                                gameObjectByPosition is Person person && 
+                                person.RewardFinished)
+                            {
+                                // 已褒赏的武将，不允许勾选，直接返回
+                                return;
+                            }
+                            
                             if (this.listKindToDisplay.IsInEditableColumn(position))
                             {
                                 if ((gameObjectByPosition.Selected || (this.SelectedItemMaxCount <= 0)) || (this.gameObjectList.GetSelectedList().Count < this.SelectedItemMaxCount))
@@ -529,27 +723,49 @@ namespace TabListPlugin
                 }
             }
 
-            else if (MultiSelecting && (Session.MainGame.mainGameScreen.PeekUndoneWork().Kind == UndoneWorkKind.Frame) && StaticMethods.PointInRectangle(position, new Rectangle(selectallX - 2 * checkboxWidth, selectallY, (int)(checkboxWidth * 1.3), (int)(checkboxWidth * 1.3))))
+            else if (MultiSelecting && (Session.MainGame.mainGameScreen.PeekUndoneWork().Kind == UndoneWorkKind.Frame))
             {
-                if (selectallstring.Equals(" 全 选 "))
+                // 计算全选按钮的点击区域，与Draw方法中的位置保持一致
+                int clickAreaX, clickAreaY;
+                if (this.MapViewSelectorButtonEnabled)
                 {
-                    SellectAllTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TabList\Data\CheckBoxSelected.png");
-                    selectallstring = "取消全选";
-                    foreach (GameObject g in this.gameObjectList)
-                    {
-                        g.Selected = true;
-                    }
-                    this.ResetEditableTextures();
+                    clickAreaX = base.RealClient.X + this.MapViewSelectorButtonPosition.X + 230 - 2 * checkboxWidth;
+                    clickAreaY = base.RealClient.Y + this.MapViewSelectorButtonPosition.Y;
                 }
                 else
                 {
-                    SellectAllTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TabList\Data\CheckBox.png");
-                    selectallstring = " 全 选 ";
-                    foreach (GameObject g in this.gameObjectList)
+                    clickAreaX = this.listKindToDisplay.AllColumns[0].ColumnTextList[0].Position.X - 2 * checkboxWidth;
+                    clickAreaY = base.RealClient.Bottom + (int)(1.2f * rowHeight);
+                }
+                
+                if (StaticMethods.PointInRectangle(position, new Rectangle(clickAreaX, clickAreaY, (int)(checkboxWidth * 1.3), (int)(checkboxWidth * 1.3))))
+                {
+                    if (selectallstring.Equals(" 全 选 "))
                     {
-                        g.Selected = false;
+                        // 🎯 全选时，仅在褒赏功能中跳过已褒赏的武将
+                        for (int i = 0; i < this.gameObjectList.Count; i++)
+                        {
+                            GameObject g = this.gameObjectList[i];
+                            // 仅在褒赏功能中跳过已褒赏的武将
+                            if (base.Function == FrameFunction.GetRewardPerson && 
+                                g is Person person && 
+                                person.RewardFinished)
+                            {
+                                continue;
+                            }
+                            g.Selected = true;
+                        }
                     }
-                    this.ResetEditableTextures();
+                    else
+                    {
+                        // 取消全选所有项目
+                        for (int i = 0; i < this.gameObjectList.Count; i++)
+                        {
+                            this.gameObjectList[i].Selected = false;
+                        }
+                    }
+                    // 更新按钮状态和界面
+                    this.RefreshEditable();
                 }
             }
 
@@ -637,7 +853,7 @@ namespace TabListPlugin
                                         this.iTroopDetail.SetTroop(gameObjectByPosition);
                                         this.iTroopDetail.IsShowing = true;
                                     }
-                                    Point pos = (gameObjectByPosition as Troop).Position;
+                                    Point pos = ((gameObjectByPosition is Troop ? (Troop)gameObjectByPosition : null)).Position;
                                     if (pos != Point.Zero)
                                     {
                                         Session.MainGame.mainGameScreen.JumpTo(pos);
@@ -651,9 +867,9 @@ namespace TabListPlugin
                                         this.iPersonDetail.SetPerson(gameObjectByPosition);
                                         this.iPersonDetail.IsShowing = true;
                                     }
-                                    if (!(gameObjectByPosition as Person).IsCaptive)
+                                    if (!((gameObjectByPosition is Person ? (Person)gameObjectByPosition : null)).IsCaptive)
                                     {
-                                        Point pos = (gameObjectByPosition as Person).Position;
+                                        Point pos = ((gameObjectByPosition is Person ? (Person)gameObjectByPosition : null)).Position;
                                         if (pos != Point.Zero)
                                         {
                                             Session.MainGame.mainGameScreen.JumpTo(pos);
@@ -668,7 +884,7 @@ namespace TabListPlugin
                                         this.iArchitectureDetail.SetArchitecture(gameObjectByPosition);
                                         this.iArchitectureDetail.IsShowing = true;
                                     }
-                                    Point pos = (gameObjectByPosition as Architecture).Position;
+                                    Point pos = ((gameObjectByPosition is Architecture ? (Architecture)gameObjectByPosition : null)).Position;
                                     if (pos != Point.Zero)
                                     {
                                         Session.MainGame.mainGameScreen.JumpTo(pos);
@@ -676,7 +892,7 @@ namespace TabListPlugin
                                 }
                                 else if (gameObjectByPosition is Military)
                                 {
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Military).Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Military ? (Military)gameObjectByPosition : null)).Position);
                                 }
                                 else if (gameObjectByPosition is Faction)
                                 {
@@ -687,7 +903,7 @@ namespace TabListPlugin
                                         this.iFactionTechniques.SetPosition(ShowPosition.Center);
                                         this.iFactionTechniques.IsShowing = true;
                                     }
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Faction).Leader.Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Faction ? (Faction)gameObjectByPosition : null)).Leader.Position);
                                 }
                                 else if (gameObjectByPosition is Captive)
                                 {
@@ -706,16 +922,16 @@ namespace TabListPlugin
                                         this.iTreasureDetail.SetTreasure(gameObjectByPosition);
                                         this.iTreasureDetail.IsShowing = true;
                                     }
-                                    if ((gameObjectByPosition as Treasure).BelongedPerson != null)
+                                    if (((gameObjectByPosition is Treasure ? (Treasure)gameObjectByPosition : null)).BelongedPerson != null)
                                     {
-                                        Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Treasure).BelongedPerson.Position);
+                                        Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Treasure ? (Treasure)gameObjectByPosition : null)).BelongedPerson.Position);
                                     }
                                 }
                                 else if (gameObjectByPosition is Information)
                                 {
                                     if (base.Function != FrameFunction.Jump)
                                     {
-                                        Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Information).Position);
+                                        Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Information ? (Information)gameObjectByPosition : null)).Position);
                                     }
                                 }
                                 else if (this.listKindToDisplay.SelectedTab.ListMethod != null)
@@ -748,7 +964,7 @@ namespace TabListPlugin
                                         this.iTroopDetail.SetTroop(gameObjectByPosition);
                                         this.iTroopDetail.IsShowing = true;
                                     }
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Troop).Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Troop ? (Troop)gameObjectByPosition : null)).Position);
                                 }
                                 else if (gameObjectByPosition is Person)
                                 {
@@ -760,9 +976,9 @@ namespace TabListPlugin
                                             this.iPersonDetail.SetPerson(gameObjectByPosition);
                                             this.iPersonDetail.IsShowing = true;
                                         }
-                                        if (!(gameObjectByPosition as Person).IsCaptive)
+                                        if (!((gameObjectByPosition is Person ? (Person)gameObjectByPosition : null)).IsCaptive)
                                         {
-                                            Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Person).Position);
+                                            Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Person ? (Person)gameObjectByPosition : null)).Position);
                                         }
                                     }
                                     catch (Exception ex)
@@ -778,11 +994,11 @@ namespace TabListPlugin
                                         this.iArchitectureDetail.SetArchitecture(gameObjectByPosition);
                                         this.iArchitectureDetail.IsShowing = true;
                                     }
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Architecture).Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Architecture ? (Architecture)gameObjectByPosition : null)).Position);
                                 }
                                 else if (gameObjectByPosition is Military)
                                 {
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Military).Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Military ? (Military)gameObjectByPosition : null)).Position);
                                 }
                                 else if (gameObjectByPosition is Faction)
                                 {
@@ -793,7 +1009,7 @@ namespace TabListPlugin
                                         this.iFactionTechniques.SetPosition(ShowPosition.Center);
                                         this.iFactionTechniques.IsShowing = true;
                                     }
-                                    Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Faction).Leader.Position);
+                                    Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Faction ? (Faction)gameObjectByPosition : null)).Leader.Position);
                                 }
                                 else if (gameObjectByPosition is Captive)
                                 {
@@ -812,16 +1028,16 @@ namespace TabListPlugin
                                         this.iTreasureDetail.SetTreasure(gameObjectByPosition);
                                         this.iTreasureDetail.IsShowing = true;
                                     }
-                                    if ((gameObjectByPosition as Treasure).BelongedPerson != null)
+                                    if (((gameObjectByPosition is Treasure ? (Treasure)gameObjectByPosition : null)).BelongedPerson != null)
                                     {
-                                        Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Treasure).BelongedPerson.Position);
+                                        Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Treasure ? (Treasure)gameObjectByPosition : null)).BelongedPerson.Position);
                                     }
                                 }
                                 else if (gameObjectByPosition is Information)
                                 {
                                     if (base.Function != FrameFunction.Jump)
                                     {
-                                        Session.MainGame.mainGameScreen.JumpTo((gameObjectByPosition as Information).Position);
+                                        Session.MainGame.mainGameScreen.JumpTo(((gameObjectByPosition is Information ? (Information)gameObjectByPosition : null)).Position);
                                     }
                                 }
                                 if (gameObjectByPosition != null)
@@ -850,34 +1066,46 @@ namespace TabListPlugin
             {
                 if (leftDown)
                 {
+                    // 🎯 拖拽时隐藏tooltip
+                    showTooltip = false;
+                    tooltipDelayFrames = 0;
+                    
                     if (this.ShowCheckBox && ((this.MultiSelecting && !this.MovingHorizontalScrollBar) && !this.MovingVerticalScrollBar))
                     {
                         GameObject gameObjectByPosition = this.GetGameObjectByPosition(position);
                         if (gameObjectByPosition != null)
                         {
-                            if (!this.SelectingRows)
+                            // 🎯 褒赏限制：拖拽时跳过已褒赏的武将
+                            if (gameObjectByPosition is Person person && person.RewardFinished)
                             {
-                                this.SelectingRows = true;
-                                this.SelectingBool = !gameObjectByPosition.Selected;
+                                // 已褒赏的武将，跳过不处理
                             }
-                            if (this.SelectingRows)
+                            else
                             {
-                                if (this.SelectingBool)
+                                if (!this.SelectingRows)
                                 {
-                                    if ((this.SelectedItemMaxCount <= 0) || (this.gameObjectList.GetSelectedList().Count < this.SelectedItemMaxCount))
+                                    this.SelectingRows = true;
+                                    this.SelectingBool = !gameObjectByPosition.Selected;
+                                }
+                                if (this.SelectingRows)
+                                {
+                                    if (this.SelectingBool)
+                                    {
+                                        if ((this.SelectedItemMaxCount <= 0) || (this.gameObjectList.GetSelectedList().Count < this.SelectedItemMaxCount))
+                                        {
+                                            gameObjectByPosition.Selected = this.SelectingBool;
+                                            this.ResetEditableTextures();
+                                        }
+                                    }
+                                    else
                                     {
                                         gameObjectByPosition.Selected = this.SelectingBool;
                                         this.ResetEditableTextures();
                                     }
                                 }
-                                else
-                                {
-                                    gameObjectByPosition.Selected = this.SelectingBool;
-                                    this.ResetEditableTextures();
-                                }
+                                base.OKButtonEnabled = this.gameObjectList.HasSelectedItem();
+                                this.SelectedItemList = this.gameObjectList.GetSelectedList();
                             }
-                            base.OKButtonEnabled = this.gameObjectList.HasSelectedItem();
-                            this.SelectedItemList = this.gameObjectList.GetSelectedList();
                         }
                     }
                     if (this.ShowHorizontalScrollBar && (this.MovingHorizontalScrollBar || StaticMethods.PointInRectangle(position, this.listKindToDisplay.HorizontalScrollBar)))
@@ -899,10 +1127,55 @@ namespace TabListPlugin
                         this.Focused = rowTopByPosition;
                         this.FocusedObject = this.GetGameObjectByPosition(position);
                         this.DrawFocused = true;
+                        
+                        // 🎯 检查是否悬停在已褒赏的武将上
+                        if (this.FocusedObject is Person person && person.RewardFinished)
+                        {
+                            // 重置tooltip延迟计数器
+                            if (tooltipPosition != position)
+                            {
+                                tooltipDelayFrames = 0;
+                                tooltipPosition = position;
+                                tooltipText = "本月已褒赏";
+                            }
+                            
+                            // 延迟显示tooltip
+                            tooltipDelayFrames++;
+                            if (tooltipDelayFrames >= TOOLTIP_DELAY)
+                            {
+                                showTooltip = true;
+                            }
+                        }
+                        // 🎯 检查是否悬停在蜜月期武将上
+                        else if (this.FocusedObject is Person honeymoonPerson && honeymoonPerson.HoneymoonMonths > 0)
+                        {
+                            // 重置tooltip延迟计数器
+                            if (tooltipPosition != position)
+                            {
+                                tooltipDelayFrames = 0;
+                                tooltipPosition = position;
+                                tooltipText = $"蜜月期剩余 {honeymoonPerson.HoneymoonMonths} 个月";
+                            }
+                            
+                            // 延迟显示tooltip
+                            tooltipDelayFrames++;
+                            if (tooltipDelayFrames >= TOOLTIP_DELAY)
+                            {
+                                showTooltip = true;
+                            }
+                        }
+                        else
+                        {
+                            // 不是已褒赏或蜜月期的武将，隐藏tooltip
+                            showTooltip = false;
+                            tooltipDelayFrames = 0;
+                        }
                     }
                     else
                     {
                         this.DrawFocused = false;
+                        showTooltip = false;
+                        tooltipDelayFrames = 0;
                     }
                 }
                 this.oldMousePosition = position;
@@ -963,13 +1236,21 @@ namespace TabListPlugin
 
         public void SetObjectList(GameObjectList gameObjectList)
         {
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.SetObjectList] 开始设置对象列表");
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.SetObjectList] gameObjectList.Count = {gameObjectList.Count}");
+            
             this.ClearData();
             this.gameObjectList = gameObjectList;
+            
+            // 🔥 不做null检查，如果gameObjectList为null，让它崩溃暴露调用方问题
             foreach (GameObject obj2 in gameObjectList)
             {
                 obj2.Selected = false;
             }
             this.FullLowerClient.Height = (gameObjectList.Count * this.rowHeight) + this.columnheaderHeight;
+            
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.SetObjectList] FullLowerClient.Height = {this.FullLowerClient.Height}");
+            System.Diagnostics.Debug.WriteLine($"[TabListInFrame.SetObjectList] 设置完成");
         }
 
         private void SetSelectedObjectList(GameObjectList selectedObjectList)
@@ -1104,4 +1385,5 @@ namespace TabListPlugin
         }
     }
 }
+
 

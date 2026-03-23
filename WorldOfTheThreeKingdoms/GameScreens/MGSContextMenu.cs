@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 //using System.Data.OleDb;
 using System.IO;
@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
@@ -33,6 +33,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             if ((this.Plugins.ContextMenuPlugin != null) && (this.PeekUndoneWork().Kind == UndoneWorkKind.None))
             {
+                
                 if (((this.CurrentArchitecture != null) && (this.CurrentTroop != null)) && ((Session.GlobalVariables.SkyEye || Session.Current.Scenario.NoCurrentPlayer) || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(this.position)))
                 {
                     if (!this.Plugins.ContextMenuPlugin.IsShowing)
@@ -70,12 +71,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     if (!this.Plugins.ContextMenuPlugin.IsShowing)
                     {
-                        // 添加调试信息，确认CurrentArchitecture的值
-                        System.Diagnostics.Debug.WriteLine($"[ContextMenuRightClick] 设置右键菜单 - CurrentArchitecture: {this.CurrentArchitecture?.Name ?? "null"}");
-                        System.Diagnostics.Debug.WriteLine($"[ContextMenuRightClick] CurrentArchitecture位置: {this.CurrentArchitecture?.Position.ToString() ?? "null"}");
-                        System.Diagnostics.Debug.WriteLine($"[ContextMenuRightClick] CurrentArchitecture归属: {this.CurrentArchitecture?.BelongedFaction?.Name ?? "null"}");
-                        System.Diagnostics.Debug.WriteLine($"[ContextMenuRightClick] 鼠标位置: {this.position}");
-                        
                         this.Plugins.ContextMenuPlugin.IsShowing = true;
                         this.Plugins.ContextMenuPlugin.SetCurrentGameObject(this.CurrentArchitecture);
                         this.Plugins.ContextMenuPlugin.SetMenuKindByName("ArchitectureRightClick");
@@ -198,18 +193,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.Faction_Architectures:
+                {
                     if (this.CurrentArchitecture.BelongedFaction != null)
                     {
-                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Architecture, FrameFunction.Browse, false, true, false, false, this.CurrentArchitecture.BelongedFaction.Architectures.GetList(), null, "", "");
+                        // 🔥 显示玩家手动控制的城池（排除委任军区）
+                        ArchitectureList playerControlledArchitectures = GetPlayerControlledArchitectures();
+                        
+                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Architecture, FrameFunction.Browse, false, true, false, false, playerControlledArchitectures, null, "", "");
                     }
                     break;
-
-                case ContextMenuResult.Faction_Troops:
-                    if (this.CurrentArchitecture.BelongedFaction != null)
-                    {
-                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Troop, FrameFunction.Browse, false, true, false, false, this.CurrentArchitecture.BelongedFaction.Troops.GetList(), null, "", "");
-                    }
-                    break;
+                }
 
                 case ContextMenuResult.Faction_Persons:
                     if (this.CurrentArchitecture.BelongedFaction != null)
@@ -384,29 +377,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         function3 = delegate
                         {
-                            // Debug: Trace CreatingPersons content
-                            var creatingPersonsList = this.Plugins.CreateTroopPlugin.CreatingPersons as GameObjectList;
-                            System.Diagnostics.Debug.WriteLine($"[CreateFunction] START - CreatingPersons count: {creatingPersonsList?.Count ?? 0}");
-                            if (creatingPersonsList != null)
-                            {
-                                int idx = 0;
-                                foreach (var obj in creatingPersonsList.GetList())
-                                {
-                                    System.Diagnostics.Debug.WriteLine($"[CreateFunction] CreatingPersons[{idx}]: Type={obj?.GetType().Name}, IsPerson={obj is Person}");
-                                    idx++;
-                                }
-                            }
-                            
                             this.CurrentArchitecture = this.Plugins.CreateTroopPlugin.CreatingArchitecture as Architecture;
                             this.CurrentMilitary = this.Plugins.CreateTroopPlugin.CreatingMilitary as Military;
-                            this.CurrentMilitaries = new GameObjectList();
-                            this.CurrentMilitaries.Add(this.CurrentMilitary);
-                            this.CurrentGameObjects = creatingPersonsList;
+                            this.CurrentGameObjects = this.Plugins.CreateTroopPlugin.CreatingPersons as GameObjectList;
                             this.CurrentPerson = this.Plugins.CreateTroopPlugin.CreatingLeader as Person;
                             this.CurrentNumber = this.Plugins.CreateTroopPlugin.CreatingFood;
                             this.Currentzijin = this.Plugins.CreateTroopPlugin.Creatingzijin;
                             
-                            System.Diagnostics.Debug.WriteLine($"[CreateFunction] END - CurrentGameObjects count: {this.CurrentGameObjects?.Count ?? 0}, CurrentPerson: {this.CurrentPerson?.Name ?? "null"}");
+                            // 🔥 修复：设置 CurrentMilitaries 列表
+                            // 单个军队出兵时，CurrentMilitaries 应该包含这个军队
+                            // 注意：如果 CurrentMilitary 为 null，说明前面的数据流有问题，应该让它崩溃
+                            GameObjectList militaryList = [];
+                            militaryList.Add(this.CurrentMilitary);
+                            this.CurrentMilitaries = militaryList.GetList();
                         };
                     }
                     this.Plugins.CreateTroopPlugin.SetCreateFunction(function3);
@@ -421,10 +404,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         function4 = delegate
                         {
-                            this.CurrentArchitecture = this.Plugins.CreateTroopPlugin.CreatingArchitecture as Architecture;
-                            this.CurrentMilitary = this.Plugins.CreateTroopPlugin.CreatingMilitary as Military;
+                            this.CurrentArchitecture = this.Plugins.CreateTroopPlugin.CreatingArchitecture is Architecture ? (Architecture)this.Plugins.CreateTroopPlugin.CreatingArchitecture : null;
+                            this.CurrentMilitary = this.Plugins.CreateTroopPlugin.CreatingMilitary is Military ? (Military)this.Plugins.CreateTroopPlugin.CreatingMilitary : null;
                             this.CurrentGameObjects = this.Plugins.CreateTroopPlugin.CreatingPersons as GameObjectList;
-                            this.CurrentPerson = this.Plugins.CreateTroopPlugin.CreatingLeader as Person;
+                            this.CurrentPerson = this.Plugins.CreateTroopPlugin.CreatingLeader is Person ? (Person)this.Plugins.CreateTroopPlugin.CreatingLeader : null;
                             this.CurrentNumber = this.Plugins.CreateTroopPlugin.CreatingFood;
                             this.Currentzijin = this.Plugins.CreateTroopPlugin.Creatingzijin;
                         };
@@ -542,38 +525,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.Person_Appointment_AppointAdvisor: //任命军师
-                    try
-                    {
-                        if (this.CurrentArchitecture?.BelongedFaction != null)
-                        {
-                            var faction = this.CurrentArchitecture.BelongedFaction;
-                            var candidates = faction.AdvisorCandicate;
-                            
-                            // 添加调试信息
-                            System.Diagnostics.Debug.WriteLine($"[DEBUG] 任命军师 - 势力: {faction.Name}");
-                            System.Diagnostics.Debug.WriteLine($"[DEBUG] 候选人数量: {candidates.Count}");
-                            
-                            if (candidates.Count > 0)
-                            {
-                                // 显示候选人选择界面
-                                this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.AppointAdvisor, 
-                                    false, true, true, false, candidates, null, "任命军师", "");
-                                System.Diagnostics.Debug.WriteLine("[DEBUG] ShowTabListInFrame 已调用");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine("[DEBUG] 没有合适的军师候选人");
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("[DEBUG] 当前建筑或势力为空");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[DEBUG] 异常: {ex.Message}");
-                    }
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.AppointAdvisor, false, true, true, false, this.CurrentArchitecture.BelongedFaction.AdvisorCandicate, null, "任命军师", "");
                     break;
 
                 case ContextMenuResult.Person_Appointment_RecallAdvisor: //罢免军师
@@ -612,18 +564,32 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.Person_Convince:
-                    // 添加调试信息，确认调用TriggerIntelligentConvince前的CurrentArchitecture
-                    System.Diagnostics.Debug.WriteLine($"[HandleContextMenuResult] Person_Convince - CurrentArchitecture: {this.CurrentArchitecture?.Name ?? "null"}");
-                    System.Diagnostics.Debug.WriteLine($"[HandleContextMenuResult] CurrentArchitecture位置: {this.CurrentArchitecture?.Position.ToString() ?? "null"}");
-                    System.Diagnostics.Debug.WriteLine($"[HandleContextMenuResult] CurrentArchitecture归属: {this.CurrentArchitecture?.BelongedFaction?.Name ?? "null"}");
-                    
                     // 使用新的智能说服系统
                     Session.MainGame.mainGameScreen.TriggerIntelligentConvince();
                     break;
 
                 case ContextMenuResult.Person_Reward:
                     this.Plugins.TabListPlugin.SetSelectedItemMaxCount(this.CurrentArchitecture.RewardPersonMaxCount);
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetRewardPerson, false, true, true, true, this.CurrentArchitecture.GetRewardPersons(), null, "褒奖", "Personal");
+                    
+                    // 获取褒赏候选人列表（已按AI打分排序并自动勾选）
+                    PersonList rewardCandidates = this.CurrentArchitecture.GetRewardPersons();
+                    
+                    // 提取已勾选的武将作为selectedObjectList
+                    PersonList preSelectedPersons = [];
+                    for (int i = 0; i < rewardCandidates.Count; i++)
+                    {
+                        Person person = (Person)rewardCandidates[i];
+                        if (person.Selected)
+                        {
+                            preSelectedPersons.Add(person);
+                        }
+                    }
+                    
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetRewardPerson, true, true, true, true, rewardCandidates, preSelectedPersons, "褒奖", "Personal");
+                    break;
+
+                case ContextMenuResult.Person_RewardAll:
+                    this.CurrentArchitecture.AutoRewarding = !this.CurrentArchitecture.AutoRewarding;
                     break;
 
                 case ContextMenuResult.Person_Redeem:
@@ -742,7 +708,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.SelectPrince, false, true, true, false, this.CurrentArchitecture.BelongedFaction.Leader.ChildrenCanBeSelectedAsPrince(), null, "立储", "");
                     break;
                 case ContextMenuResult.Faction_Diplomatic_QuanXiangDiplomaticRelation: //劝降
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetQuanXiangDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetQuanXiangDiplomaticRelationList() , null, "劝降", "");
+                    // this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetQuanXiangDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetQuanXiangDiplomaticRelationList() , null, "劝降", "");
+                    Session.MainGame.mainGameScreen.TriggerIntelligentInduceSurrenderDiplomaticRelation();
                     break;
 
                 case ContextMenuResult.Faction_Diplomatic_GeDiDiplomaticRelation: //割地
@@ -753,13 +720,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     Session.MainGame.mainGameScreen.TriggerIntelligentEnhanceDiplomaticRelation();
                     break;
                 case ContextMenuResult.Faction_Diplomatic_AllyDiplomaticRelation:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetAllyDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetAllyDiplomaticRelationList(), null, "结盟", "");
+                    // this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetAllyDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetAllyDiplomaticRelationList(), null, "结盟", "");
+                    Session.MainGame.mainGameScreen.TriggerIntelligentAllyDiplomaticRelation();
                     break;
                 case ContextMenuResult.Faction_Diplomatic_ResetDiplomaticRelation:
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetFriendlyDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetResetDiplomaticRelationList(), null, "解盟", "");
                     break;
                 case ContextMenuResult.Faction_Diplomatic_TruceDiplomaticRelation:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetTruceDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetTruceDiplomaticRelationList(), null, "停战", "");
+                    this.TriggerIntelligentTruceDiplomaticRelation();
                     break;
                 case ContextMenuResult.Faction_Diplomatic_DenounceDiplomaticRelation:
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.DiplomaticRelation, FrameFunction.GetDenounceDiplomaticRelation, false, true, true, false, this.CurrentArchitecture.GetDenounceDiplomaticRelationList(), null, "声讨", "");
@@ -844,6 +812,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 case ContextMenuResult.Faction_Treasure_Sell:
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Treasure, FrameFunction.GetSellTreasure, false, true, true, true, this.CurrentArchitecture.GetTreasureListOfLeader(), null, "卖宝", "");
                     break;
+                case ContextMenuResult.Faction_Treasure_Buy:
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Treasure, FrameFunction.GetBuyTreasure, false, true, true, true, Session.Current.Scenario.SoldTreasures, null, "购买宝物", "");
+                    break;
                 #endregion
 
                 case ContextMenuResult.Faction_officePosition_SelfBecomeEmperor:
@@ -862,10 +833,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.Section_Regroup:
-                    this.Plugins.MarshalSectionDialogPlugin.SetFaction(this.CurrentArchitecture.BelongedFaction);
-                    this.Plugins.MarshalSectionDialogPlugin.SetSection(this.CurrentArchitecture.BelongedSection);
-                    this.Plugins.MarshalSectionDialogPlugin.SetMapPosition(ShowPosition.Center);
-                    this.Plugins.MarshalSectionDialogPlugin.IsShowing = true;
+                    // 显示军区列表，让用户选择要调整的军区
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Section, FrameFunction.GetSection, false, true, true, false, this.CurrentArchitecture.BelongedFaction.Sections, null, "", "");
                     break;
 
                 case ContextMenuResult.Section_Disband:
@@ -937,9 +906,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.Jump_Architecture:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Architecture, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Architectures, null, "跳转", "");
-
+                {
+                    // 🔧 只显示玩家手动控制的城池，排除委任军区的城池
+                    ArchitectureList playerControlledArchitectures = GetPlayerControlledArchitectures();
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Architecture, FrameFunction.Jump, false, true, false, false, playerControlledArchitectures, null, "跳转", "");
                     break;
+                }
 
                 case ContextMenuResult.Jump_Troop:
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Troop, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Troops, null, "跳转", "");
@@ -965,12 +937,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     Session.GlobalVariables.PlayMusic = !Session.GlobalVariables.PlayMusic;
                     if (Session.GlobalVariables.PlayMusic)
                     {
-                        this.Date_OnSeasonChange(Session.Current.Scenario.Date.Season);
+                        // 🔥 修复：直接调用音乐切换方法，而不是事件处理器
+                        this.SwichMusic(Session.Current.Scenario.Date.Season);
                     }
                     else
                     {
                         Session.StopSong();
-                        //this.StopMusic();
                     }
                     break;
 
@@ -1175,6 +1147,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.TroopStratagem_8:  //点火
+                    // 🔥 2026-03-18 修复：移除菜单点击时的天气检查
+                    // 原因：天气检查应该在选择目标地块后进行，而不是在菜单点击时
+                    // 解决：直接设置计略，让 HandleSelectingResult 中的 TroopSetFirePosition 处理天气检查
                     this.SetTroopStratagem(8);
                     this.PushUndoneWork(new UndoneWorkItem(UndoneWorkKind.Selecting, SelectingUndoneWorkKind.TroopSetFirePosition));
                     break;
@@ -1296,6 +1271,67 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case ContextMenuResult.TroopPersons:
+                    // 🔥 增强诊断：完整追踪 Persons 集合状态
+                    // 日期：2026-02-17
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons] ========== 部队人物菜单诊断 ==========");
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons] 部队: {this.CurrentTroop.ID} ({this.CurrentTroop.Name})");
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]   - Leader: {this.CurrentTroop.Leader?.Name ?? "null"}");
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]   - LeaderID: {this.CurrentTroop.LeaderID}");
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]   - Persons.Count: {this.CurrentTroop.Persons?.Count ?? -1}");
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]   - PersonIDs.Count: {this.CurrentTroop.PersonIDs?.Count ?? -1}");
+                    
+                    if (this.CurrentTroop.PersonIDs is { Count: > 0 })
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TroopPersons]   - PersonIDs: [{string.Join(", ", this.CurrentTroop.PersonIDs)}]");
+                    }
+                    
+                    if (this.CurrentTroop.Persons == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TroopPersons] ❌ 致命错误：Persons 集合为 null！");
+                    }
+                    else if (this.CurrentTroop.Persons.Count == 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TroopPersons] ⚠️ 警告：Persons 集合为空");
+                        
+                        if (this.CurrentTroop.PersonIDs != null && this.CurrentTroop.PersonIDs.Count > 0)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[TroopPersons] ⚠️ 数据不一致：PersonIDs 有 {this.CurrentTroop.PersonIDs.Count} 个ID，但 Persons 为空");
+                            System.Diagnostics.Debug.WriteLine($"[TroopPersons] ⚠️ 这表明 LinkReferencesPhase 未正确执行或被清空");
+                            
+                            // 尝试手动验证 PersonIDs 是否有效
+                            foreach (int personID in this.CurrentTroop.PersonIDs)
+                            {
+                                var person = Session.Current.Scenario.Persons.GetGameObject(personID) as Person;
+                                if (person != null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]     - PersonID {personID} 存在: {person.Name}");
+                                }
+                                else
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[TroopPersons]     - PersonID {personID} 不存在！");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[TroopPersons] ⚠️ PersonIDs 也为空，这是正常的（部队只有主将）");
+                        }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TroopPersons] ✅ Persons 集合正常，包含 {this.CurrentTroop.Persons.Count} 个人物:");
+                        var personList = this.CurrentTroop.Persons.GetList();
+                        for (int i = 0; i < personList.Count; i++)
+                        {
+                            if (personList[i] is Person p)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[TroopPersons]     [{i}] {p.Name} (ID={p.ID})");
+                            }
+                        }
+                    }
+                    
+                    System.Diagnostics.Debug.WriteLine($"[TroopPersons] ==========================================");
+                    
                     this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.Browse, true, true, false, false, this.CurrentTroop.Persons, null, "", "");
                     break;
 
@@ -1411,11 +1447,192 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.changeFaction();
                     break;
 
+                // 编辑器功能 (威力加强版风格)
+                case ContextMenuResult.Edit_Person:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentPerson != null)
+                    {
+                        this.Plugins.InGameEditorPlugin.SetEditTarget(this.CurrentPerson);
+                        this.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                        this.Plugins.InGameEditorPlugin.IsShowing = true;
+                    }
+                    break;
+
+                case ContextMenuResult.Edit_Architecture:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentArchitecture != null)
+                    {
+                        this.Plugins.InGameEditorPlugin.SetEditTarget(this.CurrentArchitecture);
+                        this.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                        this.Plugins.InGameEditorPlugin.IsShowing = true;
+                    }
+                    break;
+
+                case ContextMenuResult.Edit_Faction:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentArchitecture?.BelongedFaction != null)
+                    {
+                        this.Plugins.InGameEditorPlugin.SetEditTarget(this.CurrentArchitecture.BelongedFaction);
+                        this.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                        this.Plugins.InGameEditorPlugin.IsShowing = true;
+                    }
+                    break;
+
+                case ContextMenuResult.Edit_Military:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentMilitary != null)
+                    {
+                        this.Plugins.InGameEditorPlugin.SetEditTarget(this.CurrentMilitary);
+                        this.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                        this.Plugins.InGameEditorPlugin.IsShowing = true;
+                    }
+                    break;
+
+                case ContextMenuResult.Edit_Troop:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentTroop != null)
+                    {
+                        this.Plugins.InGameEditorPlugin.SetEditTarget(this.CurrentTroop);
+                        this.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                        this.Plugins.InGameEditorPlugin.IsShowing = true;
+                    }
+                    break;
+
+                // 编辑器二级菜单处理
+                case ContextMenuResult.EditData_Architecture:
+                    // 显示所有城池列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Architecture, FrameFunction.GetEditArchitecture, false, true, true, false, Session.Current.Scenario.Architectures.GetList(), null, "选择要编辑的城池", "");
+                    break;
+
+                case ContextMenuResult.EditData_Troop:
+                    // 显示所有部队列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Troop, FrameFunction.GetEditTroop, false, true, true, false, Session.Current.Scenario.Troops.GetList(), null, "选择要编辑的部队", "");
+                    break;
+
+                case ContextMenuResult.EditData_Faction:
+                    // 显示所有势力列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Faction, FrameFunction.GetEditFaction, false, true, true, false, Session.Current.Scenario.Factions.GetList(), null, "选择要编辑的势力", "");
+                    break;
+
+                case ContextMenuResult.EditData_Person:
+                    // 显示所有武将列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetEditPerson, false, true, true, false, Session.Current.Scenario.Persons.GetList(), null, "选择要编辑的武将", "");
+                    break;
+
+                case ContextMenuResult.EditData_Treasure:
+                    // 显示所有宝物列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Treasure, FrameFunction.GetEditTreasure, false, true, true, false, Session.Current.Scenario.Treasures, null, "选择要编辑的宝物", "");
+                    break;
+
+                case ContextMenuResult.EditData_Title:
+                    // 显示所有称号列表
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Title, FrameFunction.GetEditTitle, false, true, true, false, Session.Current.Scenario.GameCommonData.AllTitles.GetTitleList(), null, "选择要编辑的称号", "");
+                    break;
+
+                case ContextMenuResult.EditData_Skill:
+                    // 显示所有特技列表
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Skill, FrameFunction.GetEditSkill, false, true, true, false, Session.Current.Scenario.GameCommonData.AllSkills.GetSkillList(), null, "选择要编辑的特技", "");
+                    break;
+
+                // 缓冲区编辑器菜单处理
+                case ContextMenuResult.EditData_BufferedArchitecture:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentArchitecture != null)
+                    {
+                        // 使用缓冲区编辑器编辑当前城池
+                        var plugin = this.Plugins.InGameEditorPlugin as InGameEditorPlugin.InGameEditorPlugin;
+                        if (plugin != null)
+                        {
+                            plugin.ActivateBufferedEditorForArchitecture(this.CurrentArchitecture);
+                        }
+                    }
+                    break;
+
+                case ContextMenuResult.EditData_BufferedTroop:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentTroop != null)
+                    {
+                        // 使用缓冲区编辑器编辑当前部队
+                        var plugin = this.Plugins.InGameEditorPlugin as InGameEditorPlugin.InGameEditorPlugin;
+                        if (plugin != null)
+                        {
+                            plugin.ActivateBufferedEditorForTroop(this.CurrentTroop);
+                        }
+                    }
+                    break;
+
+                case ContextMenuResult.EditData_BufferedFaction:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentArchitecture?.BelongedFaction != null)
+                    {
+                        // 使用缓冲区编辑器编辑当前势力
+                        var plugin = this.Plugins.InGameEditorPlugin as InGameEditorPlugin.InGameEditorPlugin;
+                        if (plugin != null)
+                        {
+                            plugin.ActivateBufferedEditorForFaction(this.CurrentArchitecture.BelongedFaction);
+                        }
+                    }
+                    break;
+
+                case ContextMenuResult.EditData_BufferedPerson:
+                    if (this.Plugins.InGameEditorPlugin != null && this.CurrentPerson != null)
+                    {
+                        // 使用缓冲区编辑器编辑当前武将
+                        var plugin = this.Plugins.InGameEditorPlugin as InGameEditorPlugin.InGameEditorPlugin;
+                        if (plugin != null)
+                        {
+                            plugin.ActivateBufferedEditorForPerson(this.CurrentPerson);
+                        }
+                    }
+                    break;
+
+                case ContextMenuResult.EditData_BufferedTerrain:
+                    // 使用缓冲区编辑器编辑地形
+                    var editorPlugin = this.Plugins.InGameEditorPlugin as InGameEditorPlugin.InGameEditorPlugin;
+                    if (editorPlugin != null)
+                    {
+                        Point mousePos = this.MousePosition;
+                        Point mapCoordinates = this.GetPositionByPoint(mousePos);
+                        editorPlugin.ActivateBufferedEditorForTerrain(mapCoordinates);
+                    }
+                    break;
+
+                case ContextMenuResult.EditData_Military:
+                    // 显示所有编队列表供用户选择
+                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Military, FrameFunction.GetEditMilitary, false, true, true, false, Session.Current.Scenario.Militaries.GetList(), null, "选择要编辑的编队", "");
+                    break;
+
+                case ContextMenuResult.EditData_Terrain:
+                    // 地形编辑：直接切换到地形编辑模式
+                    this.ToggleTerrainEditMode();
+                    break;
+
             }
         }
         public void MoblieHandle()
         {
             this.ContextMenuRightClick();
+        }
+
+        /// <summary>
+        /// 切换地形编辑模式
+        /// </summary>
+        private void ToggleTerrainEditMode()
+        {
+            // 切换地形编辑模式
+            this.editMode = !this.editMode;
+            
+            if (this.editMode)
+            {
+                // 开启地形编辑模式
+                this.mainMapLayer.xianshidituxiaokuai = true;  // 显示地图小块
+                this.Plugins.youcelanPlugin.IsShowing = false;  // 隐藏右侧栏
+                
+                // 显示地形编辑提示信息
+                // System.Diagnostics.Debug.WriteLine("[TerrainEdit] 地形编辑模式已开启");
+                // System.Diagnostics.Debug.WriteLine("[TerrainEdit] 当前选中地形类型: " + this.ditukuaidezhi);
+                // System.Diagnostics.Debug.WriteLine("[TerrainEdit] 使用数字键1-0选择地形类型，左键/右键绘制地形");
+            }
+            else
+            {
+                // 关闭地形编辑模式
+                this.mainMapLayer.xianshidituxiaokuai = false;  // 隐藏地图小块
+                this.Plugins.youcelanPlugin.IsShowing = true;   // 显示右侧栏
+                
+                // System.Diagnostics.Debug.WriteLine("[TerrainEdit] 地形编辑模式已关闭");
+            }
         }
         //public void ImportSave()
         //{

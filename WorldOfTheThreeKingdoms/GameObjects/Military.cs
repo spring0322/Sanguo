@@ -1,14 +1,18 @@
-﻿using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects.TroopDetail;
 using Microsoft.Xna.Framework;
 using System;
+using System.IO;
 using System.Runtime.Serialization;
+using System.Text.Json.Serialization;
 using GameManager;
 
 namespace GameObjects
 {
     [DataContract]
-    public class Military : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持编队列表和右键菜单访问
+
+    public partial class Military : GameObject
     {
         private Architecture belongedArchitecture;
         public Faction BelongedFaction;
@@ -28,11 +32,20 @@ namespace GameObjects
         private int morale;
         private int quantity;
         private Person recruitmentPerson;
+        
+        // 🔥 关键修复：防止 JSON 序列化对象引用，只序列化 ID
+        // 日期：2026-02-11
+        // 问题：JSON 序列化器会序列化整个对象图，导致循环引用
+        // 解决：使用 [JsonIgnore] 标记，只序列化 ShelledMilitaryID
+        [JsonIgnore]
+        [IgnoreDataMember]
         public Military ShelledMilitary;
 
         [DataMember]
         public int ShelledMilitaryID;
 
+        [JsonIgnore]
+        [IgnoreDataMember]
         public Military ShellingMilitary;
 
         private int tiredness;
@@ -43,8 +56,21 @@ namespace GameObjects
         private int startingArchitectureID = -1;
         private int targetArchitectureID = -1;
 
+        [DataMember]
+        public int RecentlyFought { get; set; }
+
         public void Init()
         {
+        }
+
+        /// <summary>
+        /// 🔥 修复：清空 kind 缓存，强制下次访问时重新从 AllMilitaryKinds 获取
+        /// 用于 LoadTextures() 之后，确保获取到更新后的 MilitaryKind 对象
+        /// 日期：2026-02-25
+        /// </summary>
+        public void ClearKindCache()
+        {
+            this.kind = null;
         }
 
         [DataMember]
@@ -71,7 +97,21 @@ namespace GameObjects
         public int StratagemBeFailCount { get; set; }
 
         [DataMember]
-        public int belongedArchitectureID;
+        private int belongedArchitectureID = -1;
+        
+        /// <summary>
+        /// 🔥 根本修复：提供公共属性访问 ID，确保数据一致性
+        /// </summary>
+        public int BelongedArchitectureID
+        {
+            get => belongedArchitectureID;
+            set => belongedArchitectureID = value;
+        }
+
+        /// <summary>
+        /// 招募优先级（临时属性，用于排序）
+        /// </summary>
+        public float RecruitmentPriority { get; set; }
 
         public int KindMerit
         {
@@ -89,7 +129,15 @@ namespace GameObjects
 
                 if (belongedArchitecture == null)
                 {
-                    belongedArchitecture = (Architecture) Session.Current.Scenario.Architectures.GetGameObject(belongedArchitectureID);
+                    // 🔥 修复：在反序列化阶段安全地处理延迟加载
+                    // 日期：2026-02-11
+                    // 问题：LoadDataPhase 中某些属性访问了 BelongedArchitecture，但此时 Scenario.Architectures 可能为 null
+                    // 解决：使用空传播运算符安全访问，未加载时返回 null（LinkPhase 会正确链接）
+                    // 
+                    // 注意：这不是防御性空检查！
+                    // - 反序列化时：Architectures 为 null 是预期状态，返回 null 等待 LinkPhase
+                    // - 运行时：如果 Architectures 为 null，GetGameObject 会返回 null，业务逻辑会处理
+                    belongedArchitecture = (Architecture) Session.Current?.Scenario?.Architectures?.GetGameObject(belongedArchitectureID);
                 }
                 return belongedArchitecture;
             }
@@ -150,6 +198,19 @@ namespace GameObjects
             
             military.KindID = kind.ID;
             military.ID = Session.Current.Scenario.Militaries.GetFreeGameObjectID();
+            
+            // 🔥 修复：初始化 RecruitmentPersonID 为 -1，避免默认显示 ID=0
+            // 日期：2026-02-17
+            // 问题：RecruitmentPersonID 默认值为 0，导致编队列表显示错误的补充人员
+            military.RecruitmentPersonID = -1;
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[Military.Create] 创建Military:");
+            System.Diagnostics.Debug.WriteLine($"  分配的ID: {military.ID}");
+            System.Diagnostics.Debug.WriteLine($"  Kind: {kind.Name} (ID={kind.ID})");
+            System.Diagnostics.Debug.WriteLine($"  Militaries.Count: {Session.Current.Scenario.Militaries.Count}");
+            #endif
+            
             if (kind.RecruitLimit == 1)
             {
                 military.Name = kind.Name;
@@ -158,6 +219,11 @@ namespace GameObjects
             {
                 military.Name = kind.Name + "队";
             }
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"  设置的Name: {military.Name}");
+            #endif
+            
             architecture.AddMilitary(military);
             architecture.BelongedFaction.AddMilitary(military);
             Session.Current.Scenario.Militaries.AddMilitary(military);
@@ -203,6 +269,22 @@ namespace GameObjects
 
         public bool DecreaseQuantity(int decrement)
         {
+            // 🔥 诊断：检查异常的decrement值
+            if (decrement < 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Military.DecreaseQuantity] ⚠️ 异常：decrement为负数{decrement}！");
+                
+                #if DEBUG
+                if (WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableMilitaryQuantityStackTrace)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Military.DecreaseQuantity] 调用堆栈:");
+                    System.Diagnostics.Debug.WriteLine(System.Environment.StackTrace);
+                }
+                #endif
+                
+                decrement = 0; // 防止负数导致兵力增加
+            }
+            
             this.Quantity -= decrement;
             if (this.Quantity <= 0)
             {
@@ -369,8 +451,20 @@ namespace GameObjects
                 {
                     decrement = this.InjuryQuantity;
                 }
-                this.DecreaseInjuryQuantity(decrement);
-                this.IncreaseQuantity(decrement);
+                
+                // 🔧 修复：防止兵力溢出
+                int room = this.Kind.MaxScale - this.Quantity;
+                if (decrement > room)
+                {
+                    // details: 空间不足时，只恢复能装下的部分，剩下的留在伤兵里
+                    decrement = room;
+                }
+                
+                if (decrement > 0)
+                {
+                    this.DecreaseInjuryQuantity(decrement);
+                    this.IncreaseQuantity(decrement);
+                }
             }
         }
 
@@ -399,8 +493,20 @@ namespace GameObjects
                 {
                     decrement = this.InjuryQuantity;
                 }
-                this.DecreaseInjuryQuantity(decrement);
-                this.IncreaseQuantity(decrement);
+
+                // 🔧 修复：防止兵力溢出
+                int room = this.Kind.MaxScale - this.Quantity;
+                if (decrement > room)
+                {
+                    decrement = room;
+                }
+
+                if (decrement > 0)
+                {
+                    this.DecreaseInjuryQuantity(decrement);
+                    this.IncreaseQuantity(decrement);
+                }
+
                 return decrement;
             }
             return 0;
@@ -424,6 +530,10 @@ namespace GameObjects
             Military military = new Military();
             military.KindID = kind.ID;
             military.ID = Session.Current.Scenario.Militaries.GetFreeGameObjectID();
+            
+            // 🔥 修复：初始化 RecruitmentPersonID 为 -1
+            military.RecruitmentPersonID = -1;
+            
             if (kind.RecruitLimit == 1)
             {
                 military.Name = kind.Name;
@@ -566,7 +676,7 @@ namespace GameObjects
                 {
                     if (this.followedLeader == null)
                     {
-                        this.followedLeader = Session.Current.Scenario.Persons.GetGameObject(this.followedLeaderID) as Person;
+                        this.followedLeader = Session.Current.Scenario.Persons.GetGameObject(this.followedLeaderID) is Person ? (Person)Session.Current.Scenario.Persons.GetGameObject(this.followedLeaderID) : null;
                     }
                     return this.followedLeader;
                 }
@@ -677,11 +787,36 @@ namespace GameObjects
         {
             get
             {
-                if (this.kind == null)
+                var allKinds = Session.Current?.Scenario?.GameCommonData?.AllMilitaryKinds;
+                
+                if (this.kind == null && allKinds != null)
                 {
-                    this.kind = Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKind(this.kindID);
+                    this.kind = allKinds.GetMilitaryKind(this.kindID);
+                    
+                    // 🔥 修复：移除回退逻辑，让错误暴露
+                    // 日期：2026-02-11
+                    // 原因：回退到默认步兵会掩盖数据损坏问题
+                    if (this.kind == null)
+                    {
+                        throw new InvalidDataException(
+                            $"[Military.Kind] Military ID={this.ID} 的 KindID={this.kindID} 无效！\n" +
+                            $"可用的 MilitaryKind 数量: {allKinds.MilitaryKinds.Count}\n" +
+                            $"这表明存档数据已损坏，请检查数据完整性。");
+                    }
                 }
-                if (this.BelongedArchitecture!=null )
+                
+                // 如果 allKinds 为 null，说明游戏还未初始化完成
+                if (this.kind == null && allKinds == null)
+                {
+                    throw new InvalidOperationException(
+                        $"[Military.Kind] 尝试访问 Military ID={this.ID} 的 Kind，但 GameCommonData 尚未加载！");
+                }
+                
+                // 🔥 修复：避免在反序列化阶段访问 BelongedArchitecture
+                // 日期：2026-02-11
+                // 问题：BelongedArchitecture.get 会尝试从 Scenario.Architectures 查找，但反序列化时可能为 null
+                // 解决：直接检查 belongedArchitecture 字段，而不是访问属性
+                if (this.belongedArchitecture != null)
                 {
                     return this.kind;
                 }
@@ -689,7 +824,7 @@ namespace GameObjects
                 {
                     if (this.bushiShuijunBingqieChuyuShuiyu())
                     {
-                        return Session.Current.Scenario.GameCommonData.AllMilitaryKinds.GetMilitaryKind(28);  //运兵船
+                        return allKinds?.GetMilitaryKind(28) ?? this.kind;  //运兵船
                     }
                     else
                     {
@@ -715,8 +850,11 @@ namespace GameObjects
         {
             get
             {
-                
-                if (this.BelongedArchitecture != null)
+                // 🔥 修复：避免在反序列化阶段访问 BelongedArchitecture
+                // 日期：2026-02-11
+                // 问题：BelongedArchitecture.get 会触发延迟加载，反序列化时可能失败
+                // 解决：直接检查 belongedArchitecture 字段
+                if (this.belongedArchitecture != null)
                 {
                     return this.kindID;
                 }
@@ -781,15 +919,26 @@ namespace GameObjects
 
         public bool bushiShuijunBingqieChuyuShuiyu(Point position)
         {
-            if (Session.GlobalVariables.LandArmyCanGoDownWater && kind != null && kind.Type != MilitaryType.水军 &&
-                Session.Current.Scenario.GetTerrainKindByPosition(position) == TerrainKind.水域)
+            // 🔥 修复：在反序列化阶段安全地处理
+            // 日期：2026-02-11
+            // 问题：Kind.get 调用此方法时，Scenario 可能尚未加载（反序列化阶段）
+            // 解决：使用空传播运算符，未加载时返回 false
+            // 
+            // 权衡说明：
+            // - 反序列化时：Scenario 为 null 是预期状态，返回 false（不转换为运兵船）
+            // - 运行时：如果 Scenario 为 null，说明系统已崩溃，但此检查不是根本原因
+            //   （游戏会在其他地方崩溃，这里返回 false 只是延迟了崩溃）
+            // 
+            // 注意：这是延迟加载的必要妥协，不是掩盖数据错误
+            if (Session.GlobalVariables.LandArmyCanGoDownWater && 
+                kind != null && 
+                kind.Type != MilitaryType.水军 &&
+                Session.Current?.Scenario?.GetTerrainKindByPosition(position) == TerrainKind.水域)
             {
                 return true;
             }
-            else
-            {
-                return false;
-            }
+            
+            return false;
         }
 
         public bool bushiShuijunBingqieChuyuShuiyu()
@@ -801,7 +950,7 @@ namespace GameObjects
         {
             get
             {
-                return this.Kind.Name;
+                return this.Kind?.Name ?? "未知兵种";
             }
         }
 
@@ -821,7 +970,7 @@ namespace GameObjects
                 {
                     if (this.leader == null)
                     {
-                        this.leader = Session.Current.Scenario.Persons.GetGameObject(this.leaderID) as Person;
+                        this.leader = Session.Current.Scenario.Persons.GetGameObject(this.leaderID) is Person ? (Person)Session.Current.Scenario.Persons.GetGameObject(this.leaderID) : null;
                     }
                     return this.leader;
                 }
@@ -1032,13 +1181,39 @@ namespace GameObjects
             }
             set
             {
+                // 🔧 修复：延迟 Kind 访问，避免在反序列化时触发 GameCommonData 检查
+                // 日期：2026-02-11
+                // 问题：LoadDataPhase 在 Phase 3 加载 Military，但 GameCommonData 在 Phase 3.5 才加载
+                // 解决：只在 Kind 已经加载时才进行上限检查
+                int clampedValue = value;
+                
+                // 只有当 kind 字段已经初始化时才检查上限（避免触发 Kind.get 的延迟加载）
+                if (this.kind != null && clampedValue > this.kind.MaxScale)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Military.Quantity] ⚠️ 兵力溢出：尝试设置{clampedValue}，上限{this.kind.MaxScale}，已限制");
+                    
+                    // 🔥 诊断：输出调用堆栈，找出溢出根源
+                    if (clampedValue > 100000) // 只在异常大的值时输出堆栈
+                    {
+                        #if DEBUG
+                        if (WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableMilitaryQuantityStackTrace)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[Military.Quantity] 调用堆栈:");
+                            System.Diagnostics.Debug.WriteLine(System.Environment.StackTrace);
+                        }
+                        #endif
+                    }
+                    
+                    clampedValue = this.kind.MaxScale;
+                }
+                
                 if (this.ShelledMilitary == null)
                 {
-                    this.quantity = value;
+                    this.quantity = clampedValue;
                 }
                 else
                 {
-                    this.ShelledMilitary.Quantity = value;
+                    this.ShelledMilitary.Quantity = clampedValue;
                 }
             }
         }
@@ -1201,8 +1376,25 @@ namespace GameObjects
         {
             get
             {
-                double retreatScaleRatio = Math.Min(0.5, this.RecoverCost / 50000.0);
-                return this.RealMilitaryKind.MaxScale / this.RealMilitaryKind.MinScale * retreatScaleRatio;
+                // [User Request Logic]
+                // Base Line: 10% of Max Scales.
+                // Elite Protection: (Max * 0.2) * (Cost / 50000 * 0.5).
+                // Morale Override: If Morale > 70, ignore elite protection (fight to the death!).
+                // Final: Take the larger of Base or Elite threshold.
+
+                double maxScales = (double)this.RealMilitaryKind.MaxScale / this.RealMilitaryKind.MinScale;
+                double baseLine = maxScales * 0.1;
+
+                // 如果士气高昂 (>70)，士兵更有斗志，无视精锐保护逻辑，只采用最低基础线
+                if (this.Morale > 70)
+                {
+                    return baseLine;
+                }
+
+                // 精锐保护：造价越高的部队，在撤退判定上越保守，以保护昂贵的兵种资源
+                double eliteProtection = (maxScales * 0.2) * (this.RealMilitaryKind.CreateCost / 50000.0 * 0.5);
+
+                return Math.Max(baseLine, eliteProtection);
             }
         }
 
@@ -1212,13 +1404,31 @@ namespace GameObjects
             {
                 if (this.BelongedFaction == null) return false;
                 if (this.IsTransport) return false;
+
+                // 🔧 FIX: 高价值精锐豁免撤退检查，与出征逻辑保持一致
+                // 高价值精锐：造价>=800或特殊兵种
+                bool isHighValue = (this.RealMilitaryKind.CreateCost >= 800) || (this.RealMilitaryKind.RecruitLimit > 0);
+                if (isHighValue)
+                {
+                    // 精锐部队不轻易撤退，除非兵力极少（< MinScale，即不足1个编制）
+                    if (this.IsShell)
+                    {
+                        return this.Quantity < this.RealMilitaryKind.MinScale;
+                    }
+                    else
+                    {
+                        return this.Scales < 1.0;
+                    }
+                }
+
+                // 统一决策逻辑：如果有包裹军队（Shell），使用其实际兵种的比例；否则使用 Scales 属性
                 if (this.IsShell)
                 {
-                    return this.Quantity / this.RealMilitaryKind.MinScale < this.RetreatScale;
+                    return (double)this.Quantity / this.RealMilitaryKind.MinScale < this.RetreatScale;
                 }
                 else
                 {
-                    return this.Scales < this.RetreatScale;
+                    return (double)this.Scales < this.RetreatScale;
                 }
             }
         }
@@ -1839,7 +2049,7 @@ namespace GameObjects
                 
                 if (this.targetArchitecture == null)
                 {
-                    this.targetArchitecture = Session.Current.Scenario.Architectures.GetGameObject(this.targetArchitectureID) as Architecture;
+                    this.targetArchitecture = Session.Current.Scenario.Architectures.GetGameObject(this.targetArchitectureID) is Architecture ? (Architecture)Session.Current.Scenario.Architectures.GetGameObject(this.targetArchitectureID) : null;
                 }
                 return this.targetArchitecture;
             }
@@ -1891,7 +2101,7 @@ namespace GameObjects
 
                 if (this.startingArchitecture == null)
                 {
-                    this.startingArchitecture = Session.Current.Scenario.Architectures.GetGameObject(this.startingArchitectureID) as Architecture;
+                    this.startingArchitecture = Session.Current.Scenario.Architectures.GetGameObject(this.startingArchitectureID) is Architecture ? (Architecture)Session.Current.Scenario.Architectures.GetGameObject(this.startingArchitectureID) : null;
                 }
                 return this.startingArchitecture;
             }
@@ -1988,4 +2198,5 @@ namespace GameObjects
 
     }
 }
+
 

@@ -6,11 +6,12 @@ using System.Collections.Generic;
 using System.Runtime.Serialization;
 using GameManager;
 using Microsoft.Xna.Framework;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.TroopDetail
 {
     [DataContract]
+    [GenerateUIAccessor]  // 🔥 2026-03-03 修复：添加源生成器特性，支持 UI 列表显示
     public class MilitaryKind : GameObject
     {
         private float fireDamageRate;
@@ -43,11 +44,22 @@ namespace GameObjects.TroopDetail
         private int grasslandAdaptability;
         private float grasslandRate;
 
+        private string _influencesString = "";
         [DataMember]
         public string InfluencesString
         {
-            get;
-            set;
+            get => _influencesString;
+            set
+            {
+                if (value != null)
+                {
+                    _influencesString = value;
+                }
+                else
+                {
+                    _influencesString = "";
+                }
+            }
         }
 
         private int injuryChance;
@@ -82,6 +94,9 @@ namespace GameObjects.TroopDetail
         private int speed;
         private int stratagemRadius;
 
+        // 🔥 TroopTextures 是 struct（值类型），会自动初始化为默认值
+        // struct 不需要显式初始化，反序列化时会正确恢复字段值
+        // 日期：2026-02-25
         public TroopTextures Textures;
         private MilitaryType type;
         private int recruitLimit;

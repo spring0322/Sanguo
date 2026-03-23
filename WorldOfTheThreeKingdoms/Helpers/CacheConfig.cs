@@ -1,6 +1,10 @@
 using System;
 using System.IO;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using WorldOfTheThreeKingdoms.Serialization;
+using WorldOfTheThreeKingdoms.Tools;
 
 namespace WorldOfTheThreeKingdoms.Helpers
 {
@@ -67,7 +71,8 @@ namespace WorldOfTheThreeKingdoms.Helpers
                 if (File.Exists(ConfigPath))
                 {
                     var json = File.ReadAllText(ConfigPath);
-                    var config = JsonConvert.DeserializeObject<CacheConfig>(json);
+                    // Use SimpleSerializer which handles Debug/Release automatically
+                    var config = SimpleSerializer.DeserializeJson<CacheConfig>(json);
                     System.Diagnostics.Debug.WriteLine("[CacheConfig] 配置加载成功");
                     return config ?? new CacheConfig();
                 }
@@ -84,19 +89,63 @@ namespace WorldOfTheThreeKingdoms.Helpers
         }
 
         /// <summary>
+        /// 异步从文件加载配置
+        /// </summary>
+        public static async Task<CacheConfig> LoadAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (File.Exists(ConfigPath))
+                {
+                    var json = await File.ReadAllTextAsync(ConfigPath, cancellationToken).ConfigureAwait(false);
+                    // Use SimpleSerializer which handles Debug/Release automatically
+                    var config = await SimpleSerializer.DeserializeJsonAsync<CacheConfig>(json).ConfigureAwait(false);
+                    System.Diagnostics.Debug.WriteLine("[CacheConfig] 异步配置加载成功");
+                    return config ?? new CacheConfig();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CacheConfig] 异步加载配置失败: {ex.Message}");
+            }
+
+            // 返回默认配置
+            var defaultConfig = new CacheConfig();
+            await defaultConfig.SaveAsync(cancellationToken).ConfigureAwait(false); // 保存默认配置
+            return defaultConfig;
+        }
+
+        /// <summary>
         /// 保存配置到文件
         /// </summary>
         public void Save()
         {
             try
             {
-                var json = JsonConvert.SerializeObject(this, Formatting.Indented);
+                var json = SimpleSerializer.SerializeJson<CacheConfig>(this, false, true);
                 File.WriteAllText(ConfigPath, json);
                 System.Diagnostics.Debug.WriteLine("[CacheConfig] 配置保存成功");
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[CacheConfig] 保存配置失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 异步保存配置到文件
+        /// </summary>
+        public async Task SaveAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var json = await SimpleSerializer.SerializeJsonAsync<CacheConfig>(this, false, true).ConfigureAwait(false);
+                await File.WriteAllTextAsync(ConfigPath, json, cancellationToken).ConfigureAwait(false);
+                System.Diagnostics.Debug.WriteLine("[CacheConfig] 异步配置保存成功");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CacheConfig] 异步保存配置失败: {ex.Message}");
             }
         }
 

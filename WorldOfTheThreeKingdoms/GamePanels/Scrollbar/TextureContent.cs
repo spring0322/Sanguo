@@ -9,6 +9,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Tools;
 using GameManager;
 using Platforms;
+using Bounds = GameManager.Bounds;
 namespace GamePanels.Scrollbar
 {
     class TextureContent : IFrameContent

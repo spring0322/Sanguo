@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
 
     [StructLayout(LayoutKind.Sequential, Size=1)]

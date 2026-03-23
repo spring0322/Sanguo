@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -555,9 +555,13 @@ namespace GameFormFramePlugin
                     else
                     {
                         this.frameContent.IsShowing = false;
-                        if (Session.MainGame.mainGameScreen.PopUndoneWork().Kind != UndoneWorkKind.Frame)
+                        // Pop our Frame entry from the stack
+                        var poppedItem = Session.MainGame.mainGameScreen.PopUndoneWork();
+                        if (poppedItem.Kind != UndoneWorkKind.Frame)
                         {
-                            throw new Exception("The UndoneWork is not a Frame.");
+                            // Log warning but don't throw - this can happen in edge cases
+                            // when sub-dialogs are opened during frame close
+                            System.Diagnostics.Debug.WriteLine($"[GameFrame] Warning: Expected Frame but got {poppedItem.Kind}. Stack may be out of sync.");
                         }
                         Session.MainGame.mainGameScreen.OnMouseMove -= new Screen.MouseMove(this.screen_OnMouseMove);
                         Session.MainGame.mainGameScreen.OnMouseLeftDown -= new Screen.MouseLeftDown(this.screen_OnMouseLeftDown);

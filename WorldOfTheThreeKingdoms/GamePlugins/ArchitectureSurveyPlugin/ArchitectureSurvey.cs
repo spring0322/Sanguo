@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Microsoft.Xna.Framework;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using Microsoft.Xna.Framework.Graphics;
 using GameFreeText;
 using GameObjects;
@@ -234,7 +234,8 @@ namespace ArchitectureSurveyPlugin
                         CacheManager.Draw(this.TechnologyBarTexture, this.TechnologyBarDisplayPosition, this.TechnologyDisplayPosition, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.051f);
                         CacheManager.Draw(this.MoraleBarTexture, this.MoraleBarDisplayPosition, this.MoraleDisplayPosition, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.051f);
                         CacheManager.Draw(this.FacilityCountBarTexture, this.FacilityCountBarDisplayPosition, this.FacilityCountDisplayPosition, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.051f);
-                        CacheManager.Draw(this.NewControllingMaskTexture, new Rectangle(this.displayOffset.X, this.displayOffset.Y, this.ControllingBackgroundSize.X, this.ControllingBackgroundSize.Y), nullable, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.049f);
+                        CacheManager.Draw(this.NewControllingMaskTexture, new Rectangle(this.displayOffset.X, this.displayOffset.Y - 8, this.ControllingBackgroundSize.X, this.ControllingBackgroundSize.Y), null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.499f);
+                        CacheManager.Draw(this.NewControllingBackgroundTexture, new Rectangle(this.displayOffset.X, this.displayOffset.Y - 8, this.ControllingBackgroundSize.X, this.ControllingBackgroundSize.Y), null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.501f);
                     }
                     catch { }
                 }
@@ -766,8 +767,8 @@ namespace ArchitectureSurveyPlugin
                     // 修复：返回1像素宽度而不是0，避免绘制区域无效错误
                     return new Rectangle(this.FacilityCountBarClient.X + this.DisplayOffset.X, this.FacilityCountBarClient.Y + this.DisplayOffset.Y, 1, this.FacilityCountBarClient.Height);
                 }
-                // 修复：确保设施条宽度至少为1像素
-                int facilityWidth = Math.Max(1, this.FacilityCountBarClient.Width * (this.ArchitectureToSurvey.FacilityPositionCount - this.ArchitectureToSurvey.FacilityPositionLeft) / this.ArchitectureToSurvey.FacilityPositionCount);
+                // 修复：确保设施条宽度至少为1像素，且不超过最大宽度
+                int facilityWidth = Math.Min(this.FacilityCountBarClient.Width, Math.Max(1, this.FacilityCountBarClient.Width * (this.ArchitectureToSurvey.FacilityPositionCount - this.ArchitectureToSurvey.FacilityPositionLeft) / this.ArchitectureToSurvey.FacilityPositionCount));
                 return new Rectangle(this.FacilityCountBarClient.X + this.DisplayOffset.X, this.FacilityCountBarClient.Y + this.DisplayOffset.Y, facilityWidth, this.FacilityCountBarClient.Height);
             }
         }
@@ -780,8 +781,8 @@ namespace ArchitectureSurveyPlugin
                     // 修复：返回1像素宽度而不是0，避免绘制区域无效错误
                     return new Rectangle(0, 0, 1, this.FacilityCountBarClient.Height);
                 }
-                // 修复：确保设施条宽度至少为1像素
-                int facilityWidth = Math.Max(1, this.FacilityCountBarClient.Width * (this.ArchitectureToSurvey.FacilityPositionCount - this.ArchitectureToSurvey.FacilityPositionLeft) / this.ArchitectureToSurvey.FacilityPositionCount);
+                // 修复：确保设施条宽度至少为1像素，且不超过最大宽度
+                int facilityWidth = Math.Min(this.FacilityCountBarClient.Width, Math.Max(1, this.FacilityCountBarClient.Width * (this.ArchitectureToSurvey.FacilityPositionCount - this.ArchitectureToSurvey.FacilityPositionLeft) / this.ArchitectureToSurvey.FacilityPositionCount));
                 return new Rectangle(0, 0, facilityWidth, this.FacilityCountBarClient.Height);
             }
         }

@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using WorldOfTheThreeKingdoms;
@@ -41,12 +42,27 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             if (this.Area != null)
             {
                 Rectangle? nullable;
+                
+                // 🔥 2026-03-12 新增：检测当前是否为火系计略
+                bool isFireStratagem = IsCurrentStratagemFireBased();
+                
                 foreach (Point point in this.Area.Area)
                 {
                     if (Session.MainGame.mainGameScreen.mainMapLayer.TileInScreen(point))
                     {
+                        // 🔥 2026-03-12 新增：雨雪区域使用红色半透明
+                        Color tintColor = Color.White;
+                        if (isFireStratagem)
+                        {
+                            var weather = Session.Current.Scenario.WeatherManager.GetWeatherAt(point);
+                            if (weather.SuppressFire())
+                            {
+                                tintColor = new Color(255, 100, 100, 180);  // 红色半透明
+                            }
+                        }
+                        
                         nullable = null;
-                        CacheManager.Draw(this.areaFrameTexture, Session.MainGame.mainGameScreen.mainMapLayer.Tiles[point.X, point.Y].Destination, nullable, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.5f);
+                        CacheManager.Draw(this.areaFrameTexture, Session.MainGame.mainGameScreen.mainMapLayer.Tiles[point.X, point.Y].Destination, nullable, tintColor, 0f, Vector2.Zero, SpriteEffects.None, 0.5f);
                     }
                 }
                 if (this.allowToSelectOutsideArea || this.Area.HasPoint(this.SelectedPoint))
@@ -89,7 +105,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public void Initialize(MainGameScreen screen)
         {
             //this.Conment = new FreeText(screen.GraphicsDevice, new System.Drawing.Font("宋体", 10f), Color.White);
-            this.Conment = new FreeText(new Font("宋体", 10f, ""), Color.White);
+            this.Conment = new FreeText(new Font("宋体", 20f, ""), Color.White);
             this.Conment.Align = TextAlign.Middle;
 
             this.currentPositionTexture = screen.Textures.TileFrameTextures[0];
@@ -277,6 +293,48 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     this.allowToSelectOutsideArea = false;
                 }
             }
+        }
+        
+        /// <summary>
+        /// 判断当前计略是否为火系
+        /// 🔥 Hot Path：Draw() 每帧调用，必须优化
+        /// 日期：2026-03-12
+        /// 修复：2026-03-12 - 移除防御性检查，使用 for 循环避免 GC 分配
+        /// </summary>
+        private bool IsCurrentStratagemFireBased()
+        {
+            var currentTroop = Session.MainGame.mainGameScreen.CurrentTroop;
+            
+            // 🔥 合理的状态检查：玩家可能没有选择部队或计略
+            if (currentTroop == null || currentTroop.CurrentStratagem == null)
+            {
+                return false;
+            }
+            
+            // 🔥 ANTI-BAND-AID：配置应该在初始化时加载，如果为 null 说明数据错误
+            var config = Session.Current.Scenario.EnvironmentConfig.WeatherStratagem;
+            Debug.Assert(config != null, "WeatherStratagem 配置未加载，检查 EnvironmentConfig 初始化");
+            
+            // 🔥 性能优化：使用 Dictionary 的 Values 属性直接迭代，避免 LINQ
+            // Dictionary<TKey, TValue>.Values 返回 ValueCollection，迭代时不产生 GC 分配
+            var influences = currentTroop.CurrentStratagem.Influences.Influences;
+            
+            // 🔥 性能优化：使用 foreach 在 Dictionary.Values 上迭代是安全的
+            // ValueCollection 的 Enumerator 是值类型，不会产生装箱
+            foreach (var influence in influences.Values)
+            {
+                // 🔥 ANTI-BAND-AID：Fail Fast，不检查 influence.Kind 是否为 null
+                Debug.Assert(influence != null, "Influence 不应为 null");
+                Debug.Assert(influence.Kind != null, "Influence.Kind 不应为 null，检查数据加载");
+                
+                // 🔥 性能优化：HashSet.Contains 是 O(1)
+                if (config.FireInfluenceKindIDs.Contains(influence.Kind.ID))
+                {
+                    return true;
+                }
+            }
+            
+            return false;
         }
     }
 

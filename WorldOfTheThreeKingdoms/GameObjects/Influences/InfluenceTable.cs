@@ -8,8 +8,11 @@ namespace GameObjects.Influences
     [DataContract]
     public class InfluenceTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, Influence> Influences = new Dictionary<int, Influence>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, Influence>))]
+        public Dictionary<int, Influence> Influences = [];
 
         public bool AddInfluence(Influence influence)
         {
@@ -23,10 +26,16 @@ namespace GameObjects.Influences
 
         public void ApplyInfluence(Architecture architecture, Applier applier, int applierID)
         {
+
+            
             foreach (Influence influence in this.Influences.Values)
             {
+
+                
                 influence.ApplyInfluence(architecture, applier, applierID);
             }
+            
+
         }
 
         public void ApplyInfluence(Faction faction, Applier applier, int applierID)
@@ -141,6 +150,10 @@ namespace GameObjects.Influences
         public List<string> LoadFromString(InfluenceTable allInfluences, string influenceIDs)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(influenceIDs)) return errorMsg;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = influenceIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             Influence influence = null;

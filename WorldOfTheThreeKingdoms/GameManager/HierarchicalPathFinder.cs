@@ -266,7 +266,8 @@ namespace GameManager
                 }
                 
                 // 添加终点
-                if (smoothed.Count == 0 || !smoothed.Last().Equals(rawPath.Last()))
+                // 🔥 安全修复：避免InvalidOperationException
+                if (rawPath.Count > 0 && (smoothed.Count == 0 || !smoothed.Last().Equals(rawPath.Last())))
                 {
                     smoothed.Add(rawPath.Last());
                 }

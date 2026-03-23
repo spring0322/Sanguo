@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
 using GameObjects.PersonDetail;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace WorldOfTheThreeKingdoms.GameManager
 {
@@ -21,7 +21,9 @@ namespace WorldOfTheThreeKingdoms.GameManager
         JailBreak,      // 劫牢 (需高武力/统率)
         Convince,       // 说服 (需高魅力/政治) - 新增智能说服系统
         Assassinate,    // 暗杀 (需高武力/智力) - 新增智能暗杀系统
-        EnhanceDiplomatic // 亲善 (需高魅力/政治)
+        EnhanceDiplomatic, // 亲善 (需高魅力/政治)
+        TruceDiplomatic, // 停战 (需高政治/魅力)
+        InduceSurrender  // 劝降 (需高魅力/政治)
     }
 
     /// <summary>
@@ -32,6 +34,19 @@ namespace WorldOfTheThreeKingdoms.GameManager
         public Person BestCandidate;      // 推荐的人选
         public int PredictedChance;       // 预测成功率 (0-100)
         public string AdvisorComment;     // 军师的点评文本
+    }
+
+    /// <summary>
+    /// 军师外交建议结果包
+    /// </summary>
+    public class AdvisorDiplomaticAdvice
+    {
+        public bool IsRecommended { get; set; }        // 是否推荐执行
+        public int SuccessRate { get; set; }           // 成功率预估 (0-100)
+        public string ImportanceLevel { get; set; }    // 重要性等级
+        public string ImportanceReason { get; set; }   // 重要性原因
+        public string DetailedAnalysis { get; set; }   // 详细分析
+        public Person BestCandidate { get; set; }      // 推荐的最佳人选
     }
 
     /// <summary>
@@ -125,6 +140,16 @@ namespace WorldOfTheThreeKingdoms.GameManager
                         score = p.Politics * 0.4 + p.Glamour * 0.6;
                         break;
 
+                    case StrategyKind.TruceDiplomatic:
+                        // 停战：政治为主，魅力为辅（需要谈判技巧和说服力）
+                        score = p.Politics * 0.6 + p.Glamour * 0.4;
+                        break;
+
+                    case StrategyKind.InduceSurrender:
+                        // 劝降：需要极高魅力和政治（说服敌方整体投降）
+                        score = p.Glamour * 0.5 + p.Politics * 0.5;
+                        break;
+
                     case StrategyKind.Search:
                         // 搜索：严格按照设定修正
                         // 魅力：容易得到当地百姓指引，容易吸引在野人才
@@ -199,6 +224,18 @@ namespace WorldOfTheThreeKingdoms.GameManager
                         baseChance = 70 + diff; // 基础成功率较高
                         return Math.Max(0, Math.Min(100, baseChance));
 
+                    case StrategyKind.TruceDiplomatic:
+                        // 停战看政治和魅力对抗，基础成功率较低（需要说服对方放下敌意）
+                        diff = (executor.Politics + executor.Glamour) / 2 - (targetPerson.Politics + targetPerson.Glamour) / 2;
+                        baseChance = 40 + diff; // 停战基础成功率较低
+                        return Math.Max(0, Math.Min(100, baseChance));
+
+                    case StrategyKind.InduceSurrender:
+                        // 劝降看魅力和政治对抗，基础成功率最低（需要说服对方投降）
+                        diff = (executor.Glamour + executor.Politics) / 2 - (targetPerson.Glamour + targetPerson.Politics) / 2;
+                        baseChance = 30 + diff; // 劝降基础成功率很低
+                        return Math.Max(0, Math.Min(100, baseChance));
+
                     default:
                         diff = executor.Intelligence - targetPerson.Intelligence;
                         break;
@@ -248,27 +285,42 @@ namespace WorldOfTheThreeKingdoms.GameManager
         /// </summary>
         private static string GenerateAdvisorComment(Person advisor, Faction faction, Person candidate, int chance, StrategyKind strategy)
         {
-            // 获取对君主的称呼
+            // 判断是否是君主自己进行预测（无军师情况）
+            bool isSelfPrediction = (faction != null && advisor == faction.Leader);
+
+            // 获取对君主的称呼 (如果是自言自语，则不需要称呼，但保留变量用于非自言自语情况)
             string leaderAddress = "主公";
-            if (faction != null && faction.Leader != null)
+            if (!isSelfPrediction && faction != null && faction.Leader != null)
             {
                 leaderAddress = AppellationSettings.GetAddress(faction, advisor, faction.Leader);
                 if (string.IsNullOrEmpty(leaderAddress)) leaderAddress = "主公";
             }
             
             if (candidate == null)
-                return $"{leaderAddress}，眼下军中无人可堪此任，还是暂缓为妙。";
+            {
+                if (isSelfPrediction)
+                    return "眼下军中无人可堪此任，还是暂缓为妙。";
+                else
+                    return $"{leaderAddress}，眼下军中无人可堪此任，还是暂缓为妙。";
+            }
 
             // 获取对执行人的称呼
             string candidateAddress;
             if (candidate == advisor)
             {
-                candidateAddress = "微臣";
+                candidateAddress = isSelfPrediction ? "我" : "微臣";
             }
             else
             {
-                candidateAddress = AppellationSettings.GetAddress(faction, advisor, candidate);
-                if (string.IsNullOrEmpty(candidateAddress)) candidateAddress = candidate.Name;
+                if (isSelfPrediction)
+                {
+                    candidateAddress = candidate.Name;
+                }
+                else
+                {
+                    candidateAddress = AppellationSettings.GetAddress(faction, advisor, candidate);
+                    if (string.IsNullOrEmpty(candidateAddress)) candidateAddress = candidate.Name;
+                }
             }
 
             // 针对搜索的特殊文本
@@ -279,18 +331,38 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 else if (chance >= 50) searchComment = "此去应当会有所斩获。";
                 else searchComment = "虽无十足把握，但也聊胜于无。";
 
-                return $"若要搜寻遗才宝物，派【{candidateAddress}】前往最为合适。{searchComment}";
+                if (isSelfPrediction)
+                {
+                    string whoAction = (candidate == advisor) ? $"由【{candidateAddress}】亲自前往" : $"派【{candidateAddress}】前往";
+                    return $"若要搜寻遗才宝物，{whoAction}最为合适。{searchComment}";
+                }
+                else
+                {
+                    return $"若要搜寻遗才宝物，派【{candidateAddress}】前往最为合适。{searchComment}";
+                }
             }
 
             // 通用难度文本
             string difficultyText = "";
-            if (chance >= 90) difficultyText = $"此计万无一失，{leaderAddress}尽可放心";
+            if (chance >= 90) 
+            {
+                if (isSelfPrediction) difficultyText = "此计万无一失";
+                else difficultyText = $"此计万无一失，{leaderAddress}尽可放心";
+            }
             else if (chance >= 70) difficultyText = "此计颇有胜算";
             else if (chance >= 40) difficultyText = "此计胜负难料，需看天意";
             else if (chance >= 20) difficultyText = "此计凶险万分，恐难成功";
             else difficultyText = "此去犹如飞蛾扑火，断不可行";
 
-            return $"依臣之见，派【{candidateAddress}】执行此计最为妥当。{difficultyText}。";
+            if (isSelfPrediction)
+            {
+                string whoAction = (candidate == advisor) ? $"由【{candidateAddress}】亲自执行" : $"派【{candidateAddress}】执行";
+                return $"依我看，{whoAction}此计最为妥当。{difficultyText}。";
+            }
+            else
+            {
+                return $"依臣之见，派【{candidateAddress}】执行此计最为妥当。{difficultyText}。";
+            }
         }
 
         /// <summary>
@@ -306,6 +378,8 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 case StrategyKind.Instigate: return "离间";
                 case StrategyKind.Alliance: return "结盟";
                 case StrategyKind.EnhanceDiplomatic: return "亲善";
+                case StrategyKind.TruceDiplomatic: return "停战";
+                case StrategyKind.InduceSurrender: return "劝降";
                 case StrategyKind.Search: return "搜索";
                 default: return "未知策略";
             }
@@ -330,6 +404,10 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     return "与其他势力结成同盟，需要高政治和魅力";
                 case StrategyKind.EnhanceDiplomatic:
                     return "赠送金钱或宝物改善外交关系，需要高魅力和政治";
+                case StrategyKind.TruceDiplomatic:
+                    return "与敌对势力谈判停战协议，需要高政治和魅力";
+                case StrategyKind.InduceSurrender:
+                    return "劝说敌方势力全体投降，需要极高魅力和政治";
                 case StrategyKind.Search: 
                     return "搜寻在野人才和珍贵宝物，需要高魅力和智力";
                 default: 

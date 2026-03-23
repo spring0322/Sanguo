@@ -6,7 +6,7 @@ using System.Runtime.Serialization;
 namespace GameObjects.ArchitectureDetail
 {
     [DataContract]
-    public class State : GameObject
+    public partial class State : GameObject
     {
         public ArchitectureList Architectures = new ArchitectureList();
 
@@ -21,6 +21,12 @@ namespace GameObjects.ArchitectureDetail
 
         [DataMember]
         public int StateAdminID;
+        
+        // 🔥 修复：添加临时字段用于序列化/反序列化
+        // 日期：2026-02-16
+        // 这些字段在 Phase 2 (LoadData) 中填充，在 Phase 3 (LinkReferences) 中用于恢复对象引用
+        public int LinkedRegionID { get; set; }
+        public List<int> ContactStateIDs { get; set; } = [];
 
         public void Init()
         {
@@ -70,6 +76,10 @@ namespace GameObjects.ArchitectureDetail
         public List<string> LoadContactStatesFromString(StateList contactStates, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.ContactStates.Clear();

@@ -35,7 +35,7 @@
   </Dialogue>
 
   <Dialogue Result="Unknown">
-    <Text>{LeaderAddress}，{SelfAddress}的搜寻遇到了意外情况，请稍后再试。</Text>
+    <Text>{LeaderAddress}，恕{SelfAddress}的搜寻遇到了意外情况，无法完成招募。</Text>
   </Dialogue>
 
   <!-- === 日常建议对话 === -->
@@ -75,6 +75,23 @@
   <!-- === 无军师提示 === -->
   <Dialogue Result="NoAdvisor">
     <Text>{LeaderAddress}，当前无军师在侧，无法提供策略建议。</Text>
+  </Dialogue>
+
+  <!-- === 招募确认对话 === -->
+  <Dialogue Result="Discovery_Initial">
+    <Text>{LeaderAddress}，{SelfAddress}在巡查时发现有贤才在野，是否前去查看？</Text>
+  </Dialogue>
+
+  <Dialogue Result="Discovery_Confirm">
+    <Text>{LeaderAddress}，{SelfAddress}发现了贤才【{Talent}】，此人颇有才能，是否招募？</Text>
+  </Dialogue>
+
+  <Dialogue Result="Recruitment_Success">
+    <Text>{LeaderAddress}，{SelfAddress}已成功招募到【{Talent}】，现已安排其前往首都效力！</Text>
+  </Dialogue>
+
+  <Dialogue Result="Recruitment_Failed">
+    <Text>{LeaderAddress}，恕{SelfAddress}无能，【{Talent}】拒绝了我们的邀请，招募失败。</Text>
   </Dialogue>
 
 </AdvisorDialogueConfig>

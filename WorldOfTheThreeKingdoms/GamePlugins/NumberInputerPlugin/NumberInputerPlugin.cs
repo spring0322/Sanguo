@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -199,6 +199,10 @@ namespace NumberInputerPlugin
             get
             {
                 return this.numberInputer.Num * Scale;
+            }
+            set
+            {
+                this.numberInputer.Num = value / Scale;
             }
         }
 

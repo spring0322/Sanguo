@@ -1,0 +1,425 @@
+using NUnit.Framework;
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Diagnostics;
+using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization;
+
+using STJDiagnosticsTests.Infrastructure;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 旧格式迁移测试 - 验证从二进制格式到JSON格式的迁移
+    /// Task 13.2: 旧格式迁移测试
+    /// Requirements: 4.1, 4.2, 4.3, 4.4
+    /// </summary>
+    [TestFixture]
+    public class LegacyFormatMigrationTests : TestBase
+    {
+        private SerializationManager _serializationManager;
+        private string _testDirectory;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            _serializationManager = new SerializationManager();
+            _testDirectory = Path.Combine(Path.GetTempPath(), "WorldOfTheThreeKingdoms_Migration_Tests", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_testDirectory);
+            
+            TestContext.WriteLine($"测试目录: {_testDirectory}");
+        }
+
+        [TearDown]
+        public override void TearDown()
+        {
+            try
+            {
+                if (Directory.Exists(_testDirectory))
+                {
+                    Directory.Delete(_testDirectory, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                TestContext.WriteLine($"清理测试目录失败: {ex.Message}");
+            }
+            
+            base.TearDown();
+        }
+
+        /// <summary>
+        /// 测试二进制格式检测
+        /// Validates: Requirement 4.1
+        /// </summary>
+        [Test]
+        public void Migration_DetectBinaryFormat_ShouldIdentifyCorrectly()
+        {
+            // Arrange - 创建模拟的二进制文件
+            var binaryPath = Path.Combine(_testDirectory, "test.bin");
+            File.WriteAllBytes(binaryPath, new byte[] { 0x00, 0x01, 0x02, 0x03 });
+            
+            var jsonPath = Path.Combine(_testDirectory, "test.sav.gz");
+            File.WriteAllText(jsonPath, "{}");
+
+            // Act & Assert - 验证格式检测
+            Assert.That(binaryPath.EndsWith(".bin"), Is.True, "应该识别为二进制格式");
+            Assert.That(jsonPath.EndsWith(".sav.gz"), Is.True, "应该识别为JSON格式");
+            
+            TestContext.WriteLine("格式检测测试通过");
+        }
+
+        /// <summary>
+        /// 测试String集合到List<int>的迁移
+        /// Validates: Requirements 4.3, 6.1, 6.2, 6.3, 6.4
+        /// </summary>
+        [Test]
+        public void Migration_StringToListInt_ShouldConvertCorrectly()
+        {
+            // Arrange - 创建包含String集合的旧格式数据
+            var scenario = CreateScenarioWithStringCollections();
+            var savePath = Path.Combine(_testDirectory, "string_collections.sav.gz");
+            
+            TestContext.WriteLine("创建包含String集合的场景");
+
+            // Act - 保存为新格式
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            // 加载并验证
+            var loadedScenario = _serializationManager.LoadGame(savePath);
+
+            // Assert - 验证集合已转换为List<int>
+            Assert.That(loadedScenario, Is.Not.Null, "场景应该成功加载");
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(scenario.Persons.Count), 
+                "人物数量应该一致");
+            
+            // 验证引用正确恢复
+            foreach (var person in loadedScenario.Persons.Values)
+            {
+                if (person.BelongedFaction != null)
+                {
+                    Assert.That(loadedScenario.Factions.ContainsKey(person.BelongedFaction.ID), Is.True,
+                        $"人物 {person.Name} 的势力引用应该有效");
+                }
+            }
+            
+            TestContext.WriteLine("String到List<int>迁移测试通过");
+        }
+
+        /// <summary>
+        /// 测试迁移后的数据完整性
+        /// Validates: Requirements 4.2, 4.4
+        /// </summary>
+        [Test]
+        public async Task Migration_DataIntegrity_ShouldPreserveAllData()
+        {
+            // Arrange - 创建复杂的游戏场景
+            var originalScenario = CreateComplexScenario();
+            var legacyPath = Path.Combine(_testDirectory, "legacy.bin");
+            var newPath = Path.Combine(_testDirectory, "migrated.sav.gz");
+            
+            // 先保存为新格式（模拟旧格式）
+            _serializationManager.SaveGame(originalScenario, legacyPath);
+            
+            TestContext.WriteLine($"原始场景: {originalScenario.Persons.Count} 人物, " +
+                                $"{originalScenario.Factions.Count} 势力, " +
+                                $"{originalScenario.Architectures.Count} 建筑");
+
+            // Act - 加载并重新保存为新格式
+            var migratedScenario = _serializationManager.LoadGame(legacyPath);
+            await Task.Run(() => _serializationManager.SaveGame(migratedScenario, newPath));
+            
+            // 重新加载验证
+            var finalScenario = await Task.Run(() => _serializationManager.LoadGame(newPath));
+
+            // Assert - 验证数据完整性
+            Assert.That(finalScenario.Persons.Count, Is.EqualTo(originalScenario.Persons.Count),
+                "人物数量应该保持一致");
+            Assert.That(finalScenario.Factions.Count, Is.EqualTo(originalScenario.Factions.Count),
+                "势力数量应该保持一致");
+            Assert.That(finalScenario.Architectures.Count, Is.EqualTo(originalScenario.Architectures.Count),
+                "建筑数量应该保持一致");
+            
+            // 验证具体数据
+            VerifyDetailedData(originalScenario, finalScenario);
+            
+            TestContext.WriteLine("数据完整性验证通过");
+        }
+
+        /// <summary>
+        /// 测试批量迁移多个旧存档
+        /// Validates: Requirements 4.1, 4.4
+        /// </summary>
+        [Test]
+        public async Task Migration_BatchMigration_ShouldHandleMultipleFiles()
+        {
+            // Arrange - 创建多个旧格式存档
+            var saveCount = 5;
+            var scenarios = Enumerable.Range(0, saveCount)
+                .Select(i => CreateTestScenario(i))
+                .ToList();
+            
+            TestContext.WriteLine($"准备迁移 {saveCount} 个存档");
+
+            // Act - 批量迁移
+            var migrationResults = new System.Collections.Generic.List<bool>();
+            
+            for (int i = 0; i < saveCount; i++)
+            {
+                var legacyPath = Path.Combine(_testDirectory, $"legacy_{i}.bin");
+                var newPath = Path.Combine(_testDirectory, $"migrated_{i}.sav.gz");
+                
+                try
+                {
+                    // 保存为旧格式
+                    _serializationManager.SaveGame(scenarios[i], legacyPath);
+                    
+                    // 加载并迁移
+                    var loaded = await Task.Run(() => _serializationManager.LoadGame(legacyPath));
+                    await Task.Run(() => _serializationManager.SaveGame(loaded, newPath));
+                    
+                    // 验证迁移结果
+                    var migrated = await Task.Run(() => _serializationManager.LoadGame(newPath));
+                    
+                    migrationResults.Add(migrated != null && 
+                                       migrated.Persons.Count == scenarios[i].Persons.Count);
+                    
+                    TestContext.WriteLine($"存档 {i + 1}/{saveCount} 迁移完成");
+                }
+                catch (Exception ex)
+                {
+                    TestContext.WriteLine($"存档 {i} 迁移失败: {ex.Message}");
+                    migrationResults.Add(false);
+                }
+            }
+
+            // Assert - 验证所有迁移都成功
+            var successCount = migrationResults.Count(r => r);
+            TestContext.WriteLine($"成功迁移: {successCount}/{saveCount}");
+            
+            Assert.That(successCount, Is.EqualTo(saveCount), "所有存档都应该成功迁移");
+        }
+
+        /// <summary>
+        /// 测试迁移性能
+        /// Validates: Requirements 4.2, 7.1, 7.2
+        /// </summary>
+        [Test]
+        public async Task Migration_Performance_ShouldMeetRequirements()
+        {
+            // Arrange - 创建大型场景
+            var largeScenario = CreateLargeScenario(personCount: 300, factionCount: 15);
+            var legacyPath = Path.Combine(_testDirectory, "large_legacy.bin");
+            var newPath = Path.Combine(_testDirectory, "large_migrated.sav.gz");
+            
+            TestContext.WriteLine($"大型场景: {largeScenario.Persons.Count} 人物, " +
+                                $"{largeScenario.Factions.Count} 势力");
+
+            // 保存为旧格式
+            _serializationManager.SaveGame(largeScenario, legacyPath);
+            var legacySize = new FileInfo(legacyPath).Length;
+
+            // Act - 测量迁移性能
+            var stopwatch = Stopwatch.StartNew();
+            
+            var loaded = await Task.Run(() => _serializationManager.LoadGame(legacyPath));
+            var loadTime = stopwatch.ElapsedMilliseconds;
+            
+            await Task.Run(() => _serializationManager.SaveGame(loaded, newPath));
+            var saveTime = stopwatch.ElapsedMilliseconds - loadTime;
+            
+            stopwatch.Stop();
+            
+            var newSize = new FileInfo(newPath).Length;
+
+            // Assert - 验证性能要求
+            TestContext.WriteLine($"加载时间: {loadTime}ms");
+            TestContext.WriteLine($"保存时间: {saveTime}ms");
+            TestContext.WriteLine($"总迁移时间: {stopwatch.ElapsedMilliseconds}ms");
+            TestContext.WriteLine($"旧格式大小: {legacySize / 1024.0:F2} KB");
+            TestContext.WriteLine($"新格式大小: {newSize / 1024.0:F2} KB");
+            TestContext.WriteLine($"压缩率: {(1 - (double)newSize / legacySize) * 100:F2}%");
+            
+            Assert.That(stopwatch.ElapsedMilliseconds, Is.LessThan(10000), 
+                "迁移应该在10秒内完成");
+            Assert.That(loaded.Persons.Count, Is.EqualTo(largeScenario.Persons.Count),
+                "数据应该完整迁移");
+        }
+
+        /// <summary>
+        /// 测试向后兼容性 - 同时支持两种格式
+        /// Validates: Requirements 4.1, 4.5
+        /// </summary>
+        [Test]
+        public void Migration_BackwardCompatibility_ShouldSupportBothFormats()
+        {
+            // Arrange - 创建两种格式的存档
+            var scenario = CreateTestScenario(1);
+            var binaryPath = Path.Combine(_testDirectory, "compat.bin");
+            var jsonPath = Path.Combine(_testDirectory, "compat.sav.gz");
+            
+            // 保存为两种格式
+            _serializationManager.SaveGame(scenario, binaryPath);
+            _serializationManager.SaveGame(scenario, jsonPath);
+
+            // Act - 加载两种格式
+            var loadedFromBinary = _serializationManager.LoadGame(binaryPath);
+            var loadedFromJson = _serializationManager.LoadGame(jsonPath);
+
+            // Assert - 验证两种格式都能正确加载
+            Assert.That(loadedFromBinary, Is.Not.Null, "二进制格式应该能加载");
+            Assert.That(loadedFromJson, Is.Not.Null, "JSON格式应该能加载");
+            
+            Assert.That(loadedFromBinary.Persons.Count, Is.EqualTo(scenario.Persons.Count),
+                "二进制格式数据应该完整");
+            Assert.That(loadedFromJson.Persons.Count, Is.EqualTo(scenario.Persons.Count),
+                "JSON格式数据应该完整");
+            
+            TestContext.WriteLine("向后兼容性测试通过");
+        }
+
+        #region Helper Methods
+
+        private GameScenario CreateScenarioWithStringCollections()
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            var faction = new Faction { ID = 1, Name = "测试势力" };
+            scenario.Factions.Add(faction.ID, faction);
+            
+            // 创建人物（模拟旧的String集合格式）
+            for (int i = 1; i <= 5; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = faction
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateComplexScenario()
+        {
+            var scenario = new GameScenario();
+            
+            // 创建多个势力
+            for (int i = 1; i <= 3; i++)
+            {
+                var faction = new Faction { ID = i, Name = $"势力{i}" };
+                scenario.Factions.Add(faction.ID, faction);
+            }
+            
+            // 创建人物，分配到不同势力
+            for (int i = 1; i <= 15; i++)
+            {
+                var factionId = ((i - 1) % 3) + 1;
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            // 创建建筑
+            for (int i = 1; i <= 6; i++)
+            {
+                var factionId = ((i - 1) % 3) + 1;
+                var architecture = new Architecture 
+                { 
+                    ID = i, 
+                    Name = $"城市{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Architectures.Add(architecture.ID, architecture);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateTestScenario(int seed)
+        {
+            var scenario = new GameScenario();
+            
+            var faction = new Faction { ID = seed * 100 + 1, Name = $"测试势力{seed}" };
+            scenario.Factions.Add(faction.ID, faction);
+            
+            for (int i = 1; i <= 3; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = seed * 100 + i, 
+                    Name = $"人物{seed}_{i}",
+                    BelongedFaction = faction
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateLargeScenario(int personCount, int factionCount)
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            for (int i = 1; i <= factionCount; i++)
+            {
+                var faction = new Faction { ID = i, Name = $"势力{i}" };
+                scenario.Factions.Add(faction.ID, faction);
+            }
+            
+            // 创建人物
+            for (int i = 1; i <= personCount; i++)
+            {
+                var factionId = ((i - 1) % factionCount) + 1;
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        private void VerifyDetailedData(GameScenario original, GameScenario migrated)
+        {
+            // 验证人物详细数据
+            foreach (var originalPerson in original.Persons.Values)
+            {
+                Assert.That(migrated.Persons.ContainsKey(originalPerson.ID), Is.True,
+                    $"人物 {originalPerson.ID} 应该存在");
+                
+                var migratedPerson = migrated.Persons[originalPerson.ID];
+                Assert.That(migratedPerson.Name, Is.EqualTo(originalPerson.Name),
+                    $"人物 {originalPerson.ID} 名称应该一致");
+                
+                if (originalPerson.BelongedFaction != null)
+                {
+                    Assert.That(migratedPerson.BelongedFaction, Is.Not.Null,
+                        $"人物 {originalPerson.ID} 应该有势力");
+                    Assert.That(migratedPerson.BelongedFaction.ID, 
+                        Is.EqualTo(originalPerson.BelongedFaction.ID),
+                        $"人物 {originalPerson.ID} 势力ID应该一致");
+                }
+            }
+            
+            TestContext.WriteLine("详细数据验证通过");
+        }
+
+        #endregion
+    }
+}

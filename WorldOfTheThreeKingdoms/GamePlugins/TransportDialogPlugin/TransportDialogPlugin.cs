@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -58,7 +58,7 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.TitleText = new FreeText(font, color);
             this.transportDialog.TitleText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.TitleText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.TitleText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(2);
             for (int i = 0; i < node.ChildNodes.Count; i += 2)
             {
@@ -67,13 +67,13 @@ namespace TransportDialogPlugin
                 StaticMethods.LoadFontAndColorFromXMLNode(node3, out font, out color);
                 item.Label = new FreeText(font, color);
                 item.Label.Position = StaticMethods.LoadRectangleFromXMLNode(node3);
-                item.Label.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node3.Attributes.GetNamedItem("Align").Value);
+                item.Label.Align = Enum.Parse<TextAlign>(node3.Attributes.GetNamedItem("Align").Value);
                 item.Label.Text = node3.Attributes.GetNamedItem("Label").Value;
                 node3 = node.ChildNodes.Item(i + 1);
                 StaticMethods.LoadFontAndColorFromXMLNode(node3, out font, out color);
                 item.Text = new FreeText(font, color);
                 item.Text.Position = StaticMethods.LoadRectangleFromXMLNode(node3);
-                item.Text.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node3.Attributes.GetNamedItem("Align").Value);
+                item.Text.Align = Enum.Parse<TextAlign>(node3.Attributes.GetNamedItem("Align").Value);
                 item.PropertyName = node3.Attributes.GetNamedItem("PropertyName").Value;
                 this.transportDialog.LabelTexts.Add(item);
             }
@@ -87,7 +87,7 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.DestinationText = new FreeText(font, color);
             this.transportDialog.DestinationText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.DestinationText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.DestinationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(5);
             this.transportDialog.InputNumberButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.InputNumberButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -97,12 +97,12 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.InputNumberText = new FreeText(font, color);
             this.transportDialog.InputNumberText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.InputNumberText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.InputNumberText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(7);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.DestinationCommentText = new FreeText(font, color);
             this.transportDialog.DestinationCommentText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.DestinationCommentText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.DestinationCommentText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(8);
             this.transportDialog.StartButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.StartButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -119,7 +119,7 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.EmperorDestinationText = new FreeText(font, color);
             this.transportDialog.EmperorDestinationText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.EmperorDestinationText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.EmperorDestinationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(11);
             this.transportDialog.EmperorInputNumberButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.EmperorInputNumberButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -129,12 +129,12 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.EmperorInputNumberText = new FreeText(font, color);
             this.transportDialog.EmperorInputNumberText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.EmperorInputNumberText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.EmperorInputNumberText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(13);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.EmperorDestinationCommentText = new FreeText(font, color);
             this.transportDialog.EmperorDestinationCommentText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.EmperorDestinationCommentText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.EmperorDestinationCommentText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(14);
             this.transportDialog.EmperorStartButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.EmperorStartButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -151,7 +151,7 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.FundDestinationText = new FreeText(font, color);
             this.transportDialog.FundDestinationText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.FundDestinationText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.FundDestinationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(17);
             this.transportDialog.FundInputNumberButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.FundInputNumberButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -161,12 +161,12 @@ namespace TransportDialogPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.FundInputNumberText = new FreeText(font, color);
             this.transportDialog.FundInputNumberText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.FundInputNumberText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.FundInputNumberText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(19);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.transportDialog.FundDestinationCommentText = new FreeText(font, color);
             this.transportDialog.FundDestinationCommentText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.transportDialog.FundDestinationCommentText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.transportDialog.FundDestinationCommentText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(20);
             this.transportDialog.FundStartButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.transportDialog.FundStartButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TransportDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -212,7 +212,7 @@ namespace TransportDialogPlugin
 
         public void SetSourceArchiecture(object architecture)
         {
-            this.transportDialog.SetSourceArchiecture(architecture as Architecture);
+            this.transportDialog.SetSourceArchiecture((architecture is Architecture ? (Architecture)architecture : null));
         }
 
         public void SetTabList(ITabList iTabList)
@@ -277,4 +277,5 @@ namespace TransportDialogPlugin
         }
     }
 }
+
 

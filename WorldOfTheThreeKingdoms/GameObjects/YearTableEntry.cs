@@ -1,4 +1,5 @@
-﻿using GameManager;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 添加：用于 GenerateUIAccessor 特性
+using GameManager;
 using GameObjects;
 using System;
 using System.Runtime.Serialization;
@@ -6,7 +7,8 @@ using System.Runtime.Serialization;
 namespace GameObjects
 {
     [DataContract]
-    public class YearTableEntry : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持年表显示
+    public partial class YearTableEntry : GameObject
 	{
         private GameDate date;
         private string content;
@@ -125,6 +127,7 @@ namespace GameObjects
             }
         }
 
+        public YearTableEntry() { }
         public YearTableEntry(int id, GameDate date, FactionList faction, string content, bool isGloballyKnown)
         {
             this.ID = id;

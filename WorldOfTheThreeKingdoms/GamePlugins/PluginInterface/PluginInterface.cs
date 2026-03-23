@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using PluginInterface.BaseInterface;
 using Microsoft.Xna.Framework;
@@ -102,6 +102,17 @@ namespace PluginInterface
         void SetScreen(Screen screen);
         void Stop();
 
+        /// <summary>
+        /// 获取日期运行器是否正在运行
+        /// 技术性修复：添加IsRunning属性以支持AI系统的线程安全检查
+        /// </summary>
+        bool IsRunning { get; }
+
+        /// <summary>
+        /// 获取是否处于连续自动运行状态 (Playing)
+        /// </summary>
+        bool IsPlaying { get; }
+
         object ToolInstance { get; }
     }
     public interface IFactionTechniques : IBasePlugin, IPluginXML, IPluginGraphics
@@ -123,6 +134,10 @@ namespace PluginInterface
         void SetMenuKindByName(string Name);
         void SetScreen(Screen screen);
         void ShezhiBianduiLiebiaoXinxi(bool Xianshi, Rectangle Weizhi);
+        void AddMenu(string DisplayName, Action SelectedAction);
+        void ClearFunctions();
+        void Show();
+        object CurrentGameObject { get; }
         int CurrentParamID { get; }
         bool IsShowing { get; set; }
         ContextMenuKind Kind { get; }
@@ -237,7 +252,7 @@ namespace PluginInterface
         void SetUnit(string unit);
         void SetScale(int scale);
         bool IsShowing { get; set; }
-        int Number { get; }
+        int Number { get; set; }
     }
 
 
@@ -324,8 +339,16 @@ namespace PluginInterface
     public interface IScreenBlind : IBasePlugin, IPluginXML, IPluginGraphics
     {
         void SetScreen(Screen screen);
+        void SetRealViewportSize(Point realViewportSize);
     }
 
+    public interface ITileInfluenceInfo : IBasePlugin, IPluginXML, IPluginGraphics
+    {
+        void SetScreen(Screen screen);
+        void SetRealViewportSize(Point realViewportSize);
+        void UpdateTileInfo(Point mousePosition, int leftEdge, int topEdge, int tileWidth, int tileHeight);
+        bool IsShowing { get; set; }
+    }
 
 
     public interface ISideBar : IBasePlugin, IPluginXML
@@ -545,5 +568,80 @@ namespace PluginInterface
 
 
  
+
+ 
+
+    /// <summary>
+    /// 游戏内数据编辑器接口 (类似威力加强版)
+    /// </summary>
+    public interface IInGameEditor : IBasePlugin, IPluginXML, IPluginGraphics
+    {
+        /// <summary>
+        /// 设置Screen引用
+        /// </summary>
+        void SetScreen(Screen screen);
+        
+        /// <summary>
+        /// 设置要编辑的对象
+        /// </summary>
+        void SetEditTarget(object target);
+        
+        /// <summary>
+        /// 设置编辑器位置
+        /// </summary>
+        void SetPosition(ShowPosition showPosition);
+        
+        /// <summary>
+        /// 设置数字输入器引用
+        /// </summary>
+        void SetNumberInputer(INumberInputer iNumberInputer);
+        
+        /// <summary>
+        /// 保存更改
+        /// </summary>
+        void SaveChanges();
+        
+        /// <summary>
+        /// 取消更改
+        /// </summary>
+        void CancelChanges();
+        
+        /// <summary>
+        /// 是否正在显示
+        /// </summary>
+        bool IsShowing { get; set; }
+        
+        /// <summary>
+        /// 当前编辑的对象
+        /// </summary>
+        object EditTarget { get; }
+        
+        /// <summary>
+        /// 编辑器类型
+        /// </summary>
+        EditorType CurrentEditorType { get; }
+        
+        void ShowPersonEditMenu(GameObjects.Person person);
+        void ShowTitleEditMenu(GameObjects.Person person);
+        void ShowTreasureEditMenu(GameObjects.Person person);
+        void ShowSkillEditMenu(GameObjects.Person person);
+        void ShowGlobalTreasureEditMenu(GameObjects.Treasure treasure);
+        void ShowGlobalTitleEditMenu(GameObjects.PersonDetail.Title title);
+        void ShowGlobalSkillEditMenu(GameObjects.PersonDetail.Skill skill);
+        void FinishInfluenceSelection(System.Collections.Generic.List<object> influences);
+    }
+    
+    /// <summary>
+    /// 编辑器类型枚举
+    /// </summary>
+    public enum EditorType
+    {
+        None,
+        Person,       // 武将编辑
+        Architecture, // 城池编辑
+        Faction,      // 势力编辑
+        Military,     // 编队编辑
+        Troop         // 部队编辑
+    }
 
 }

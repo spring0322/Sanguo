@@ -8,6 +8,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind1020 : InfluenceKind
     {
+        [DataMember]
         private int increment;
 
         public override void ApplyInfluenceKind(Architecture architecture)

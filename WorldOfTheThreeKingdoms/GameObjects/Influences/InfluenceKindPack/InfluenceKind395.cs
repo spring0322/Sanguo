@@ -1,5 +1,6 @@
 ﻿using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -23,7 +24,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             if (!this.IsVaild(destination))
             {
@@ -33,7 +34,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             int pureFightingForce = source.PureFightingForce;
             foreach (Troop troop in source.GetAreaStratagemTroops(destination, true))
             {
-                int num3 = source.GetStratagemSuccessChanceCredit(troop, false, false, false);
+                int num3 = source.GetStratagemSuccessChanceCredit(stratagem, troop, false, false, false);
                 if (num3 > 0)
                 {
                     num3 = (num3 * troop.FightingForce) / pureFightingForce;

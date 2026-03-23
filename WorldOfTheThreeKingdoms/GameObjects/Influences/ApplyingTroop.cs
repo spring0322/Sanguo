@@ -14,6 +14,7 @@ namespace GameObjects.Influences
         [DataMember]
         public int applierID;
 
+        private ApplyingTroop() { }
         public ApplyingTroop(Troop a, Applier p, int i)
         {
             this.troop = a;

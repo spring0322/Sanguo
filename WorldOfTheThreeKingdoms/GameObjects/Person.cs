@@ -11,6 +11,8 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using Tools;
+using WorldOfTheThreeKingdoms.GameGlobal;
+using WorldOfTheThreeKingdoms.GameManager;
 
 namespace GameObjects
 {
@@ -29,7 +31,8 @@ namespace GameObjects
 
     //using GameObjects.PersonDetail.PersonMessages;
     [DataContract]
-    public class Person : GameObject
+    [GenerateUIAccessor]  // 🔥 2026-03-06 修复：添加源生成器特性，支持 UI 访问 Person 属性和方法
+    public partial class Person : GameObject, WorldOfTheThreeKingdoms.GameGlobal.IPropertyAccessor
     {
         private int maxExperience = Session.GlobalVariables.maxExperience;
 
@@ -296,6 +299,17 @@ namespace GameObjects
 
         public Biography PersonBiography;
 
+        /// <summary>
+        /// 人物传记ID（用于序列化和UI访问）
+        /// </summary>
+        public int PersonBiographyID => PersonBiography?.ID ?? -1;
+
+        /// <summary>
+        /// 蜜月期剩余月数（新加入势力的武将）
+        /// </summary>
+        [DataMember]
+        public int HoneymoonMonths { get; set; } = 0;
+
         private int pictureIndex;
         private int politics;
         private float politicsExperience;
@@ -323,17 +337,20 @@ namespace GameObjects
         private int reputation;
 
         [DataMember]
-        public bool RewardFinished;
+        public bool RewardFinished = false;  // 显式初始化为 false
 
         private int routCount;
         private int routedCount;
         private bool sex = false;
         private float shuijunExperience;
 
-        [DataMember]
-        public string SkillsString { get; set; }
-        
         public SkillTable Skills = new SkillTable();
+
+        /// <summary>
+        /// 技能ID列表（用于序列化）
+        /// </summary>
+        [DataMember]
+        public List<int> SkillIDs { get; set; } = [];
 
         private Person spouse = null;
         private int strain;
@@ -357,12 +374,16 @@ namespace GameObjects
         public Person marriageGranter;
 
         [DataMember]
-        public string StuntsString { get; set; }
-
-        [DataMember]
         public int StudyingStuntString { get; set; }        
 
         public StuntTable Stunts = new StuntTable();
+
+        /// <summary>
+        /// 特技ID列表（用于序列化）
+        /// </summary>
+        [DataMember]
+        public List<int> StuntIDs { get; set; } = [];
+
         private string surName;
         private float tacticsExperience;
 
@@ -371,15 +392,18 @@ namespace GameObjects
 
         public TreasureList Treasures = new TreasureList();
 
+        /// <summary>
+        /// 宝物ID列表（用于序列化）
+        /// </summary>
+        [DataMember]
+        public List<int> TreasureIDs { get; set; } = [];
+
         private PersonValuationOnGovernment valuationOnGovernment;
         private ArchitectureWorkKind workKind = ArchitectureWorkKind.无;
         private int yearAvailable;
         private int yearBorn;
         private int yearDead;
         private Dictionary<Person, int> relations = new Dictionary<Person, int>();
-
-        [DataMember]
-        public string RealTitlesString { get; set; }
 
         [DataMember]
         public int PersonalTitleString { get; set; }
@@ -391,6 +415,12 @@ namespace GameObjects
         public int StudyingTitleString { get; set; }
 
         public List<Title> RealTitles = new List<Title>();
+
+        /// <summary>
+        /// 称号ID列表（用于序列化）
+        /// </summary>
+        [DataMember]
+        public List<int> TitleIDs { get; set; } = [];
 
         public MilitaryKindTable UniqueMilitaryKinds = new MilitaryKindTable();
         public TitleTable UniqueTitles = new TitleTable();
@@ -408,8 +438,9 @@ namespace GameObjects
 
         private Person waitForFeiZi = null;
 
-        [DataMember]
-        public int waitForFeiZiPeriod = 0;
+        // 🔥 2026-03-06 修复：移除 [DataMember]，避免与 WaitForFeiZiPeriod 属性冲突
+        // 序列化通过属性进行，不直接序列化字段
+        private int waitForFeiZiPeriod = 0;
 
         [DataMember]
         public int waitForFeiziId;
@@ -506,22 +537,61 @@ namespace GameObjects
 
         private Captive belongedCaptive;
 
-        //[DataMember]
+        /// <summary>
+        /// 🔥 根本修复：添加 BelongedCaptiveID 用于序列化
+        /// 日期：2026-03-07
+        /// 问题：BelongedCaptive 没有 [DataMember]，序列化后引用丢失
+        ///       导致 Status == Captive 但 BelongedCaptive == null
+        /// </summary>
+        [DataMember]
+        public int BelongedCaptiveID { get; set; } = -1;
+
+        /// <summary>
+        /// 🔥 根本修复：添加延迟加载机制
+        /// 日期：2026-03-07
+        /// 问题：反序列化后 belongedCaptive 为 null，但 BelongedCaptiveID 有值
+        /// 解决：getter 中添加延迟加载，根据 BelongedCaptiveID 自动加载 Captive 对象
+        /// </summary>
         public Captive BelongedCaptive
         {
             get
             {
+                // 延迟加载：如果字段为 null 但 ID 有效，自动加载
+                if (belongedCaptive == null && BelongedCaptiveID > 0)
+                {
+                    // 🔥 安全检查：确保 Session 和 Scenario 已初始化
+                    // 日期：2026-03-07
+                    // 原因：游戏初始化阶段可能访问此属性，但 Session 尚未完全初始化
+                    // 解决：延迟加载会在后续访问时重试（当 Session 初始化完成后）
+                    if (Session.Current != null && Session.Current.Scenario != null && Session.Current.Scenario.Captives != null)
+                    {
+                        belongedCaptive = Session.Current.Scenario.Captives.GetGameObject(BelongedCaptiveID) as Captive;
+                        
+                        #if DEBUG
+                        if (belongedCaptive != null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[BelongedCaptive延迟加载] 人物 {this.Name}(ID:{this.ID}) 加载俘虏对象");
+                        }
+                        else if (this.Status == PersonStatus.Captive)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[BelongedCaptive延迟加载] ⚠️ 人物 {this.Name}(ID:{this.ID}) Status=Captive 但无法加载俘虏对象 ID={BelongedCaptiveID}");
+                        }
+                        #endif
+                    }
+                }
+                
                 return belongedCaptive;
             }
             set
             {
                 belongedCaptive = value;
+                BelongedCaptiveID = value != null ? value.ID : -1;
             }
         }
 
         public void SetBelongedCaptive(Captive c, PersonStatus newState)
         {
-            this.belongedCaptive = c;
+            this.BelongedCaptive = c;  // 使用属性而非字段，自动同步 ID
             if (c == null)
             {
                 this.Status = newState;
@@ -606,6 +676,9 @@ namespace GameObjects
             }
         }
 
+        [DataMember]
+        public int LocationTroopID { get; set; } = -1;
+
         private Architecture locationArchitecture = null;
         public Architecture LocationArchitecture
         {
@@ -618,6 +691,12 @@ namespace GameObjects
                 locationArchitecture = value;
             }
         }
+
+        [DataMember]
+        public int LocationArchitectureID { get; set; } = -1;
+
+        [DataMember]
+        public int BelongedFactionID { get; set; } = -1;
 
         //private Dictionary<int, Treasure> effectiveTreasures = new Dictionary<int, Treasure>();
         public Dictionary<int, Treasure> effectiveTreasures = new Dictionary<int, Treasure>();
@@ -1224,7 +1303,10 @@ namespace GameObjects
                 }
                 else if (this.Status == PersonStatus.Captive)
                 {
-                    return this.BelongedCaptive.CaptiveFaction;
+                    // 🔥 修复：延迟加载确保 BelongedCaptive 不为 null
+                    // 日期：2026-03-07
+                    // 如果延迟加载失败，BelongedCaptive 仍为 null，返回 null 而非崩溃
+                    return this.BelongedCaptive?.CaptiveFaction;
                 }
                 return null;
             }
@@ -1264,16 +1346,12 @@ namespace GameObjects
             }
         }
 
+        // 🔥 2026-03-06 修复：添加 [DataMember]，通过属性序列化而非字段
+        [DataMember]
         public int WaitForFeiZiPeriod
         {
-            get
-            {
-                return waitForFeiZiPeriod;
-            }
-            set
-            {
-                waitForFeiZiPeriod = value;
-            }
+            get => waitForFeiZiPeriod;
+            set => waitForFeiZiPeriod = value;
         }
 
 
@@ -1396,8 +1474,17 @@ namespace GameObjects
 
         public List<string> LoadTitleFromString(String s, TitleTable allTitles)
         {
-            List<string> errorMsg = new List<string>();
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
+            List<string> errorMsg = [];
+
+            // 🔥 数据源已在 TitleTable.OnDeserialized 和 GameScenario.Init 中保障
+            // 此处不需要防御性空检查，如果为 null 说明数据流有严重问题，应该崩溃以暴露错误
+
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                return errorMsg; // 空字符串不是错误
+            }
+
+            char[] separator = [' ', '\n', '\r', '\t'];
             string[] strArray = s.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             Title title = null;
             try
@@ -4950,7 +5037,12 @@ namespace GameObjects
         {
             float v = 0;
             v += (-Person.GetIdealOffset(target, src) * 0.6f + src.IdealTendency.Offset * 0.2f + target.IdealTendency.Offset * 0.2f) * idealFactor;
-            v += target.Glamour / 5.0f - 10.0f;
+            // 🔥 ANTI-STACK-OVERFLOW：使用 BaseGlamour 而不是 Glamour
+            // 日期：2026-03-19
+            // 原因：当从 Loyalty 属性调用此方法时，访问 Glamour 会形成循环
+            //       循环：Loyalty → GetIdealAttraction → target.Glamour → GetLoyaltyFactor(Loyalty) → Loyalty
+            // 解决：使用 BaseGlamour（基础字段，不访问 Loyalty）
+            v += target.BaseGlamour / 5.0f - 10.0f;
             v -= Math.Abs(target.Karma - src.Karma) / 2.5f;
             v += (float) (Math.Sign(target.Karma) * Math.Sqrt(Math.Abs(target.Karma)));
 
@@ -5829,6 +5921,60 @@ namespace GameObjects
             }
         }
 
+        /// <summary>
+        /// 接受褒赏，增加忠诚度
+        /// </summary>
+        /// <param name="rewardCost">褒赏花费的资金</param>
+        /// <returns>忠诚度增量</returns>
+        public int ReceiveReward(int rewardCost)
+        {
+            // 计算忠诚度增量（根据义理、当前忠诚度等因素）
+            int increase = CalculateLoyaltyIncrease(rewardCost);
+            
+            // 增加临时忠诚度
+            TempLoyaltyChange += increase;
+            
+            // 标记本月已褒赏
+            RewardFinished = true;
+            
+            return increase;
+        }
+
+        /// <summary>
+        /// 计算褒赏带来的忠诚度增量
+        /// </summary>
+        private int CalculateLoyaltyIncrease(int rewardCost)
+        {
+            // 基础增量
+            int baseIncrease = rewardCost / 100;
+            
+            // 义理影响：义理越低，金钱效果越好
+            int personalLoyaltyValue = (int)PersonalLoyalty;
+            float loyaltyMultiplier = personalLoyaltyValue switch
+            {
+                0 => 2.0f,  // 很低：见钱眼开
+                1 => 1.5f,  // 低
+                2 => 1.0f,  // 普通
+                3 => 0.7f,  // 高
+                _ => 0.5f   // 很高：视金钱如粪土
+            };
+            
+            // 当前忠诚度影响：忠诚度越低，提升越明显
+            int currentLoyalty = Loyalty;
+            float currentLoyaltyMultiplier = currentLoyalty switch
+            {
+                < 50  => 1.5f,
+                < 75  => 1.2f,
+                < 90  => 1.0f,
+                _     => 0.8f  // >= 90
+            };
+            
+            int finalIncrease = (int)(baseIncrease * loyaltyMultiplier * currentLoyaltyMultiplier);
+            
+            // 限制最大增量（避免一次褒赏涨太多）
+            return Math.Min(finalIncrease, 20);
+        }
+
         private bool MeetAvailableCondition()
         {
             return ((((this.Alive && !this.Available) && (this.YearAvailable <= Session.Current.Scenario.Date.Year)) && ((((Session.GlobalVariables.CommonPersonAvailable && (base.ID >= 0)) && (base.ID <= 6999)) || ((Session.GlobalVariables.AdditionalPersonAvailable && (base.ID >= 8000)) && (base.ID <= 8999))) || ((Session.GlobalVariables.PlayerPersonAvailable && (base.ID >= 9000))))) && !Session.Current.Scenario.PreparedAvailablePersons.HasGameObject(this));
@@ -5920,6 +6066,19 @@ namespace GameObjects
                 this.BelongedFaction.IncreaseReputation(this.MonthIncrementOfFactionReputation);
             }
             this.AdjustIdeal();
+            
+            // 🔥 蜜月期倒计时逻辑
+            if (HoneymoonMonths > 0)
+            {
+                HoneymoonMonths--;
+                
+                // 蜜月期结束时，清空临时忠诚度池
+                if (HoneymoonMonths == 0)
+                {
+                    TempLoyaltyChange = 0;
+                }
+            }
+            
             if (BelongedArchitecture != null)
             {
                 foreach (Title title in Titles)
@@ -5938,6 +6097,74 @@ namespace GameObjects
                         }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 为新剧本初始化蜜月期（所有武将都获得蜜月期buff）
+        /// </summary>
+        public void InitializeHoneymoonForNewScenario()
+        {
+            // 只有已经属于某个势力的武将才需要初始化蜜月期
+            if (BelongedFaction == null) return;
+            
+            // 🔧 重置褒赏标记（新开剧本时，所有武将都应该可以被褒赏）
+            RewardFinished = false;
+            
+            // 🔥 关键修复：先清零临时忠诚度，确保读取的是基础忠诚度
+            // 日期：2026-03-17
+            // 原因：如果 TempLoyaltyChange 已有值（从数据文件加载），会导致 realLoyalty 偏高，蜜月期不会被初始化
+            TempLoyaltyChange = 0;
+            HoneymoonMonths = 0;
+            
+            // 1. 读取真实忠诚度（基础忠诚度，不含临时加成）
+            int realLoyalty = Loyalty;
+            
+            // 2. 设定入职保底线（义理越高，保底越高：80-88）
+            int guaranteedLoyalty = 80 + ((int)PersonalLoyalty * 2);
+            
+            #if DEBUG
+            // 🔥 调试日志：输出关键变量
+            System.Diagnostics.Debug.WriteLine($"[蜜月期检查] {Name}(ID:{ID}): 忠诚度={realLoyalty}, 义理={(int)PersonalLoyalty}, 保底线={guaranteedLoyalty}, 势力={BelongedFaction?.Name ?? "null"}");
+            #endif
+            
+            if (realLoyalty < guaranteedLoyalty)
+            {
+                // 算出需要补齐的差额，注入临时池
+                TempLoyaltyChange = guaranteedLoyalty - realLoyalty;
+                
+                // 3. 计算蜜月期时长
+                int duration = 6; // 保底6个月
+                
+                // 义理加成：义理越高，蜜月期越长（最高+8个月）
+                duration += ((int)PersonalLoyalty * 2);
+                
+                // 野心惩罚：野心越高，越快露出真面目（最高-4个月）
+                duration -= (int)Ambition;
+                
+                // 相性差惩罚：计算与君主的最短相性差（0-75）
+                int idealDiff = Math.Abs(Ideal - BelongedFaction.Leader.Ideal);
+                if (idealDiff > 75) idealDiff = 150 - idealDiff;
+                
+                // 相性越近蜜月期越长（相性完全一致可额外+7个月，完全相反则+0）
+                duration += (75 - idealDiff) / 10;
+                
+                // 最终写入字段，确保绝对下限为6
+                HoneymoonMonths = (byte)Math.Max(6, duration);
+                
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[蜜月期] {Name}(ID:{ID}): ✅ 获得蜜月期 {HoneymoonMonths}月, 临时忠诚+{TempLoyaltyChange}");
+                #endif
+            }
+            else
+            {
+                // 如果真实忠诚度本来就高于保底线，则不需要蜜月期
+                HoneymoonMonths = 0;
+                TempLoyaltyChange = 0;
+                
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[蜜月期] {Name}(ID:{ID}): ⏭️ 跳过（忠诚度{realLoyalty} >= 保底线{guaranteedLoyalty}）");
+                #endif
             }
         }
 
@@ -6150,6 +6377,29 @@ namespace GameObjects
             if (this.Status == PersonStatus.Captive || this.Status == PersonStatus.Princess) return;
 
             if (this.LocationTroop != null && !this.LocationTroop.Destroyed && !removeFromTroop) return;
+
+            // 【新增】如果涉及势力变化，通知AI缓存管理器
+            bool factionChanged = false;
+            if (this.LocationArchitecture != null && a != null && 
+                this.LocationArchitecture.BelongedFaction != a.BelongedFaction)
+            {
+                factionChanged = true;
+                try
+                {
+                    if (WorldOfTheThreeKingdoms.GameManager.AICacheManager.Instance != null)
+                    {
+                        // 如果是重要人物移动且涉及势力变化，标记地图为脏
+                        if (this.BelongedFaction?.Leader == this || this == this.BelongedFaction?.Advisor)
+                        {
+                            WorldOfTheThreeKingdoms.GameManager.AICacheManager.Instance.SetMapDirty();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MoveToArchitecture] AI缓存更新失败: {ex.Message}");
+                }
+            }
 
             if (this.LocationArchitecture != a || startingPoint != null)
             {
@@ -7714,6 +7964,32 @@ namespace GameObjects
             }
         }
 
+        // 🔥 2026-03-06 添加：五维升级所需经验（UI 访问）
+        /// <summary>
+        /// 武力升级所需经验值
+        /// </summary>
+        public int StrengthLevelUpNeedExp => maxExperience;
+
+        /// <summary>
+        /// 统率升级所需经验值
+        /// </summary>
+        public int CommandLevelUpNeedExp => maxExperience;
+
+        /// <summary>
+        /// 智力升级所需经验值
+        /// </summary>
+        public int IntelligenceLevelUpNeedExp => maxExperience;
+
+        /// <summary>
+        /// 政治升级所需经验值
+        /// </summary>
+        public int PoliticsLevelUpNeedExp => maxExperience;
+
+        /// <summary>
+        /// 魅力升级所需经验值
+        /// </summary>
+        public int GlamourLevelUpNeedExp => maxExperience;
+
         public int GossipAbility
         {
             get
@@ -8131,7 +8407,13 @@ namespace GameObjects
             {
                 if (this.BelongedFaction != null)
                 {
-                    if (this == this.BelongedFaction.Leader) return 999;
+                    // 🔥 ANTI-STACK-OVERFLOW：避免触发 Faction.Leader 的延迟加载
+                    // 日期：2026-03-19
+                    // 原因：直接访问 Leader 属性会触发延迟加载逻辑，可能导致循环调用
+                    //       循环：Loyalty → Leader.get → GetMaxMeritPerson → Merit → Glamour → GetLoyaltyFactor(Loyalty) → Loyalty
+                    // 解决：直接使用 LeaderID 字段判断，避免触发 Leader 属性的 getter
+                    // 注意：ID=0 是有效的（阿会喃的ID就是0），必须使用 >= 0 判断
+                    if (this.BelongedFaction.LeaderID >= 0 && this.ID == this.BelongedFaction.LeaderID) return 999;
 
                     if (this.NvGuan && this.NvGuanFollower(false, null)?.BelongedFaction == this.BelongedFaction) return 999;
 
@@ -8145,7 +8427,73 @@ namespace GameObjects
                     v += (this.PersonalLoyalty - 2) * 15;
                     v -= (this.Ambition - 2) * 5;
 
-                    v += Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.guanjuedezhongleizidian[this.BelongedFaction.guanjue].Loyalty;
+                    // 官爵加成：正面效果提高2.5倍，负面效果保持原值
+                    // 🔥 ANTI-BAND-AID：Fail Fast with clear error message
+                    // 日期：2026-03-18
+                    // 原因：CommonData 必须在 EnsureCommonDataLoaded() 中加载
+                    //       如果这里为 null，说明加载流程有严重错误
+                    
+                    // 🔥 逐层检查，给出明确的错误信息
+                    if (Session.Current == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"无法计算忠诚度：Session.Current 为 null。\n" +
+                            $"游戏会话未初始化。\n" +
+                            $"Person: ID={this.ID}, Name={this.Name}");
+                    }
+                    
+                    if (Session.Current.Scenario == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"无法计算忠诚度：Scenario 为 null。\n" +
+                            $"剧本未加载。\n" +
+                            $"Person: ID={this.ID}, Name={this.Name}");
+                    }
+                    
+                    if (Session.Current.Scenario.GameCommonData == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"无法计算忠诚度：GameCommonData 为 null。\n" +
+                            $"Person: ID={this.ID}, Name={this.Name}, BelongedFaction={this.BelongedFaction?.Name ?? "null"}\n" +
+                            $"可能原因：\n" +
+                            $"1. EnsureCommonDataLoaded() 未执行\n" +
+                            $"2. EnsureCommonDataLoaded() 失败\n" +
+                            $"3. 在 LoadFromDTO() 阶段访问了 Loyalty（应该在 EnsureCommonDataLoaded 之后）\n" +
+                            $"调用堆栈将显示访问 Loyalty 的位置。");
+                    }
+                    
+                    if (Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"无法计算忠诚度：suoyouguanjuezhonglei 为 null。\n" +
+                            $"GameCommonData 加载不完整。\n" +
+                            $"Person: ID={this.ID}, Name={this.Name}");
+                    }
+                    
+                    if (Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.guanjuedezhongleizidian == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"无法计算忠诚度：官爵字典为 null。\n" +
+                            $"GameCommonData 加载不完整。\n" +
+                            $"Person: ID={this.ID}, Name={this.Name}");
+                    }
+                    
+                    // 🔥 数据容错：字典中可能不存在该官爵ID（数据配置问题）
+                    var guanjueDict = Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.guanjuedezhongleizidian;
+                    if (guanjueDict.TryGetValue(this.BelongedFaction.guanjue, out var guanjuezhonglei))
+                    {
+                        int guanjueBonus = guanjuezhonglei.Loyalty;
+                        v += guanjueBonus > 0 ? (int)(guanjueBonus * 2.5) : guanjueBonus;
+                    }
+                    #if DEBUG
+                    else
+                    {
+                        // 🔥 数据配置错误：官爵ID在字典中不存在
+                        System.Diagnostics.Debug.WriteLine(
+                            $"⚠️ 数据配置错误：势力 {this.BelongedFaction.Name}(ID:{this.BelongedFaction.ID}) " +
+                            $"的官爵ID {this.BelongedFaction.guanjue} 在字典中不存在");
+                    }
+                    #endif
 
                     v += Math.Min(20, this.ServedYears / 2);
 
@@ -8162,7 +8510,12 @@ namespace GameObjects
                         }
                         else
                         {
-                            v += (this.BelongedFaction.Leader.Glamour - 50) / 50 * 10;
+                            // 🔥 ANTI-STACK-OVERFLOW：使用 BaseGlamour 而不是 Glamour
+                            // 日期：2026-03-19
+                            // 原因：Glamour 属性会调用 GetLoyaltyFactor(this.Loyalty)，形成循环
+                            //       循环：Loyalty → factionLeader.Glamour → GetLoyaltyFactor(Loyalty) → Loyalty
+                            // 解决：使用 BaseGlamour（基础字段，不访问 Loyalty）
+                            v += (this.BelongedFaction.Leader.BaseGlamour - 50) / 50 * 10;
                         }
                         v += Person.GetIdealAttraction(this.BelongedFaction.Leader, this, 0.5f);
                     }
@@ -8174,7 +8527,10 @@ namespace GameObjects
                         }
                         else
                         {
-                            v += (int)((this.BelongedArchitecture.Mayor.Glamour - 50) / 50 * 5 * Math.Min(1, this.BelongedArchitecture.MayorOnDutyDays / 90.0f));
+                            // 🔥 ANTI-STACK-OVERFLOW：使用 BaseGlamour 而不是 Glamour
+                            // 日期：2026-03-19
+                            // 原因：Glamour 属性会调用 GetLoyaltyFactor(this.Loyalty)，形成循环
+                            v += (int)((this.BelongedArchitecture.Mayor.BaseGlamour - 50) / 50 * 5 * Math.Min(1, this.BelongedArchitecture.MayorOnDutyDays / 90.0f));
                         }
 
                     }
@@ -8248,6 +8604,50 @@ namespace GameObjects
                     return (int) v;
                 }
                 return 0;
+            }
+        }
+
+        /// <summary>
+        /// 显示用忠诚度（使用君主和军师智力中的较高者来减少误差）
+        /// </summary>
+        public int LoyaltyDisplay
+        {
+            get
+            {
+                // 获取真实忠诚度
+                int realLoyalty = Loyalty;
+                
+                // 无势力武将，直接返回0
+                if (BelongedFaction == null) return 0;
+                
+                // Anti-Band-Aid 合规：Leader 不应为 null，如果为 null 则崩溃暴露问题
+                Person leader = BelongedFaction.Leader;
+                int leaderInt = leader.BaseIntelligence;
+                
+                // Advisor 可以为 null（势力可以没有军师）
+                Person advisor = BelongedFaction.Advisor;
+                int advisorInt = advisor is not null ? advisor.BaseIntelligence : 0;
+                
+                // 选择君主和军师中智力较高者
+                int effectiveInt = Math.Max(leaderInt, advisorInt);
+                
+                // 🔥 智力 ≥100：显示真实值（完全洞察人心）
+                if (effectiveInt >= 100)
+                {
+                    return realLoyalty;
+                }
+                
+                // 智力 <100：误差随智力降低
+                // 智力 99 → 误差 ±2
+                // 智力 80 → 误差 ±6
+                // 智力 60 → 误差 ±10
+                // 智力 0 → 误差 ±20
+                int errorRange = 20 - (effectiveInt * 18 / 100);  // 20 - (0~18)
+                errorRange = Math.Max(2, errorRange);  // 最小误差 ±2
+                
+                int randomError = GameObject.Random(-errorRange, errorRange + 1);
+                int displayValue = realLoyalty + randomError;
+                return Math.Clamp(displayValue, 0, 150);
             }
         }
 
@@ -8353,7 +8753,8 @@ namespace GameObjects
         {
             get
             {
-                return (int)(Math.Min((int)((this.CommandIncludingExperience + this.InfluenceIncrementOfCommand) * this.InfluenceRateOfCommand), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * this.huaiyunAbilityFactor * this.InjureRate);
+                float loyaltyFactor = GetLoyaltyFactor(this.Loyalty);
+                return (int)(Math.Min((int)((this.CommandIncludingExperience + this.InfluenceIncrementOfCommand) * this.InfluenceRateOfCommand), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * loyaltyFactor * this.huaiyunAbilityFactor * this.InjureRate);
             }
         }
 
@@ -8393,7 +8794,8 @@ namespace GameObjects
         {
             get
             {
-                return (int)(Math.Min((int)((this.GlamourIncludingExperience + this.InfluenceIncrementOfGlamour) * this.InfluenceRateOfGlamour), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * this.huaiyunAbilityFactor * this.InjureRate);
+                float loyaltyFactor = GetLoyaltyFactor(this.Loyalty);
+                return (int)(Math.Min((int)((this.GlamourIncludingExperience + this.InfluenceIncrementOfGlamour) * this.InfluenceRateOfGlamour), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * loyaltyFactor * this.huaiyunAbilityFactor * this.InjureRate);
             }
         }
 
@@ -8409,7 +8811,8 @@ namespace GameObjects
         {
             get
             {
-                return (int)(Math.Min((int)((this.IntelligenceIncludingExperience + this.InfluenceIncrementOfIntelligence) * this.InfluenceRateOfIntelligence), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * this.huaiyunAbilityFactor * this.InjureRate);
+                float loyaltyFactor = GetLoyaltyFactor(this.Loyalty);
+                return (int)(Math.Min((int)((this.IntelligenceIncludingExperience + this.InfluenceIncrementOfIntelligence) * this.InfluenceRateOfIntelligence), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * loyaltyFactor * this.huaiyunAbilityFactor * this.InjureRate);
             }
         }
 
@@ -8441,7 +8844,8 @@ namespace GameObjects
         {
             get
             {
-                return (int)(Math.Min((int)((this.PoliticsIncludingExperience + this.InfluenceIncrementOfPolitics) * this.InfluenceRateOfPolitics), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * this.huaiyunAbilityFactor * this.InjureRate);
+                float loyaltyFactor = GetLoyaltyFactor(this.Loyalty);
+                return (int)(Math.Min((int)((this.PoliticsIncludingExperience + this.InfluenceIncrementOfPolitics) * this.InfluenceRateOfPolitics), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * loyaltyFactor * this.huaiyunAbilityFactor * this.InjureRate);
             }
         }
 
@@ -8465,7 +8869,8 @@ namespace GameObjects
         {
             get
             {
-                return (int)(Math.Min((int)((this.StrengthIncludingExperience + this.InfluenceIncrementOfStrength) * this.InfluenceRateOfStrength), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * this.huaiyunStrengthFactor * this.InjureRate);
+                float loyaltyFactor = GetLoyaltyFactor(this.Loyalty);
+                return (int)(Math.Min((int)((this.StrengthIncludingExperience + this.InfluenceIncrementOfStrength) * this.InfluenceRateOfStrength), Session.GlobalVariables.MaxAbility) * this.TirednessFactor * this.AbilityAgeFactor * this.RelationAbilityFactor * loyaltyFactor * this.huaiyunStrengthFactor * this.InjureRate);
             }
         }
 
@@ -9756,13 +10161,15 @@ namespace GameObjects
         {
             PersonGeneratorType gernrateType = new PersonGeneratorType();
             
-            //int[] weights = new int[10];
-            int typeCount = Session.Current.Scenario.GameCommonData.AllPersonGeneratorTypes.Count;
-            Dictionary<int, int> weights = new Dictionary<int, int>();
+            Dictionary<int, int> weights = [];
 
-            foreach (PersonGeneratorType type in Session.Current.Scenario.GameCommonData.AllPersonGeneratorTypes)
+            // 🔥 修复：防御性类型检查，避免反序列化数据污染
+            foreach (GameObject obj in Session.Current.Scenario.GameCommonData.AllPersonGeneratorTypes.GameObjects)
             {
-                weights[type.ID] = type.generationChance;
+                if (obj is PersonGeneratorType type)
+                {
+                    weights[type.ID] = type.generationChance;
+                }
             }
 
             int total = 0;
@@ -11294,6 +11701,27 @@ namespace GameObjects
             }
         }
 
+        /// <summary>
+        /// 获取忠诚度对能力发挥的影响系数
+        /// 日期：2026-03-17
+        /// 规则：忠诚度 >= 90 时 100% 发挥，< 90 时按比例降低，保底 60%
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private float GetLoyaltyFactor(int loyalty)
+        {
+            // 🔥 关键：检查全局开关
+            if (!Session.GlobalVariables.EnableLoyaltyAbilityFactor)
+            {
+                return 1f;
+            }
+
+            // 安全区：忠诚度 >= 90 时 100% 发挥
+            if (loyalty >= 90) return 1f;
+            
+            // 90 以下：按真实忠诚度打折，保底 60%
+            return Math.Max(0.6f, loyalty / 100f);
+        }
+
         public bool Closes(Person p)
         {
             return this.closePersons.GameObjects.Contains(p);
@@ -11874,6 +12302,13 @@ namespace GameObjects
                 }
             }
         }
+
+        /// <summary>
+        /// 蜜月期结束事件记录
+        /// </summary>
+        /// <param name="PersonId">武将ID</param>
+        /// <param name="PersonName">武将姓名</param>
+        public record HoneymoonEndEvent(int PersonId, string PersonName);
     }
 }
 

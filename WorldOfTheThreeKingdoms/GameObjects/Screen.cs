@@ -1,4 +1,4 @@
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
@@ -69,6 +69,8 @@ namespace GameObjects
             this.SelectingDisableRects = new List<Rectangle>();
             this.UndoneWorks = new Stack<UndoneWorkItem>();
             this.UndoneWorks.Push(new UndoneWorkItem(UndoneWorkKind.None, UndoneWorkSubKind.None));
+            // 🔥 修复 NullReferenceException：初始化 InitializationFactionIDs
+            this.InitializationFactionIDs = new List<int>();
         }
 
         public virtual void FullScreen() { }
@@ -997,7 +999,7 @@ namespace GameObjects
             
         }
 
-        public virtual void xiejinxingjilu(string shijian, string TextResultString, string TextDestinationString, Point point)
+        public virtual void xiejinxingjilu(Person person, string shijian, string TextResultString, string TextDestinationString, Point point)
         {
             
         }

@@ -1,5 +1,5 @@
-﻿using GameFreeText;
-using GameGlobal;
+using GameFreeText;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -15,7 +15,7 @@ using WorldOfTheThreeKingdoms;
 namespace ArchitectureDetail
 {
 
-    public class ArchitectureDetailPlugin : GameObject, IArchitectureDetail, IBasePlugin, IPluginXML, IPluginGraphics
+    public partial class ArchitectureDetailPlugin : GameObject, IArchitectureDetail, IBasePlugin, IPluginXML, IPluginGraphics
     {
         private ArchitectureDetail architectureDetail = new ArchitectureDetail();
         private string author = "clip_on";
@@ -2809,6 +2809,10 @@ namespace ArchitectureDetail
                 }
                 if (this.architectureDetail.Switch23 == "on")
                 {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[ArchitectureDetailPlugin.SetArchitecture] 🎨 开始加载特色纹理");
+                    System.Diagnostics.Debug.WriteLine($"[ArchitectureDetailPlugin.SetArchitecture] 📋 ID1={this.architectureDetail.TheCharacteristicShowID1}, ID2={this.architectureDetail.TheCharacteristicShowID2}, ID3={this.architectureDetail.TheCharacteristicShowID3}");
+#endif
                     this.architectureDetail.TheCharacteristicShow1 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID1.ToString() + ".png");
                     this.architectureDetail.TheCharacteristicShow2 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID2.ToString() + ".png");
                     this.architectureDetail.TheCharacteristicShow3 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID3.ToString() + ".png");
@@ -2839,6 +2843,9 @@ namespace ArchitectureDetail
                     this.architectureDetail.TheCharacteristicShow28 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID28.ToString() + ".png");
                     this.architectureDetail.TheCharacteristicShow29 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID29.ToString() + ".png");
                     this.architectureDetail.TheCharacteristicShow30 = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureDetail\Data\TheInformationPage\Characteristic\" + this.architectureDetail.TheCharacteristicShowID30.ToString() + ".png");
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[ArchitectureDetailPlugin.SetArchitecture] ✅ 特色纹理加载完成");
+#endif
                 }               
             }
         }

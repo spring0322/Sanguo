@@ -4,7 +4,7 @@ using System.IO;
 using System.Xml;
 using GameObjects;
 using Platforms;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager; // For Session
 
 namespace WorldOfTheThreeKingdoms.GameManager
@@ -46,20 +46,43 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
             rules.Clear();
             
-            // 从 Plugins 文件夹加载配置
-            string filePath = "Plugins/AppellationConfig.xml";
+            // 尝试多个可能的路径
+            string[] possiblePaths = {
+                "Content/Data/Plugins/AppellationConfig.xml",
+                Path.Combine("Content", "Data", "Plugins", "AppellationConfig.xml"),
+                "Plugins/AppellationConfig.xml",
+                Path.Combine("bin", "Win", "Content", "Data", "Plugins", "AppellationConfig.xml"),
+                Path.Combine("WorldOfTheThreeKingdoms", "bin", "Win", "Content", "Data", "Plugins", "AppellationConfig.xml")
+            };
             
-            // Try to find the file using Platform path
-            if (!File.Exists(filePath))
+            string filePath = null;
+            
+            // 首先尝试相对路径
+            foreach (string path in possiblePaths)
             {
-                if (Platform.Current != null)
+                if (File.Exists(path))
                 {
-                    string baseDir = Platform.Current.DirectoryName(Platform.Current.Location);
-                    filePath = Path.Combine(baseDir, "Plugins", "AppellationConfig.xml");
+                    filePath = path;
+                    break;
+                }
+            }
+            
+            // 如果相对路径都不存在，尝试基于Platform.Current.Location的路径
+            if (filePath == null && Platform.Current != null)
+            {
+                string baseDir = Platform.Current.DirectoryName(Platform.Current.Location);
+                foreach (string path in possiblePaths)
+                {
+                    string fullPath = Path.Combine(baseDir, path);
+                    if (File.Exists(fullPath))
+                    {
+                        filePath = fullPath;
+                        break;
+                    }
                 }
             }
 
-            if (File.Exists(filePath))
+            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
             {
                 try
                 {
@@ -92,17 +115,28 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     rules.Sort((a, b) => a.Priority.CompareTo(b.Priority));
                     
                     isLoaded = true;
-                    System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Loaded {rules.Count} rules from {filePath}.");
+                    System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Successfully loaded {rules.Count} rules from {filePath}");
                     return; // Successfully loaded
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Error loading config: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Error loading config from {filePath}: {ex.Message}");
                 }
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Config file NOT found at {filePath}. Using HARDCODED defaults.");
+                System.Diagnostics.Debug.WriteLine($"[AppellationSettings] Config file NOT found. Searched paths:");
+                foreach (string path in possiblePaths)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {path} (exists: {File.Exists(path)})");
+                    if (Platform.Current != null)
+                    {
+                        string baseDir = Platform.Current.DirectoryName(Platform.Current.Location);
+                        string fullPath = Path.Combine(baseDir, path);
+                        System.Diagnostics.Debug.WriteLine($"  - {fullPath} (exists: {File.Exists(fullPath)})");
+                    }
+                }
+                System.Diagnostics.Debug.WriteLine("[AppellationSettings] Using HARDCODED defaults.");
             }
 
             // Fallback: Add default rules if file load failed
@@ -157,7 +191,9 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     string selfAddress = ResolveDynamicAddress(rule, speaker, target, false);
                     
                     if (!string.IsNullOrEmpty(address)) 
-                        return (address, string.IsNullOrEmpty(selfAddress) ? defaultSelf : selfAddress);
+                    {
+                        return (address, !string.IsNullOrEmpty(selfAddress) ? selfAddress : defaultSelf);
+                    }
                 }
             }
 
@@ -172,15 +208,15 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     if (rule.ConditionValue == "Max")
                     {
                         // Using global Session from GameManager namespace
-                        if (global::GameManager.Session.Current == null || global::GameManager.Session.Current.Scenario == null) return false;
+                        if (global::GameManager.Session.Current == null || global::GameManager.Session.Current.Scenario == null || global::GameManager.Session.Current.Scenario.GameCommonData?.suoyouguanjuezhonglei == null) return false;
                         int count = global::GameManager.Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.Count;
-                        return faction.guanjue >= count - 1; 
+                        return faction.guanjue >= Math.Max(0, count - 1); 
                     }
                     else if (rule.ConditionValue == "MaxMinusOne")
                     {
-                         if (global::GameManager.Session.Current == null || global::GameManager.Session.Current.Scenario == null) return false;
+                         if (global::GameManager.Session.Current == null || global::GameManager.Session.Current.Scenario == null || global::GameManager.Session.Current.Scenario.GameCommonData?.suoyouguanjuezhonglei == null) return false;
                          int count = global::GameManager.Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.Count;
-                         return faction.guanjue == count - 2;
+                         return faction.guanjue == Math.Max(-100, count - 2); // 避免潜在的索引越界或逻辑错误
                     }
                     else
                     {

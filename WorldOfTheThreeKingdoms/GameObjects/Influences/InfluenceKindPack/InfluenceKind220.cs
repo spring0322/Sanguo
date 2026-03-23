@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 
@@ -8,7 +8,9 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind220 : InfluenceKind
     {
+        [DataMember]
         private int increment = 0;
+        [DataMember]
         private int terrain = 0;
 
         public override void ApplyInfluenceKind(Troop troop)

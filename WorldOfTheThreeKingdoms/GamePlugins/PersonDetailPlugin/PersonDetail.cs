@@ -1,7 +1,7 @@
-﻿namespace PersonDetailPlugin
+namespace PersonDetailPlugin
 {
     using GameFreeText;
-    using GameGlobal;
+    using WorldOfTheThreeKingdoms.GameGlobal;
     using GameManager;
     using GameObjects;
     using GameObjects.Conditions;
@@ -14,6 +14,9 @@
 
     internal class PersonDetail
     {
+        // 🛡️ 递归保护标志：防止在人员调配期间访问属性导致栈溢出
+        [ThreadStatic]
+        private static bool _isAccessingPersonProperties = false;
         internal FreeTextList AllSkillTexts;
         internal Point BackgroundSize;
         internal PlatformTexture BackgroundTexture;
@@ -44,6 +47,14 @@
         internal Rectangle StuntClient;
         internal FreeRichText StuntText = new FreeRichText();
         internal FreeText SurNameText;
+        
+        // 🔥 宝物显示区域（12个宝物分组）
+        internal Dictionary<int, Rectangle> TreasureClients = new Dictionary<int, Rectangle>();
+        
+        // 🔥 诊断标志：避免每帧重复输出日志
+        #if DEBUG
+        private static bool _treasureDiagnosticLogged = false;
+        #endif
 
 
         internal void Draw()
@@ -61,7 +72,7 @@
                     {
                         if (this.ShowingPerson != null)
                         {
-                            CacheManager.DrawZhsanAvatar(this.ShowingPerson, this.PortraitDisplayPosition, 0.199f, GameGlobal.PortraitSize.Medium);
+                            CacheManager.DrawZhsanAvatar(this.ShowingPerson, this.PortraitDisplayPosition, 0.199f, PortraitSize.Medium);
                         }
                     }
                     catch
@@ -87,11 +98,99 @@
                     if (this.InfluenceText != null) this.InfluenceText.Draw(0.1999f);
                     if (this.ConditionText != null) this.ConditionText.Draw(0.1999f);
                     if (this.BiographyText != null) this.BiographyText.Draw(0.1999f);
+                    
+                    // 🔥 绘制宝物图标
+                    DrawTreasures();
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[PersonDetail] Draw Error: {ex.ToString()}");
+            }
+        }
+        
+        /// <summary>
+        /// 绘制宝物图标
+        /// 🔥 2026-03-18 新增：显示人物拥有的宝物
+        /// 性能：Draw() 是 Hot Path，但宝物数量有限（最多12个），循环开销可接受
+        /// </summary>
+        private void DrawTreasures()
+        {
+            #if DEBUG
+            // 🔥 诊断：只在首次调用时输出日志，避免每帧重复输出
+            if (!_treasureDiagnosticLogged)
+            {
+                _treasureDiagnosticLogged = true;
+                
+                System.Diagnostics.Debug.WriteLine($"[DrawTreasures] 首次调用诊断");
+                System.Diagnostics.Debug.WriteLine($"  - ShowingPerson: {(this.ShowingPerson != null ? $"{this.ShowingPerson.ID} ({this.ShowingPerson.Name})" : "null")}");
+                System.Diagnostics.Debug.WriteLine($"  - Treasures: {(this.ShowingPerson?.Treasures != null ? "存在" : "null")}");
+                System.Diagnostics.Debug.WriteLine($"  - Treasures.Count: {this.ShowingPerson?.Treasures?.Count ?? 0}");
+                System.Diagnostics.Debug.WriteLine($"  - TreasureIDs: {(this.ShowingPerson?.TreasureIDs != null ? $"Count={this.ShowingPerson.TreasureIDs.Count}, [{string.Join(", ", this.ShowingPerson.TreasureIDs)}]" : "null")}");
+                System.Diagnostics.Debug.WriteLine($"  - TreasureClients.Count: {TreasureClients.Count}");
+                
+                if (this.ShowingPerson?.Treasures != null && this.ShowingPerson.Treasures.Count > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - 宝物列表:");
+                    
+                    foreach (Treasure t in this.ShowingPerson.Treasures)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"    - Treasure {t.ID} ({t.Name}), Group={t.TreasureGroup}, Picture={(t.Picture != null ? "存在" : "null")}");
+                    }
+                }
+                else if (this.ShowingPerson?.Treasures != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - ⚠️ Treasures.Count = 0");
+                    
+                    // 检查是否是数据链接问题
+                    if (this.ShowingPerson.TreasureIDs != null && this.ShowingPerson.TreasureIDs.Count > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"  - ⚠️ 数据链接失败：TreasureIDs 有 {this.ShowingPerson.TreasureIDs.Count} 个值，但 Treasures 为空");
+                        System.Diagnostics.Debug.WriteLine($"  - ⚠️ 这说明 LinkTreasures() 没有正确执行或查找表为空");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"  - ⚠️ 数据源问题：TreasureIDs 本身就是空的");
+                        System.Diagnostics.Debug.WriteLine($"  - ⚠️ 这说明序列化时没有保存 TreasureIDs，或反序列化时没有加载");
+                    }
+                }
+            }
+            #endif
+            
+            if (this.ShowingPerson == null || this.ShowingPerson.Treasures == null)
+                return;
+                
+            // 宝物分组列表（对应XML中的12个区域）
+            int[] treasureGroups = [10, 15, 20, 25, 30, 40, 50, 55, 60, 70, 90, 100];
+            
+            // 🔥 Hot Path：使用 for 循环而不是 foreach（虽然数组很小）
+            for (int i = 0; i < treasureGroups.Length; i++)
+            {
+                int groupId = treasureGroups[i];
+                
+                if (!TreasureClients.ContainsKey(groupId))
+                    continue;
+                    
+                // 检查该分组是否有宝物（正确的方法名是 HasTreasureforGroup）
+                if (!this.ShowingPerson.HasTreasureforGroup(groupId))
+                    continue;
+                    
+                // 获取该分组中价值最高的宝物纹理
+                var treasureTexture = this.ShowingPerson.TreasurePictureforGroup(groupId);
+                if (treasureTexture == null)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"  ⚠️ 警告：Group {groupId} 的宝物纹理为 null");
+                    #endif
+                    continue;
+                }
+                    
+                // 绘制宝物图标
+                Rectangle destRect = TreasureClients[groupId];
+                destRect.X += this.DisplayOffset.X;
+                destRect.Y += this.DisplayOffset.Y;
+                
+                CacheManager.Draw(treasureTexture, destRect, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.1998f);
             }
         }
 
@@ -117,7 +216,17 @@
 
         private void screen_OnMouseMove(Point position, bool leftDown)
         {
-            bool flag = false;
+            // 🛡️ 递归保护：防止在人员调配期间访问属性导致栈溢出
+            if (_isAccessingPersonProperties)
+            {
+                return;
+            }
+
+            try
+            {
+                _isAccessingPersonProperties = true;
+
+                bool flag = false;
             if (!flag && StaticMethods.PointInRectangle(position, this.TitleDisplayPosition) && this.TitleText.RowHeight > 0)
             {
                 int num2 = (position.Y - this.TitleText.DisplayOffset.Y) / this.TitleText.RowHeight;
@@ -460,6 +569,15 @@
                     }
                 }
             }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PersonDetail] screen_OnMouseMove Error: {ex.ToString()}");
+            }
+            finally
+            {
+                _isAccessingPersonProperties = false;
+            }
         }
 
         private void screen_OnMouseRightUp(Point position)
@@ -469,15 +587,43 @@
 
         internal void SetPerson(Person person)
         {
-            foreach (Skill skill in Session.Current.Scenario.GameCommonData.AllSkills.Skills.Values)
+            #if DEBUG
+            // 🔥 关键诊断：追踪 SetPerson 调用时机
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] ========== 开始 ==========");
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] Person: {person?.Name}(ID:{person?.ID})");
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] person.Skills: {(person?.Skills == null ? "null" : "已初始化")}");
+            if (person?.Skills != null)
             {
-                Rectangle position = new Rectangle(this.SkillDisplayOffset.X + (skill.DisplayCol * this.SkillBlockSize.X), this.SkillDisplayOffset.Y + (skill.DisplayRow * this.SkillBlockSize.Y), this.SkillBlockSize.X, this.SkillBlockSize.Y);
-                this.AllSkillTexts.AddText(skill.Name, position);
-                this.LinkedSkills.Add(skill);
+                System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] person.Skills.Skills: {(person.Skills.Skills == null ? "null" : $"Count={person.Skills.Skills.Count}")}");
+                if (person.Skills.Skills != null && person.Skills.Skills.Count > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] person.Skills.Skills.Keys: [{string.Join(", ", person.Skills.Skills.Keys)}]");
+                }
             }
-            this.AllSkillTexts.ResetAllAlignedPositions();
+            #endif
+            
+            // 🛡️ 递归保护：防止在人员调配期间访问属性导致栈溢出
+            if (_isAccessingPersonProperties)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[PersonDetail] 递归保护：跳过SetPerson（正在访问人物属性）");
+#endif
+                return;
+            }
 
-            this.ShowingPerson = person;
+            try
+            {
+                _isAccessingPersonProperties = true;
+
+                foreach (Skill skill in Session.Current.Scenario.GameCommonData.AllSkills.Skills.Values)
+                {
+                    Rectangle position = new Rectangle(this.SkillDisplayOffset.X + (skill.DisplayCol * this.SkillBlockSize.X), this.SkillDisplayOffset.Y + (skill.DisplayRow * this.SkillBlockSize.Y), this.SkillBlockSize.X, this.SkillBlockSize.Y);
+                    this.AllSkillTexts.AddText(skill.Name, position);
+                    this.LinkedSkills.Add(skill);
+                }
+                this.AllSkillTexts.ResetAllAlignedPositions();
+
+                this.ShowingPerson = person;
             this.SurNameText.Text = person.SurName;
             this.GivenNameText.Text = person.GivenName;
             this.CalledNameText.Text = person.CalledName;
@@ -528,12 +674,26 @@
              */
             this.PersonSkillTexts.SimpleClear();
             this.LearnableSkillTexts.SimpleClear();
+            
+            #if DEBUG
+            // 🔥 调试日志：追踪 UI 显示技能
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] {person.Name}(ID:{person.ID}): 开始更新技能显示");
+            System.Diagnostics.Debug.WriteLine($"  - person.Skills.Skills.Count = {person.Skills.Skills.Count}");
+            if (person.Skills.Skills.Count > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"  - person.Skills.Skills.Keys = [{string.Join(", ", person.Skills.Skills.Keys)}]");
+            }
+            #endif
+            
             foreach (Skill skill in Session.Current.Scenario.GameCommonData.AllSkills.Skills.Values)
             {
                 Rectangle position = new Rectangle(this.SkillDisplayOffset.X + (skill.DisplayCol * this.SkillBlockSize.X), this.SkillDisplayOffset.Y + (skill.DisplayRow * this.SkillBlockSize.Y), this.SkillBlockSize.X, this.SkillBlockSize.Y);
                 if (person.Skills.GetSkill(skill.ID) != null)
                 {
                     this.PersonSkillTexts.AddText(skill.Name, position);
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"  ✅ 添加到 PersonSkillTexts: {skill.Name}(ID:{skill.ID})");
+                    #endif
                 }
                 else if (skill.CanLearn(person))
                 {
@@ -542,6 +702,11 @@
             }
             this.PersonSkillTexts.ResetAllAlignedPositions();
             this.LearnableSkillTexts.ResetAllAlignedPositions();
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] {person.Name}(ID:{person.ID}): 完成，PersonSkillTexts.Count = {this.PersonSkillTexts.Count}");
+            System.Diagnostics.Debug.WriteLine($"[PersonDetail.SetPerson] ========== 结束 ==========");
+            #endif
             this.StuntText.Clear();
             //阿柒:特技显示效果修改,去掉多余的字
             //this.StuntText.AddText("战斗特技", Color.Yellow);
@@ -556,6 +721,37 @@
             }
             this.StuntText.ResortTexts();
             this.BiographyText.Clear();
+            
+            // 🔥 调试：列传显示诊断
+            System.Diagnostics.Debug.WriteLine($"[列传诊断] 武将: {person.Name} (ID: {person.ID})");
+            System.Diagnostics.Debug.WriteLine($"[列传诊断] PersonBiographyID: {person.PersonBiographyID}");
+            
+            if (Session.Current?.Scenario?.AllBiographies == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[列传诊断] ❌ AllBiographies 为 null");
+            }
+            else
+            {
+                var bio = Session.Current.Scenario.AllBiographies.GetBiography(person.PersonBiographyID);
+                if (bio == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[列传诊断] ❌ GetBiography({person.PersonBiographyID}) 返回 null");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[列传诊断] ✓ 找到列传 (Brief长度: {bio.Brief?.Length ?? 0})");
+                }
+            }
+            
+            if (person.PersonBiography == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[列传诊断] ❌ person.PersonBiography 为 null");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[列传诊断] ✓ person.PersonBiography 不为 null");
+            }
+            
             if (person.PersonBiography != null)
             {
                 this.BiographyText.Clear();
@@ -580,6 +776,15 @@
                     this.BiographyText.AddNewLine();
                 }
                 this.BiographyText.ResortTexts();
+            }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PersonDetail] SetPerson Error: {ex.ToString()}");
+            }
+            finally
+            {
+                _isAccessingPersonProperties = false;
             }
         }
 
@@ -661,6 +866,7 @@
             }
             set
             {
+                if (this.isShowing == value) return;
                 this.isShowing = value;
                 if (value)
                 {

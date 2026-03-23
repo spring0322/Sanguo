@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum UndoneWorkSubKind
     {
-        None
+        None = 0
     }
 }
 

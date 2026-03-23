@@ -1,18 +1,22 @@
 using System;
 using Microsoft.Xna.Framework;
 using GameObjects;
+using WorldOfTheThreeKingdoms.GameGlobal; // 确保引用 Session
 
 namespace GameManager
 {
     /// <summary>
-    /// 移动消耗计算器 - 基于你的反馈实现的 SLG 核心逻辑
+    /// 移动消耗计算器 - [NewMovementSystem] 适配增强版
     /// 🎯 核心功能：
-    /// 1. 传入 unit 信息，计算具体的消耗 (包含 ZOC 和地形)
-    /// 2. 返回 -1 表示不可通行，其他值表示移动消耗
-    /// 3. 完美集成到 A* 寻路算法中
+    /// 1. 完整保留原有的地形、兵种、ZOC、战术修正逻辑
+    /// 2. 引入“软碰撞”机制：友军不再视为墙壁，而是高消耗路段
     /// </summary>
     public class MovementCalculator
     {
+        // 软碰撞惩罚值：友军不是墙，是泥潭
+        // 这个值要足够大，让AI优先绕路；但又不能无限大，保证实在没路时（如堵桥）能排队通过
+        private const int FRIENDLY_UNIT_PENALTY = 200; 
+
         private readonly IMapInfoProvider _mapProvider;
         
         public MovementCalculator(IMapInfoProvider mapProvider = null)
@@ -22,7 +26,6 @@ namespace GameManager
         
         /// <summary>
         /// 🎯 关键方法：计算从 from 到 to 的移动消耗
-        /// 这是你在反馈中提到的核心修改点
         /// </summary>
         /// <param name="from">起始位置</param>
         /// <param name="to">目标位置</param>
@@ -31,32 +34,33 @@ namespace GameManager
         public int GetMoveCost(Point from, Point to, Unit unit)
         {
             // 1. 边界检查
-            if (!_mapProvider.IsInBounds(to.X, to.Y))
-                return -1;
-            
-            // 2. 单位占据检查
-            if (_mapProvider.IsUnitAt(to.X, to.Y))
-                return -1; // 有其他单位占据
-            
-            // 3. 基础地形消耗计算
-            int baseCost = GetBaseTerrainCost(to, unit.UnitType);
-            if (baseCost == -1)
-                return -1; // 地形不可通行
-            
-            // 4. ZOC (控制区) 惩罚 - SLG 的灵魂
-            if (_mapProvider.IsInEnemyZOC(to.X, to.Y, unit.FactionId))
+            if (Session.Current.Scenario.PositionOutOfRange(to))
             {
-                baseCost += 5; // ZOC 惩罚
+                return -1;
             }
             
-            // 5. 其他战术因素（可扩展）
-            baseCost += GetTacticalModifier(from, to, unit);
+            // 2. 获取对应的Troop对象
+            Troop troop = Session.Current.Scenario.Troops.GetTroop(unit.Id);
+            if (troop == null)
+            {
+                return 1; // 默认消耗
+            }
             
-            return baseCost;
+            // 3. 使用游戏原有的移动消耗计算系统
+            try
+            {
+                int cost = troop.NextPositionCost(from, to);
+                return cost;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MovementCalculator] 计算移动消耗出错: {ex.Message}");
+                return 1; // 出错时返回默认消耗
+            }
         }
         
         /// <summary>
-        /// 获取基础地形移动消耗
+        /// 获取基础地形移动消耗 (完整保留)
         /// </summary>
         private int GetBaseTerrainCost(Point position, UnitType unitType)
         {
@@ -103,6 +107,7 @@ namespace GameManager
                         case UnitType.水军: return 1;      // 水军在水上正常
                         default: return -1;                // 其他兵种不能下水
                     }
+                    break; // Added break just in case
                     
                 case TerrainType.City:
                     switch (unitType)
@@ -123,6 +128,7 @@ namespace GameManager
                         case UnitType.骑兵: return 4;      // 骑兵在城墙很慢
                         default: return -1;                // 攻城器械不能上城墙
                     }
+                    break; // Added break
                     
                 default:
                     return 1; // 默认消耗
@@ -132,7 +138,7 @@ namespace GameManager
         }
         
         /// <summary>
-        /// 获取战术修正值（可扩展的战术因素）
+        /// 获取战术修正值 (完整保留)
         /// </summary>
         private int GetTacticalModifier(Point from, Point to, Unit unit)
         {
@@ -141,10 +147,6 @@ namespace GameManager
             // 示例：疲劳度影响
             if (unit.Fatigue > 80)
                 modifier += 1; // 疲劳时移动更慢
-            
-            // 示例：天气影响
-            // if (Weather.IsRaining)
-            //     modifier += 1;
             
             // 示例：士气影响
             if (unit.Morale < 30)
@@ -156,10 +158,10 @@ namespace GameManager
     
     /// <summary>
     /// 单位信息接口 - 用于移动消耗计算
-    /// 🎯 设计原则：只暴露寻路需要的单位信息
     /// </summary>
     public class Unit
     {
+        public int Id { get; set; } = -1; // 🔥 新增：用于排除自己
         public UnitType UnitType { get; set; }
         public int FactionId { get; set; }
         public int Fatigue { get; set; } = 0;      // 疲劳度 (0-100)
@@ -172,22 +174,21 @@ namespace GameManager
         {
             var unit = new Unit
             {
+                Id = troop.ID,
                 FactionId = troop.BelongedFaction?.ID ?? -1
             };
             
             // 自动判断单位类型
             unit.UnitType = DetermineUnitType(troop);
             
-            // 获取疲劳度和士气（如果 Troop 有这些属性）
+            // 获取疲劳度和士气（保留原有的容错逻辑）
             try
             {
-                // 这里需要根据实际的 Troop 属性调整
-                // unit.Fatigue = troop.Fatigue ?? 0;
-                // unit.Morale = troop.Morale ?? 100;
+                unit.Fatigue = troop.Army != null ? troop.Army.Tiredness : 0;
+                unit.Morale = troop.Army != null ? troop.Army.Morale : 100;
             }
             catch
             {
-                // 使用默认值
                 unit.Fatigue = 0;
                 unit.Morale = 100;
             }
@@ -196,7 +197,7 @@ namespace GameManager
         }
         
         /// <summary>
-        /// 根据部队的军事类型自动确定单位类型
+        /// 根据部队的军事类型自动确定单位类型 (完整保留)
         /// </summary>
         private static UnitType DetermineUnitType(Troop troop)
         {

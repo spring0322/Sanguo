@@ -1,5 +1,5 @@
-﻿using GameFreeText;
-using GameGlobal;
+using GameFreeText;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GameObjects.Influences;
@@ -107,40 +107,47 @@ namespace CreateTroopPlugin
 
         private void AfterSelectMilitary()
         {
-            // ===== STEP 1: Initialize CreatingPersons FIRST =====
-            // This must happen before we try to use CreatingTroop or do anything else
+            // ===== STEP 1: Initialize CreatingPersons =====
             System.Diagnostics.Debug.WriteLine($"[AfterSelectMilitary] START - Architecture: {this.CreatingArchitecture?.Name ?? "null"}");
             
             // Always create a new list to prevent stale data
             this.CreatingPersons = new GameObjectList();
             this.CreatingLeader = null;
             
-            // Get all non-NvGuan persons from the architecture
-            if (this.CreatingArchitecture != null)
+            // 🔥 改进：智能选择主将
+            // 日期：2026-02-11
+            // 玩家手动创建：使用 AI 逻辑选择最佳主将作为默认值，玩家可以通过 UI 更换
+            // AI 创建：直接使用 AI 选择的主将
+            
+            if (this.CreatingArchitecture != null && this.CreatingMilitary != null)
             {
-                foreach (GameObject obj in this.CreatingArchitecture.PersonsExcludeNvGuan)
+                // 先尝试使用编队绑定的主将（如果有）
+                Person preferredLeader = null;
+                if (this.CreatingArchitecture.PersonsExcludeNvGuan.HasGameObject(this.CreatingMilitary.FollowedLeader))
                 {
-                    if (obj is Person p)
-                    {
-                        this.CreatingPersons.Add(p);
-                        if (this.CreatingLeader == null)
-                        {
-                            this.CreatingLeader = p;  // First person becomes the default leader
-                        }
-                    }
+                    preferredLeader = this.CreatingMilitary.FollowedLeader;
+                }
+                else if (this.CreatingArchitecture.PersonsExcludeNvGuan.HasGameObject(this.CreatingMilitary.Leader))
+                {
+                    preferredLeader = this.CreatingMilitary.Leader;
                 }
                 
-                // If Military has a preferred leader, use that instead
-                if (this.CreatingMilitary != null)
+                // 设置主将
+                if (preferredLeader != null)
                 {
-                    if (this.CreatingArchitecture.PersonsExcludeNvGuan.HasGameObject(this.CreatingMilitary.FollowedLeader))
-                    {
-                        this.CreatingLeader = this.CreatingMilitary.FollowedLeader;
-                    }
-                    else if (this.CreatingArchitecture.PersonsExcludeNvGuan.HasGameObject(this.CreatingMilitary.Leader))
-                    {
-                        this.CreatingLeader = this.CreatingMilitary.Leader;
-                    }
+                    // 优先使用编队绑定的主将
+                    this.CreatingLeader = preferredLeader;
+                }
+                else
+                {
+                    // 否则使用 AI 逻辑选择最佳主将
+                    this.CreatingLeader = SelectBestLeaderForMilitary(this.CreatingArchitecture.PersonsExcludeNvGuan, this.CreatingMilitary);
+                }
+                
+                // 只添加主将到列表
+                if (this.CreatingLeader != null)
+                {
+                    this.CreatingPersons.Add(this.CreatingLeader);
                 }
             }
             
@@ -182,8 +189,96 @@ namespace CreateTroopPlugin
                 this.CreatingTroop.zijin = 0;
             }
             
-            // ===== STEP 3: Add preferred persons =====
+            // 自动添加主将偏好的武将
             this.AddLeaderPreferredPersons();
+        }
+        
+        /// <summary>
+        /// 🔥 新增：为军队选择最佳主将
+        /// 日期：2026-02-11
+        /// 根据军队类型和武将能力选择最合适的主将
+        /// </summary>
+        private Person SelectBestLeaderForMilitary(GameObjectList persons, Military military)
+        {
+            if (persons == null || persons.Count == 0)
+                return null;
+            
+            Person bestLeader = null;
+            int bestScore = -1;
+            
+            // C# 12: 使用模式匹配简化类型检查
+            foreach (GameObject obj in persons.GetList())
+            {
+                if (obj is not Person person || person.Tiredness >= 100)
+                    continue;
+                
+                // 计算综合评分
+                int score = CalculateLeaderScore(person, military);
+                
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestLeader = person;
+                }
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"[SelectBestLeaderForMilitary] 为军队 {military?.Name} 选择主将: {bestLeader?.Name ?? "null"} (评分: {bestScore})");
+            return bestLeader;
+        }
+        
+        /// <summary>
+        /// 🔥 新增：计算武将作为主将的评分
+        /// 考虑因素：战斗力、统率、适应性
+        /// </summary>
+        private int CalculateLeaderScore(Person person, Military military)
+        {
+            if (person == null || military == null)
+                return 0;
+            
+            // 基础评分：战斗力（主要因素）
+            int score = person.FightingForce;
+            
+            // 统率加成（影响部队士气和战斗力）
+            score += person.Command * 2;
+            
+            // 武力加成（影响近战能力）
+            score += person.Strength;
+            
+            // 智力加成（影响策略和特技）
+            score += person.Intelligence / 2;
+            
+            // 兵种适应性加成
+            if (military.Kind != null)
+            {
+                switch (military.Kind.Type)
+                {
+                    case MilitaryType.步兵:
+                        // 步兵重视武力和统率
+                        score += person.Strength / 2;
+                        break;
+                    case MilitaryType.弩兵:
+                        // 弩兵重视智力
+                        score += person.Intelligence / 2;
+                        break;
+                    case MilitaryType.骑兵:
+                        // 骑兵重视武力和统率
+                        score += (person.Strength + person.Command) / 2;
+                        break;
+                    case MilitaryType.水军:
+                        // 水军重视智力和统率
+                        score += (person.Intelligence + person.Command) / 2;
+                        break;
+                    case MilitaryType.器械:
+                        // 器械重视智力
+                        score += person.Intelligence;
+                        break;
+                }
+            }
+            
+            // 疲劳惩罚
+            score -= person.Tiredness / 2;
+            
+            return score;
         }
 
         internal void Draw()
@@ -250,15 +345,8 @@ namespace CreateTroopPlugin
                 sourceRectangle = null;
                 CacheManager.Draw(this.CreateButtonDisabledTexture, this.CreateButtonDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
             }
-            if (this.CreatingTroop.Leader != null)
+            if (this.CreatingTroop != null && this.CreatingTroop.Leader != null)
             {
-                //try
-                //{
-                //    CacheManager.Draw(this.CreatingTroop.Leader.SmallPortrait, this.PortraitDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
-                //}
-                //catch
-                //{
-                //}
                 CacheManager.DrawZhsanAvatar(this.CreatingTroop.Leader, this.PortraitDisplayPosition, 0.199f, PortraitSize.Small);
             }
             this.TroopNameText.Draw(0.1999f);
@@ -275,33 +363,73 @@ namespace CreateTroopPlugin
 
         private void InitialCreateingTroop()
         {
+            System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] START - Architecture: {this.CreatingArchitecture?.Name ?? "null"}");
+            System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] CampaignMilitaryList.Count: {this.CreatingArchitecture?.GetCampaignMilitaryList()?.Count ?? -1}");
+            System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] ShellMilitaryKind: {this.ShellMilitaryKind?.Name ?? "null"}");
+            
+            // 🔥 修复：强制清理旧的 CreatingTroop，防止残留数据
+            // 每次打开对话框时都应该从头开始创建新的部队
+            if (this.CreatingTroop != null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 清理旧的 CreatingTroop: {this.CreatingTroop.DisplayName}");
+                this.CreatingTroop.Destroy(true, false, true);
+                this.CreatingTroop = null;
+            }
+            
             if (this.ShellMilitaryKind == null)
             {
-                if (this.CreatingArchitecture.GetCampaignMilitaryList().Count == 1)
+                int militaryCount = this.CreatingArchitecture.GetCampaignMilitaryList().Count;
+                System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 非运兵船模式，军队数量: {militaryCount}");
+                
+                if (militaryCount == 1)
                 {
                     // FIX: Initialize CreatingMilitary and call AfterSelectMilitary FIRST
                     // so that CreatingPersons is properly initialized before CreateSimulateTroop uses it
                     this.CreatingMilitary = this.CreatingArchitecture.CampaignMilitaryList[0] as Military;
+                    System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] CreatingMilitary 设置为: {this.CreatingMilitary?.Name ?? "null"}");
+                    
                     this.AfterSelectMilitary();  // This sets CreatingPersons
                     
                     // Now CreateSimulateTroop can use the properly initialized CreatingPersons
+                    // 注意：即使 CreatingLeader 为 null，也允许创建部队（用户可以后续选择主将）
+                    System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 调用 CreateSimulateTroop - Military: {this.CreatingMilitary?.Name ?? "null"}, Leader: {this.CreatingLeader?.Name ?? "null"}");
                     this.CreatingTroop = Troop.CreateSimulateTroop(this.CreatingArchitecture, this.CreatingPersons, this.CreatingLeader, this.CreatingMilitary, this.RationDays, this.CreatingArchitecture.Position);
                     this.MoveCandidatesToPersons();
+                }
+                else if (militaryCount > 1)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 有多个军队，需要用户选择");
+                    // 列出所有军队
+                    for (int i = 0; i < militaryCount; i++)
+                    {
+                        var mil = this.CreatingArchitecture.CampaignMilitaryList[i] as Military;
+                        System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop]   军队 {i}: {mil?.Name ?? "null"}");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] ⚠️ 警告：建筑没有军队！");
                 }
             }
             else
             {
                 this.CreatingMilitary = Military.SimCreate(this.CreatingArchitecture, this.ShellMilitaryKind);
+                System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] CreatingMilitary (Shell) 创建: {this.CreatingMilitary?.Name ?? "null"}");
+                
                 if (this.CreatingArchitecture.GetCampaignMilitaryList().Count == 1)
                 {
                     // FIX: Same fix for shelled military case
                     this.CreatingMilitary.SetShelledMilitary(this.CreatingArchitecture.CampaignMilitaryList[0] as Military);
                     this.AfterSelectMilitary();  // This sets CreatingPersons
                     
+                    // 注意：即使 CreatingLeader 为 null，也允许创建部队（用户可以后续选择主将）
+                    System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 调用 CreateSimulateTroop (Shell) - Military: {this.CreatingMilitary?.Name ?? "null"}, Leader: {this.CreatingLeader?.Name ?? "null"}");
                     this.CreatingTroop = Troop.CreateSimulateTroop(this.CreatingArchitecture, this.CreatingPersons, this.CreatingLeader, this.CreatingMilitary, this.RationDays, this.CreatingArchitecture.Position);
                     this.MoveCandidatesToPersons();
                 }
             }
+            
+            System.Diagnostics.Debug.WriteLine($"[InitialCreateingTroop] 调用 RefreshDetailDisplay - CreatingMilitary: {this.CreatingMilitary?.Name ?? "null"}");
             this.RefreshDetailDisplay();
         }
 
@@ -312,51 +440,95 @@ namespace CreateTroopPlugin
 
         private void MoveCandidatesToPersons()
         {
-            if (this.CreatingTroop.Candidates != null)
+            // 🔥 根本修复：CreatingTroop 可能为 null（没有主将时）
+            if (this.CreatingTroop == null || this.CreatingTroop.Candidates == null)
             {
-                foreach (GameObject obj in this.CreatingTroop.Candidates)
+                return;
+            }
+            
+            foreach (GameObject obj in this.CreatingTroop.Candidates)
+            {
+                Person p = (obj is Person ? (Person)obj : null);
+                if (p != null)
                 {
-                    Person p = obj as Person;
-                    if (p != null)
-                    {
-                        p.LocationTroop = this.CreatingTroop;
-                    }
+                    p.LocationTroop = this.CreatingTroop;
                 }
             }
         }
 
         private void RefreshDetailDisplay()
         {
-            if (this.CreatingArchitecture != null)
+            // 🔥 修复：即使没有选择军队，也要设置按钮状态
+            // 让用户可以选择军队
+            this.MilitaryButtonEnabled = this.CreatingArchitecture != null && this.CreatingArchitecture.CampaignMilitaryList.Count > 1;
+            
+            // 如果还没有选择军队，只设置按钮状态，不创建部队
+            if (this.CreatingArchitecture == null || this.CreatingMilitary == null)
             {
-                    if (this.CreatingPersons != null)
-                    {
-                        foreach (GameObject obj in this.CreatingPersons)
-                        {
-                            Person person = obj as Person;
-                            if (person != null)
-                            {
-                                foreach (Skill s in person.Skills.GetSkillList())
-                                {
-                                    s.Influences.PurifyInfluence(person, Applier.Skill, s.ID, false);
-                                }
-                                foreach (Title t in person.Titles)
-                                {
-                                    t.Influences.PurifyInfluence(person, Applier.Title, t.ID, false);
-                                }
-                                foreach (Stunt s in person.Stunts.GetStuntList())
-                                {
-                                    s.Influences.PurifyInfluence(person, Applier.Stunt, 0, false);
-                                }
-                                person.PurifyAllTreasures(false);
-                            }
-                        }
-                    }
-                this.CreatingTroop = Troop.CreateSimulateTroop(this.CreatingArchitecture, this.CreatingPersons, this.CreatingLeader, this.CreatingMilitary, this.RationDays, this.CreatingArchitecture.Position);
-                this.MoveCandidatesToPersons();
-                if ((!this.shezhizijin && !this.setttingRation && (this.CreatingMilitary != null)) && (this.CreatingPersons != null))
+                System.Diagnostics.Debug.WriteLine("[RefreshDetailDisplay] 等待用户选择军队...");
+                // 禁用其他按钮
+                this.PersonButtonEnabled = false;
+                this.LeaderButtonEnabled = false;
+                this.CreateButtonEnabled = false;
+                this.RationButtonEnabled = false;
+                this.zijinButtonEnabled = false;
+                return;
+            }
+            
+            if (this.CreatingPersons != null)
+            {
+                foreach (GameObject obj in this.CreatingPersons)
                 {
-                    /*
+                    Person person = (obj is Person ? (Person)obj : null);
+                    if (person != null)
+                    {
+                        foreach (Skill s in person.Skills.GetSkillList())
+                        {
+                            s.Influences.PurifyInfluence(person, Applier.Skill, s.ID, false);
+                        }
+                        foreach (Title t in person.Titles)
+                        {
+                            t.Influences.PurifyInfluence(person, Applier.Title, t.ID, false);
+                        }
+                        foreach (Stunt s in person.Stunts.GetStuntList())
+                        {
+                            s.Influences.PurifyInfluence(person, Applier.Stunt, 0, false);
+                        }
+                        person.PurifyAllTreasures(false);
+                    }
+                }
+            }
+            this.CreatingTroop = Troop.CreateSimulateTroop(this.CreatingArchitecture, this.CreatingPersons, this.CreatingLeader, this.CreatingMilitary, this.RationDays, this.CreatingArchitecture.Position);
+            this.MoveCandidatesToPersons();
+            
+            // 🔥 根本修复：验证模拟部队创建成功
+            // 如果 CreateSimulateTroop 返回 null（例如没有主将），则不继续处理
+            if (this.CreatingTroop == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RefreshDetailDisplay] ⚠️ 警告：CreateSimulateTroop 返回 null，无法继续");
+                this.CreateButtonEnabled = false;
+                this.RationButtonEnabled = false;
+                this.zijinButtonEnabled = false;
+                return;
+            }
+            
+            if ((!this.shezhizijin && !this.setttingRation && (this.CreatingMilitary != null)) && (this.CreatingPersons != null))
+            {
+                /*
+                if (this.CreatingArchitecture.Food >= this.CreatingTroop.FoodMax)
+                {
+                    this.RationDays = this.CreatingTroop.RationDays;
+                    this.CreatingTroop.Food = this.CreatingTroop.FoodMax;
+                }
+                else
+                {
+                    this.RationDays = this.CreatingArchitecture.Food / this.CreatingTroop.FoodCostPerDay;
+                    this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * this.RationDays;
+                }
+                */
+
+                if (!this.CreatingTroop.IsTransport)
+                {
                     if (this.CreatingArchitecture.Food >= this.CreatingTroop.FoodMax)
                     {
                         this.RationDays = this.CreatingTroop.RationDays;
@@ -366,139 +538,124 @@ namespace CreateTroopPlugin
                     {
                         this.RationDays = this.CreatingArchitecture.Food / this.CreatingTroop.FoodCostPerDay;
                         this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * this.RationDays;
+
                     }
-                    */
-
-                    if (!this.CreatingTroop.IsTransport)
+                }
+                else
+                {
+                    if (this.CreatingArchitecture.Food >= this.CreatingTroop.FoodCostPerDay * 20)
                     {
-                        if (this.CreatingArchitecture.Food >= this.CreatingTroop.FoodMax)
-                        {
-                            this.RationDays = this.CreatingTroop.RationDays;
-                            this.CreatingTroop.Food = this.CreatingTroop.FoodMax;
-                        }
-                        else
-                        {
-                            this.RationDays = this.CreatingArchitecture.Food / this.CreatingTroop.FoodCostPerDay;
-                            this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * this.RationDays;
-
-                        }
+                        this.RationDays = 20;
+                        this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * 20;
                     }
                     else
                     {
-                        if (this.CreatingArchitecture.Food >= this.CreatingTroop.FoodCostPerDay * 20)
-                        {
-                            this.RationDays = 20;
-                            this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * 20;
-                        }
-                        else
-                        {
-                            this.RationDays = this.CreatingArchitecture.Food / this.CreatingTroop.FoodCostPerDay;
-                            this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * this.RationDays;
+                        this.RationDays = this.CreatingArchitecture.Food / this.CreatingTroop.FoodCostPerDay;
+                        this.CreatingTroop.Food = this.CreatingTroop.FoodCostPerDay * this.RationDays;
 
-                        }
                     }
+                }
 
-                }
-                if ( (this.CreatingMilitary != null) && (this.CreatingPersons != null))
-                {
-                    /*
-                    if (this.CreatingArchitecture.Fund  >= this.CreatingTroop.Army.zijinzuidazhi)
-                    {
-                        this.zijin = this.CreatingTroop.Army.zijinzuidazhi;
-                        this.CreatingTroop.zijin = this.CreatingTroop.Army.zijinzuidazhi;
-                    }
-                    else
-                    {
-                        this.zijin = this.CreatingArchitecture.Fund;
-                        this.CreatingTroop.zijin = this.CreatingArchitecture.Fund;
-
-                    }*/
-                    this.CreatingTroop.zijin = this.zijin;
-
-                }
-                /*
-                if (this.shezhizijin)
-                {
-                    this.CreatingTroop.zijin = this.zijin ;
-
-                }
-                */
-                this.MilitaryButtonEnabled = this.CreatingArchitecture.CampaignMilitaryList.Count > 1;
-                this.PersonButtonEnabled = (this.CreatingMilitary != null) && (this.CreatingArchitecture.PersonCount > 1);
-                this.LeaderButtonEnabled = (this.CreatingPersons != null) && (this.CreatingPersons.Count > 1);
-                this.CreateButtonEnabled = ((this.CreatingTroop.PersonCount > 0) && (this.CreatingTroop.Leader != null)) && (this.CreatingTroop.Army != null);
-                this.RationButtonEnabled = this.CreateButtonEnabled;
-                this.zijinButtonEnabled = this.CreateButtonEnabled && this.CreatingTroop.IsTransport;
-                this.TroopNameText.Text = this.CreatingTroop.DisplayName;
-                foreach (LabelText text in this.LabelTexts)
-                {
-                    text.Text.Text = StaticMethods.GetPropertyValue(this.CreatingTroop, text.PropertyName).ToString();
-                }
-                this.OtherPersonText.Clear();
-                this.OtherPersonText.AddText("其他人物", this.OtherPersonText.TitleColor);
-                this.OtherPersonText.AddNewLine();
-                if (this.CreatingTroop.PersonCount > 0)
-                {
-                    int num = this.CreatingTroop.PersonCount - 1;
-                    this.OtherPersonText.AddText(num.ToString() + "人", this.OtherPersonText.SubTitleColor);
-                    this.OtherPersonText.AddNewLine();
-                    foreach (GameObject obj in this.CreatingTroop.Persons)
-                    {
-                        Person person = obj as Person;
-                        if (person != null && person != this.CreatingTroop.Leader)
-                        {
-                            this.OtherPersonText.AddText(person.Name);
-                            this.OtherPersonText.AddNewLine();
-                        }
-                    }
-                }
-                this.OtherPersonText.ResortTexts();
-                this.CombatMethodText.Clear();
-                this.CombatMethodText.AddText("部队战法", this.CombatMethodText.TitleColor);
-                this.CombatMethodText.AddNewLine();
-                if (this.CreatingTroop.PersonCount > 0)
-                {
-                    this.CombatMethodText.AddText(this.CreatingTroop.CombatMethods.Count.ToString() + "种", this.CombatMethodText.SubTitleColor);
-                    this.CombatMethodText.AddNewLine();
-                    foreach (CombatMethod method in this.CreatingTroop.CombatMethods.CombatMethods.Values)
-                    {
-                        this.CombatMethodText.AddText(method.Name, this.CombatMethodText.SubTitleColor2);
-                        this.CombatMethodText.AddText(" 战意消耗" + ((method.Combativity - this.CreatingTroop.DecrementOfCombatMethodCombativityConsuming)).ToString(), Color.LightGreen);
-                        this.CombatMethodText.AddNewLine();
-                    }
-                }
-                this.CombatMethodText.ResortTexts();
-                this.StuntText.Clear();
-                this.StuntText.AddText("战斗特技", this.StuntText.TitleColor);
-                this.StuntText.AddNewLine();
-                if (this.CreatingTroop.PersonCount > 0)
-                {
-                    this.StuntText.AddText(this.CreatingTroop.Stunts.Count.ToString() + "种", this.StuntText.SubTitleColor);
-                    this.StuntText.AddNewLine();
-                    foreach (Stunt stunt in this.CreatingTroop.Stunts.Stunts.Values)
-                    {
-                        this.StuntText.AddText(stunt.Name, this.StuntText.SubTitleColor2);
-                        this.StuntText.AddText(" 战意消耗" + stunt.Combativity, this.StuntText.SubTitleColor3);
-                        this.StuntText.AddNewLine();
-                    }
-                }
-                this.StuntText.ResortTexts();
-                this.InfluenceText.Clear();
-                this.InfluenceText.AddText("部队特性", this.InfluenceText.TitleColor);
-                this.InfluenceText.AddNewLine();
-                if (this.CreatingMilitary != null)
-                {
-                    this.InfluenceText.AddText(this.CreatingMilitary.Kind.Name, this.InfluenceText.SubTitleColor);
-                    this.InfluenceText.AddNewLine();
-                    foreach (Influence influence in this.CreatingMilitary.Kind.Influences.Influences.Values)
-                    {
-                        this.InfluenceText.AddText(influence.Name, this.InfluenceText.SubTitleColor2);
-                        this.InfluenceText.AddText(influence.Description, this.InfluenceText.SubTitleColor3);
-                        this.InfluenceText.AddNewLine();
-                    }
-                }
-                this.InfluenceText.ResortTexts();
             }
+            if ( (this.CreatingMilitary != null) && (this.CreatingPersons != null))
+            {
+                /*
+                if (this.CreatingArchitecture.Fund  >= this.CreatingTroop.Army.zijinzuidazhi)
+                {
+                    this.zijin = this.CreatingTroop.Army.zijinzuidazhi;
+                    this.CreatingTroop.zijin = this.CreatingTroop.Army.zijinzuidazhi;
+                }
+                else
+                {
+                    this.zijin = this.CreatingArchitecture.Fund;
+                    this.CreatingTroop.zijin = this.CreatingArchitecture.Fund;
+
+                }*/
+                this.CreatingTroop.zijin = this.zijin;
+
+            }
+            /*
+            if (this.shezhizijin)
+            {
+                this.CreatingTroop.zijin = this.zijin ;
+
+            }
+            */
+            this.MilitaryButtonEnabled = this.CreatingArchitecture.CampaignMilitaryList.Count > 1;
+            this.PersonButtonEnabled = (this.CreatingMilitary != null) && (this.CreatingArchitecture.PersonCount > 1);
+            this.LeaderButtonEnabled = (this.CreatingPersons != null) && (this.CreatingPersons.Count > 1);
+            this.CreateButtonEnabled = ((this.CreatingTroop.PersonCount > 0) && (this.CreatingTroop.Leader != null)) && (this.CreatingTroop.Army != null);
+            this.RationButtonEnabled = this.CreateButtonEnabled;
+            this.zijinButtonEnabled = this.CreateButtonEnabled && this.CreatingTroop.IsTransport;
+            this.TroopNameText.Text = this.CreatingTroop.DisplayName;
+            foreach (LabelText text in this.LabelTexts)
+            {
+                text.Text.Text = StaticMethods.GetPropertyValue(this.CreatingTroop, text.PropertyName).ToString();
+            }
+            this.OtherPersonText.Clear();
+            this.OtherPersonText.AddText("其他人物", this.OtherPersonText.TitleColor);
+            this.OtherPersonText.AddNewLine();
+            if (this.CreatingTroop.PersonCount > 0)
+            {
+                int num = this.CreatingTroop.PersonCount - 1;
+                this.OtherPersonText.AddText(num.ToString() + "人", this.OtherPersonText.SubTitleColor);
+                this.OtherPersonText.AddNewLine();
+                foreach (GameObject obj in this.CreatingTroop.Persons)
+                {
+                    Person person = (obj is Person ? (Person)obj : null);
+                    if (person != null && person != this.CreatingTroop.Leader)
+                    {
+                        this.OtherPersonText.AddText(person.Name);
+                        this.OtherPersonText.AddNewLine();
+                    }
+                }
+            }
+            this.OtherPersonText.ResortTexts();
+            this.CombatMethodText.Clear();
+            this.CombatMethodText.AddText("部队战法", this.CombatMethodText.TitleColor);
+            this.CombatMethodText.AddNewLine();
+            if (this.CreatingTroop.PersonCount > 0)
+            {
+                this.CombatMethodText.AddText(this.CreatingTroop.CombatMethods.Count.ToString() + "种", this.CombatMethodText.SubTitleColor);
+                this.CombatMethodText.AddNewLine();
+                foreach (CombatMethod method in this.CreatingTroop.CombatMethods.CombatMethods.Values)
+                {
+                    this.CombatMethodText.AddText(method.Name, this.CombatMethodText.SubTitleColor2);
+                    this.CombatMethodText.AddText(" 战意消耗" + ((method.Combativity - this.CreatingTroop.DecrementOfCombatMethodCombativityConsuming)).ToString(), Color.LightGreen);
+                    this.CombatMethodText.AddNewLine();
+                }
+            }
+            this.CombatMethodText.ResortTexts();
+            this.StuntText.Clear();
+            this.StuntText.AddText("战斗特技", this.StuntText.TitleColor);
+            this.StuntText.AddNewLine();
+            if (this.CreatingTroop.PersonCount > 0)
+            {
+                this.StuntText.AddText(this.CreatingTroop.Stunts.Count.ToString() + "种", this.StuntText.SubTitleColor);
+                this.StuntText.AddNewLine();
+                foreach (Stunt stunt in this.CreatingTroop.Stunts.Stunts.Values)
+                {
+                    this.StuntText.AddText(stunt.Name, this.StuntText.SubTitleColor2);
+                    this.StuntText.AddText(" 战意消耗" + stunt.Combativity, this.StuntText.SubTitleColor3);
+                    this.StuntText.AddNewLine();
+                }
+            }
+            this.StuntText.ResortTexts();
+            this.InfluenceText.Clear();
+            this.InfluenceText.AddText("部队特性", this.InfluenceText.TitleColor);
+            this.InfluenceText.AddNewLine();
+            if (this.CreatingMilitary != null)
+            {
+                this.InfluenceText.AddText(this.CreatingMilitary.Kind.Name, this.InfluenceText.SubTitleColor);
+                this.InfluenceText.AddNewLine();
+                foreach (Influence influence in this.CreatingMilitary.Kind.Influences.Influences.Values)
+                {
+                    this.InfluenceText.AddText(influence.Name, this.InfluenceText.SubTitleColor2);
+                    this.InfluenceText.AddText(influence.Description, this.InfluenceText.SubTitleColor3);
+                    this.InfluenceText.AddNewLine();
+                }
+            }
+            this.InfluenceText.ResortTexts();
         }
 
         public bool IsDialog
@@ -788,7 +945,8 @@ namespace CreateTroopPlugin
         {
             if (Session.MainGame.mainGameScreen.PeekUndoneWork().Kind == UndoneWorkKind.Dialog)
             {
-                if (this.CreatingTroop.Army != null)
+                // 🔥 根本修复：CreatingTroop 可能为 null（没有主将时）
+                if (this.CreatingTroop != null && this.CreatingTroop.Army != null)
                 {
                     this.CreatingTroop.Destroy(true, false, true);
                 }
@@ -800,7 +958,7 @@ namespace CreateTroopPlugin
         {
             this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.Architecture_PersonToTroop, false, true, true, false, this.CreatingPersons, this.CreatingLeader.GetGameObjectList(), "出征人物", "");
             this.GameFramePlugin.SetOKFunction(delegate {
-                this.CreatingLeader = this.TabListPlugin.SelectedItem as Person;
+                this.CreatingLeader = this.TabListPlugin.SelectedItem is Person ? (Person)this.TabListPlugin.SelectedItem : null;
                 this.RefreshDetailDisplay();
             });
         }
@@ -811,7 +969,7 @@ namespace CreateTroopPlugin
             {
                 foreach (GameObject obj in this.CreatingPersons)
                 {
-                    Person p = obj as Person;
+                    Person p = (obj is Person ? (Person)obj : null);
                     if (p != null)
                     {
                         p.LocationTroop = null;
@@ -836,11 +994,11 @@ namespace CreateTroopPlugin
                     {
                         if (this.ShellMilitaryKind == null)
                         {
-                            this.CreatingMilitary = selectedItem as Military;
+                            this.CreatingMilitary = (selectedItem is Military ? (Military)selectedItem : null);
                         }
                         else
                         {
-                            this.CreatingMilitary.SetShelledMilitary(selectedItem as Military);
+                            this.CreatingMilitary.SetShelledMilitary((selectedItem is Military ? (Military)selectedItem : null));
                         }
                         this.AfterSelectMilitary();
                         this.RefreshDetailDisplay();
@@ -866,7 +1024,7 @@ namespace CreateTroopPlugin
                 {
                     foreach (GameObject obj in this.CreatingPersons)
                     {
-                        Person p = obj as Person;
+                        Person p = (obj is Person ? (Person)obj : null);
                         if (p != null)
                         {
                             p.LocationTroop = null;
@@ -910,7 +1068,7 @@ namespace CreateTroopPlugin
                                 int maxFightingAbility = 0;
                                 foreach (GameObject obj in this.CreatingPersons)
                                 {
-                                    Person p = obj as Person;
+                                    Person p = (obj is Person ? (Person)obj : null);
                                     if (p != null)
                                     {
                                         this.CreatingTroop = Troop.CreateSimulateTroop(this.CreatingArchitecture, this.CreatingPersons, p, this.CreatingMilitary, this.RationDays, this.CreatingArchitecture.Position);
@@ -964,7 +1122,7 @@ namespace CreateTroopPlugin
             this.CreatingTroop.Leader.preferredTroopPersons.Clear();
             foreach (GameObject obj in this.CreatingPersons)
             {
-                Person p = obj as Person;
+                Person p = (obj is Person ? (Person)obj : null);
                 if (p != null && p != this.CreatingTroop.Leader)
                 {
                     this.CreatingTroop.Leader.preferredTroopPersons.Add(p);
@@ -1160,15 +1318,21 @@ namespace CreateTroopPlugin
                     this.CombatMethodText.Clear();
                     this.StuntText.Clear();
                     this.InfluenceText.Clear();
-                    foreach (GameObject obj in this.CreatingTroop.Persons)
+                    
+                    // 🔥 根本修复：CreatingTroop 可能为 null（例如没有选择主将时）
+                    if (this.CreatingTroop != null)
                     {
-                        Person p = obj as Person;
-                        if (p != null)
+                        foreach (GameObject obj in this.CreatingTroop.Persons)
                         {
-                            p.LocationTroop = null;
+                            Person p = (obj is Person ? (Person)obj : null);
+                            if (p != null)
+                            {
+                                p.LocationTroop = null;
+                            }
                         }
+                        this.CreatingTroop.Persons.PurifyInfluences();
                     }
-                    this.CreatingTroop.Persons.PurifyInfluences();
+                    
                     this.CreatingTroop = null;
                     this.CreatingPersons = null;
                     this.CreatingMilitary = null;
@@ -1243,4 +1407,5 @@ namespace CreateTroopPlugin
         }
     }
 }
+
 

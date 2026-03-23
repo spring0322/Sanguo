@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 
@@ -8,7 +8,9 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind3270 : InfluenceKind
     {
+        [DataMember]
         private int kind = 0;
+        [DataMember]
         private float rate = 0f;
 
         public override void DoWork(Architecture architecture)

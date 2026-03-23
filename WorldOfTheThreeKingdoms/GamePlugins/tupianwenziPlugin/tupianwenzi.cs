@@ -1,5 +1,5 @@
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -37,7 +37,7 @@ namespace tupianwenziPlugin
         internal Rectangle ClientPosition;
         private Keys currentKey;
         private Point DisplayOffset;
-        private Queue<GameObjectAndBranchName> DisplayQueue = new Queue<GameObjectAndBranchName>();
+        internal Queue<GameObjectAndBranchName> DisplayQueue = new Queue<GameObjectAndBranchName>();
         internal PlatformTexture FirstPageButtonDisabledTexture;
         private PlatformTexture FirstPageButtonDisplayTexture;
         internal Rectangle FirstPageButtonPosition;
@@ -63,6 +63,19 @@ namespace tupianwenziPlugin
         internal event GameDelegates.VoidFunction CloseFunction;
         internal string TryToShowString = "";
 
+        // 🚀 性能优化：添加文本计算缓存，避免每帧重复计算
+        private string _cachedTryToShowString = "";
+        private string _cachedWrappedText = "";
+        private string[] _cachedTextLines = null;
+        private int _cachedDialogWidth = 0;
+        private int _cachedDialogHeight = 0;
+        private Rectangle _cachedDialogRect = Rectangle.Empty;
+        private Vector2 _cachedTextPosition = Vector2.Zero;
+        private float _cachedEffectScale = 0.8f;
+        
+        // 🔧 修复：添加人物缓存，检测人物变化
+        private Person _cachedSpeakingPerson = null;
+
         internal void Close(Screen screen)
         {
             if (this.DequeueAndDisplay(screen))
@@ -84,16 +97,65 @@ namespace tupianwenziPlugin
                 this.shijiantupianjuxing = this.juxingduilie.Dequeue();
                 this.SetPosition(ShowPosition.Bottom, screen);
                 this.shijianshengyin = this.shijianshengyinduilie.Dequeue();
-                this.SpeakingPerson = name.person;
-                this.NameText.Text = name.person.Name;
+                // 🔧 修复：检测人物变化，清除相关缓存
+                var newSpeakingPerson = name.person;
+                
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DequeueAndDisplay] 说话人={newSpeakingPerson?.Name ?? "null"}(ID:{newSpeakingPerson?.ID ?? -1}), 分支={name.branchName}");
+                #endif
+                
+                if (_cachedSpeakingPerson != newSpeakingPerson)
+                {
+                    _cachedSpeakingPerson = newSpeakingPerson;
+                    // 清除所有缓存，确保头像正确显示
+                    ClearAllCache();
+                }
+                
+                this.SpeakingPerson = newSpeakingPerson;
+                
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"========== [DequeueAndDisplay] 显示弹窗 ==========");
+                System.Diagnostics.Debug.WriteLine($"队列长度={DisplayQueue.Count}");
+                System.Diagnostics.Debug.WriteLine($"说话人={newSpeakingPerson?.Name ?? "null"}(ID:{newSpeakingPerson?.ID ?? -1})");
+                System.Diagnostics.Debug.WriteLine($"分支={name.branchName}");
+                System.Diagnostics.Debug.WriteLine($"========== [DequeueAndDisplay] 结束 ==========\n");
+                #endif
+                
+                this.NameText.Text = name.person?.Name ?? "未知";
                 if (name.TryToShowString != null && name.TryToShowString.Length > 1)
                 {
                     this.TryToShowString = name.TryToShowString;
                 }
                 else this.TryToShowString = "";
+                
+                // 🚀 计算文本长度，决定动态缩放比例以防止溢出
+                float baseSize = 15f; // From XML default
+                float newRichTextSize = baseSize;
+                _cachedEffectScale = 0.8f;
+                int totalLen = 0;
+                if (name.texts != null)
+                {
+                    foreach (var tx in name.texts)
+                    {
+                        if (tx != null && tx.Text != null) totalLen += tx.Text.Length;
+                    }
+                }
+                int effectLen = this.TryToShowString != null ? this.TryToShowString.Length : 0;
+                if (effectLen > 0)
+                {
+                     if (totalLen + effectLen > 160) { newRichTextSize = baseSize * 0.65f; _cachedEffectScale = 0.60f; }
+                     else if (totalLen + effectLen > 110) { newRichTextSize = baseSize * 0.75f; _cachedEffectScale = 0.65f; }
+                     else if (totalLen + effectLen > 70) { newRichTextSize = baseSize * 0.85f; _cachedEffectScale = 0.75f; }
+                     else if (totalLen + effectLen > 40) { newRichTextSize = baseSize * 0.95f; _cachedEffectScale = 0.8f; }
+                }
+                this.RichText.Builder.Size = newRichTextSize;
+                
+                // 🚀 性能优化：清除文本缓存，确保下次绘制时重新计算
+                _cachedTryToShowString = "";
                 if(TryToShowString != null && TryToShowString.Length > 1)
                 {
-                    this.SetPosition(ShowPosition.BottomLeft, screen);
+                    // 强制在有效果时仍然在下方居中显示
+                    this.SetPosition(ShowPosition.Bottom, screen);
                 }
                 this.RichText.Clear();
                 if (this.diyigeshengyin)
@@ -123,13 +185,56 @@ namespace tupianwenziPlugin
             return true;
         }
 
+        /// <summary>
+        /// 🔧 修复：清除所有缓存的方法
+        /// </summary>
+        private void ClearAllCache()
+        {
+            _cachedTryToShowString = "";
+            _cachedWrappedText = "";
+            _cachedTextLines = null;
+            _cachedDialogWidth = 0;
+            _cachedDialogHeight = 0;
+            _cachedDialogRect = Rectangle.Empty;
+            _cachedTextPosition = Vector2.Zero;
+        }
+
         internal void Draw()
         {
+            // 🔧 修复：添加人物有效性检查
             if (this.SpeakingPerson != null)
             {
+                // 🔧 性能优化：删除每帧执行的调试输出，避免卡顿
                 Rectangle? sourceRectangle = null;
 
-                CacheManager.DrawZhsanAvatar(this.SpeakingPerson, this.PortraitDisplayPosition, 0.201f);
+                // 🔧 修复：在绘制头像前检查人物状态，添加异常处理
+                try
+                {
+                    // 即使人物死亡也要显示头像，但要确保PictureIndex有效
+                    if (this.SpeakingPerson.PictureIndex >= 0)
+                    {
+                        CacheManager.DrawZhsanAvatar(this.SpeakingPerson, this.PortraitDisplayPosition, 0.201f);
+                    }
+                    else
+                    {
+                        // 如果PictureIndex无效，使用默认头像
+                        System.Diagnostics.Debug.WriteLine($"[tupianwenzi] 警告：人物 {this.SpeakingPerson.Name} 的PictureIndex无效: {this.SpeakingPerson.PictureIndex}");
+                        CacheManager.DrawZhsanAvatar(0, this.PortraitDisplayPosition, 0.201f); // 使用默认头像
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[tupianwenzi] 绘制头像失败: {this.SpeakingPerson?.Name ?? "未知"}, 错误: {ex.Message}");
+                    // 绘制失败时使用默认头像
+                    try
+                    {
+                        CacheManager.DrawZhsanAvatar(0, this.PortraitDisplayPosition, 0.201f);
+                    }
+                    catch
+                    {
+                        // 如果连默认头像都绘制失败，就跳过头像绘制
+                    }
+                }
 
                 sourceRectangle = null;
                 CacheManager.Draw(this.BackgroundTexture, this.BackgroundDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.2f);
@@ -149,9 +254,37 @@ namespace tupianwenziPlugin
                 CacheManager.Draw(this.FirstPageButtonDisplayTexture, this.FirstPageButtonDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
                 if(TryToShowString!=null && TryToShowString.Length>1)
                 {
-                    CacheManager.Draw(@"Content\Textures\GameComponents\tupianwenzi\Data\Background2.png", new Rectangle(this.BackgroundDisplayPosition.X + this.BackgroundDisplayPosition.Width + 100, this.DisplayOffset.Y+115, 460, 165), sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.2f);
-                    CacheManager.DrawString(Session.Current.Font,TryToShowString.Replace(" ","\n"),new Vector2(this.BackgroundDisplayPosition.X + this.BackgroundDisplayPosition.Width + 120, this.DisplayOffset.Y + 135),Color.White,0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0.1999f);
+                    // 🚀 性能优化：只有当文本内容改变时才重新计算
+                    if (_cachedTryToShowString != TryToShowString)
+                    {
+                        _cachedTryToShowString = TryToShowString;
+                        
+                        // 动态计算最大可显示宽度（放在名字和头像的右侧区域内的固定宽域，原为540，统一到450以匹配主对话框宽度）
+                        var maxTextWidth = 450; 
+                        
+                        // 计算文本所需的尺寸（使用CacheManager.AutoWrap以确保测量与绘制字体一致）
+                        _cachedWrappedText = CacheManager.AutoWrap(Session.Current.Font, TryToShowString, maxTextWidth, _cachedEffectScale); 
+                        
+                        // 调整位置：与对话文本RichText左对齐，但在其正下方
+                        var textX = this.DisplayOffset.X + this.ClientPosition.X; 
+                        
+                        // 根据对话实际高度，加上间距。保底高度40避免太短重叠
+                        var dialogHeight = this.RichText.RealHeight;
+                        if (dialogHeight < 40) dialogHeight = 40;
+                        var textY = this.DisplayOffset.Y + this.ClientPosition.Y + dialogHeight + 10;
+                            
+                        _cachedTextPosition = new Vector2(textX, textY);
+                    }
+                    
+                    // 绘制阴影 (黑色偏移1像素)
+                    CacheManager.DrawString(Session.Current.Font, _cachedWrappedText, _cachedTextPosition + new Vector2(1,1), 
+                        Color.Black, 0f, Vector2.Zero, _cachedEffectScale, SpriteEffects.None, 0.19991f);
+                        
+                    // 绘制正文 (金黄色效果以示区分)
+                    CacheManager.DrawString(Session.Current.Font, _cachedWrappedText, _cachedTextPosition, 
+                        new Color(255, 235, 130), 0f, Vector2.Zero, _cachedEffectScale, SpriteEffects.None, 0.1999f);
                 }
+                // RichText 始终绘制（部队事件需要上面RichText对话 + 下方TryToShowString效果同时显示）
                 this.RichText.Draw(0.1999f);
             }
         }
@@ -209,6 +342,12 @@ namespace tupianwenziPlugin
 
         internal void SetGameObjectBranch(GameObject gongfang, GameObject gameObject, string branchName,string TryToShowString = "")
         {
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[SetGameObjectBranch] gongfang类型={gongfang?.GetType().Name}, Name={(gongfang as Person)?.Name ?? "非Person"}(ID:{(gongfang as Person)?.ID ?? -1})");
+            System.Diagnostics.Debug.WriteLine($"[SetGameObjectBranch] gameObject类型={gameObject?.GetType().Name}");
+            System.Diagnostics.Debug.WriteLine($"[SetGameObjectBranch] branchName={branchName}");
+            #endif
+
             this.BuildingRichText.Clear();
             if (gameObject != null)
             {
@@ -300,8 +439,13 @@ namespace tupianwenziPlugin
             this.RichText.DisplayOffset = new Point(rect.X + this.ClientPosition.X, rect.Y + this.ClientPosition.Y);
             this.NameText.DisplayOffset = this.DisplayOffset;
 
-            this.shijiantupianjuxing = StaticMethods.GetTopRectangle(rectDes, this.shijiantupianjuxing);
-            this.shijiantupianjuxing.Y += 40;
+            // 把图片调整到中央偏下的位置，对话框上面
+            this.shijiantupianjuxing.X = rectDes.Left + (rectDes.Width - this.shijiantupianjuxing.Width) / 2;
+            this.shijiantupianjuxing.Y = rect.Y - this.shijiantupianjuxing.Height - 10;
+            if (this.shijiantupianjuxing.Y < 10) 
+            {
+                this.shijiantupianjuxing.Y = 10;
+            }
         }
 
         internal void Update()
@@ -464,6 +608,7 @@ namespace tupianwenziPlugin
             texture.GetData<Color>(colors);
             return colors;
         }
+
 
 
     }

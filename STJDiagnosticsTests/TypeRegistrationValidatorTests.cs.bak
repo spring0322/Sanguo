@@ -1,0 +1,220 @@
+using NUnit.Framework;
+using FsCheck;
+using FsCheck.NUnit;
+using System;
+using System.Linq;
+using System.Text.Json;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Implementations;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Interfaces;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+using GameObjects;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Tests for ITypeRegistrationValidator implementation
+    /// Validates Requirements 2.1, 2.2, 2.3, 2.4, 2.5
+    /// </summary>
+    [TestFixture]
+    public class TypeRegistrationValidatorTests : TestBase
+    {
+        private ITypeRegistrationValidator _validator;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            _validator = new TypeRegistrationValidator();
+        }
+
+        [Test]
+        public void ValidateEventEffectKindTableRegistration_ShouldReturnValidationResult()
+        {
+            // Act
+            var result = _validator.ValidateEventEffectKindTableRegistration();
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Errors, Is.Not.Null);
+            Assert.That(result.Warnings, Is.Not.Null);
+            Assert.That(result.Metadata, Is.Not.Null);
+            
+            // Should contain EventEffectKindTable validation metadata
+            Assert.That(result.Metadata.ContainsKey("EventEffectKindTableValidation"), Is.True);
+        }
+
+        [Test]
+        public void ValidateDependentTypes_WithValidType_ShouldReturnResult()
+        {
+            // Arrange - 使用基本类型避免编译问题
+            var testType = typeof(string);
+
+            // Act
+            var result = _validator.ValidateDependentTypes(testType);
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Metadata.ContainsKey("DependencyAnalysis"), Is.True);
+        }
+
+        [Test]
+        public void ValidatePolymorphicTypes_WithBaseType_ShouldReturnResult()
+        {
+            // Arrange - 使用基本类型避免编译问题
+            var baseType = typeof(object);
+
+            // Act
+            var result = _validator.ValidatePolymorphicTypes(baseType);
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Metadata.ContainsKey("PolymorphicValidation"), Is.True);
+        }
+
+        [Test]
+        public void ValidateJsonSerializerOptions_WithValidOptions_ShouldReturnResult()
+        {
+            // Arrange
+            var options = new JsonSerializerOptions
+            {
+                TypeInfoResolver = GameJsonContext.Default
+            };
+
+            // Act
+            var result = _validator.ValidateJsonSerializerOptions(options);
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Metadata.ContainsKey("OptionsValidation"), Is.True);
+        }
+
+        [Property(Arbitrary = new[] { typeof(TestArbitraries) }, MaxTest = 10)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 2: Comprehensive Type Registration Validation")]
+        public Property ComprehensiveTypeRegistrationValidation()
+        {
+            /**
+             * **Validates: Requirements 2.1, 2.2, 2.3, 5.2**
+             * 
+             * Property: 对于任何给定的类型，类型注册验证器应该：
+             * 1. 返回有效的ValidationResult
+             * 2. 包含适当的元数据
+             * 3. 对于相同类型的重复调用返回一致的结果
+             * 4. 正确识别依赖类型
+             */
+            return Prop.ForAll(TestArbitraries.ArbitraryGameType(), rootType =>
+            {
+                // Act
+                var result1 = _validator.ValidateDependentTypes(rootType);
+                var result2 = _validator.ValidateDependentTypes(rootType);
+
+                // Property assertions
+                var validResult = result1 != null && result2 != null;
+                var hasMetadata = result1.Metadata != null && result2.Metadata != null;
+                var consistentResults = result1.IsValid == result2.IsValid;
+                var hasDependencyAnalysis = result1.Metadata.ContainsKey("DependencyAnalysis") &&
+                                          result2.Metadata.ContainsKey("DependencyAnalysis");
+
+                return validResult && hasMetadata && consistentResults && hasDependencyAnalysis;
+            });
+        }
+
+        [Property(Arbitrary = new[] { typeof(TestArbitraries) }, MaxTest = 10)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 5: Circular Dependency Detection")]
+        public Property CircularDependencyDetection()
+        {
+            /**
+             * **Validates: Requirements 2.4**
+             * 
+             * Property: 循环依赖检测应该：
+             * 1. 对于任何类型都能完成验证而不会无限循环
+             * 2. 检测到的循环依赖应该在警告中报告
+             * 3. 验证过程应该在合理时间内完成
+             */
+            return Prop.ForAll(TestArbitraries.ArbitraryGameType(), baseType =>
+            {
+                var startTime = DateTime.UtcNow;
+                
+                // Act
+                var result = _validator.ValidateDependentTypes(baseType);
+                
+                var endTime = DateTime.UtcNow;
+                var executionTime = endTime - startTime;
+
+                // Property assertions
+                var completedInReasonableTime = executionTime.TotalSeconds < 10; // 10秒超时
+                var validResult = result != null;
+                var hasMetadata = result.Metadata != null;
+                
+                // 如果有循环依赖警告，应该包含相关信息
+                var circularWarnings = result.Warnings?.Where(w => w.Code.StartsWith("CIRC")).ToList() ?? new List<WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models.ValidationWarning>();
+                var circularWarningsValid = circularWarnings.All(w => 
+                    !string.IsNullOrEmpty(w.Message) && 
+                    !string.IsNullOrEmpty(w.Details));
+
+                return completedInReasonableTime && validResult && hasMetadata && circularWarningsValid;
+            });
+        }
+
+        [Property(Arbitrary = new[] { typeof(TestArbitraries) }, MaxTest = 10)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 6: EventEffectKind Polymorphic Validation")]
+        public Property EventEffectKindPolymorphicValidation()
+        {
+            /**
+             * **Validates: Requirements 1.5, 2.3**
+             * 
+             * Property: EventEffectKind多态类型验证应该：
+             * 1. 正确识别所有派生类型
+             * 2. 验证每个派生类型的注册状态
+             * 3. 提供详细的多态验证元数据
+             */
+            return Prop.ForAll(TestArbitraries.ArbitraryEventEffectKindType(), baseType =>
+            {
+                // Act
+                var result = _validator.ValidatePolymorphicTypes(baseType);
+
+                // Property assertions
+                var validResult = result != null;
+                var hasMetadata = result.Metadata != null && result.Metadata.ContainsKey("PolymorphicValidation");
+                
+                // 验证元数据结构
+                var metadataValid = true;
+                if (hasMetadata)
+                {
+                    var polyValidation = result.Metadata["PolymorphicValidation"];
+                    // 基本检查元数据不为空
+                    metadataValid = polyValidation != null;
+                }
+
+                return validResult && hasMetadata && metadataValid;
+            });
+        }
+
+        [Property(MaxTest = 10)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 7: JsonSerializerOptions Validation")]
+        public Property JsonSerializerOptionsValidation()
+        {
+            /**
+             * **Validates: Requirements 2.5**
+             * 
+             * Property: JsonSerializerOptions验证应该：
+             * 1. 对于任何选项配置都返回有效结果
+             * 2. 正确识别配置问题
+             * 3. 提供适当的建议
+             */
+            return Prop.ForAll(TestArbitraries.ArbitraryJsonSerializerOptions(), options =>
+            {
+                // Act
+                var result = _validator.ValidateJsonSerializerOptions(options);
+
+                // Property assertions
+                var validResult = result != null;
+                var hasMetadata = result.Metadata != null && result.Metadata.ContainsKey("OptionsValidation");
+                var errorsHaveRecommendations = result.Errors?.All(e => !string.IsNullOrEmpty(e.RecommendedAction)) ?? true;
+                var warningsHaveRecommendations = result.Warnings?.All(w => !string.IsNullOrEmpty(w.Recommendation)) ?? true;
+
+                return validResult && hasMetadata && errorsHaveRecommendations && warningsHaveRecommendations;
+            });
+        }
+    }
+}

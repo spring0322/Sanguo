@@ -5,9 +5,10 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Microsoft.Xna.Framework.Content;
 using GameObjects;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using WorldOfTheThreeKingdoms.Resources;
+using WorldOfTheThreeKingdoms.GameScreens;
 
 namespace WorldOfTheThreeKingdoms.GameManager
 {
@@ -16,33 +17,23 @@ namespace WorldOfTheThreeKingdoms.GameManager
     /// </summary>
     public class DialogueEntry
     {
-        public GameGlobal.DialogueType Type { get; set; }
-        public GameGlobal.RelationType Relation { get; set; }
+        public WorldOfTheThreeKingdoms.GameGlobal.DialogueType Type { get; set; }
+        public WorldOfTheThreeKingdoms.GameGlobal.RelationType Relation { get; set; }
         public string LeaderText { get; set; }
         public string AdvisorText { get; set; }
     }
 
     /// <summary>
-    /// 头像尺寸枚举
-    /// </summary>
-    public enum PortraitSize
-    {
-        Small,
-        Medium,
-        Large
-    }
-
-    /// <summary>
     /// 纹理管理器（临时实现）
     /// </summary>
-    public static class TextureManager
+    public static class DialogueTextureManager
     {
-        public static Texture2D GetPortraitTexture(int pictureIndex, PortraitSize size)
+        public static Texture2D GetPortraitTexture(int pictureIndex, WorldOfTheThreeKingdoms.GameGlobal.PortraitSize size)
         {
             try
             {
                 // 使用现有的 TextureManager 获取头像
-                return WorldOfTheThreeKingdoms.GameManager.TextureManager.GetPortraitTexture(pictureIndex, size);
+                return TextureManager.GetPortraitTexture(pictureIndex, size);
             }
             catch
             {
@@ -122,8 +113,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
         public SpriteFont TextFont => font; // 可能为null，Draw方法需要检查
         public Texture2D BackgroundTexture => backgroundTexture ?? pixelTexture;
         
-        // 鼠标状态
-        private MouseState prevMouse;
+        // ✅ 修复：删除 prevMouse 字段，使用 InputManager.IsPressed
         private bool waitingForClick = false;
 
         /// <summary>
@@ -152,29 +142,29 @@ namespace WorldOfTheThreeKingdoms.GameManager
             // 加载字体 - 改进的容错处理
             try 
             { 
-                font = content.Load<SpriteFont>("FontS"); 
-                System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: FontS");
+                font = content.Load<SpriteFont>("Font/FontS"); 
+                System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font/FontS");
             }
             catch (Exception ex1)
             { 
-                System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载FontS失败: {ex1.Message}");
+                System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontS失败: {ex1.Message}");
                 try 
                 { 
-                    font = content.Load<SpriteFont>("Fonts/FontS"); 
-                    System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Fonts/FontS");
+                    font = content.Load<SpriteFont>("FontS"); 
+                    System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: FontS");
                 } 
                 catch (Exception ex2)
                 { 
-                    System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Fonts/FontS失败: {ex2.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载FontS失败: {ex2.Message}");
                     try
                     {
                         // 尝试加载其他可能的字体
-                        font = content.Load<SpriteFont>("Font");
-                        System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font");
+                        font = content.Load<SpriteFont>("Font/FontL");
+                        System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font/FontL");
                     }
                     catch (Exception ex3)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font失败: {ex3.Message}");
+                        System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontL失败: {ex3.Message}");
                         // 字体加载完全失败，但不抛出异常，使用null字体
                         font = null;
                         System.Diagnostics.Debug.WriteLine("[DialogueUI] 警告: 所有字体加载失败，对话UI将无法正常显示文本");
@@ -185,10 +175,13 @@ namespace WorldOfTheThreeKingdoms.GameManager
             // 创建像素纹理
             CreatePixelTexture(device);
 
-            // 设置对话框位置（根据你的截图，对话框在右侧）
+            // 设置对话框位置 - 使用固定分辨率进行定位
+            // ScreenManager.VirtualWidth/Height 不存在，使用固定值
+            int virtualWidth = 1920;  // 假设的虚拟宽度
+            int virtualHeight = 1080; // 假设的虚拟高度
             dialoguePosition = new Vector2(
-                device.Viewport.Width - DialogueWidth - 50, // 右侧留50像素边距
-                device.Viewport.Height - DialogueHeight - 50 // 底部留50像素边距
+                virtualWidth - DialogueWidth - 50, // 右侧留50像素边距
+                virtualHeight - DialogueHeight - 50 // 底部留50像素边距
             );
             
             // 设置对话框矩形
@@ -262,7 +255,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     waitingForClick = false;
                     
                     // 触发君主震动效果
-                    if (currentDialogue != null && currentDialogue.Type == GameGlobal.DialogueType.Refusal && currentDialogue.Relation == GameGlobal.RelationType.Hate)
+                    if (currentDialogue != null && currentDialogue.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Refusal && currentDialogue.Relation == WorldOfTheThreeKingdoms.GameGlobal.RelationType.Hate)
                     {
                         TriggerShake(0.3f, 5.0f);
                     }
@@ -285,11 +278,11 @@ namespace WorldOfTheThreeKingdoms.GameManager
                         {
                             TriggerShake(0.5f, 3.0f);
                         }
-                        else if (currentDialogue.Type == GameGlobal.DialogueType.Refusal && currentDialogue.Relation == GameGlobal.RelationType.Hate)
+                        else if (currentDialogue.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Refusal && currentDialogue.Relation == WorldOfTheThreeKingdoms.GameGlobal.RelationType.Hate)
                         {
                             TriggerShake(1.0f, 10.0f);
                         }
-                        else if (currentDialogue.Type == GameGlobal.DialogueType.Bond)
+                        else if (currentDialogue.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Bond)
                         {
                             TriggerShake(0.4f, 2.0f);
                         }
@@ -331,10 +324,9 @@ namespace WorldOfTheThreeKingdoms.GameManager
         {
             if (currentState == State.Hidden) return;
 
-            MouseState mouse = Mouse.GetState();
+            // ✅ 修复：使用 InputManager 的边缘检测标志
+            bool clicked = InputManager.IsPressed;
             float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
-
-            bool clicked = mouse.LeftButton == ButtonState.Pressed && prevMouse.LeftButton == ButtonState.Released;
             
             // 更新震动效果
             UpdateShake(deltaTime);
@@ -412,8 +404,8 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     // 回调执行完后会调用 Hide() 方法
                     break;
             }
-
-            prevMouse = mouse;
+            
+            // ✅ 修复：删除 prevMouse 更新
         }
 
         /// <summary>
@@ -488,7 +480,18 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     return;
                 }
 
-                spriteBatch.Begin();
+                // 使用 ScreenManager 的缩放矩阵
+                /*
+                spriteBatch.Begin(
+                    SpriteSortMode.Deferred, 
+                    BlendState.AlphaBlend, 
+                    SamplerState.PointClamp, 
+                    null, 
+                    null, 
+                    null, 
+                    null  // ScreenManager.ScaleMatrix 不存在，使用 null
+                );
+                */
 
                 // ===== 1. 确定当前主角是谁 =====
                 Person currentSpeaker = null;
@@ -520,7 +523,8 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 try
                 {
                     // 使用现有的 TextureManager 获取头像
-                    portraitTexture = WorldOfTheThreeKingdoms.GameManager.TextureManager.GetPortraitTexture(currentSpeaker.ID, PortraitSize.Medium);
+                    // 🔥 修复：使用 PictureIndex（头像索引）而非 ID（人物数据ID）
+                    portraitTexture = TextureManager.GetPortraitTexture(currentSpeaker.PictureIndex, WorldOfTheThreeKingdoms.GameGlobal.PortraitSize.Medium);
                 }
                 catch
                 {
@@ -536,37 +540,44 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 }
 
                 // ===== 3. 绘制对话框 =====
-                spriteBatch.Draw(BackgroundTexture, dialogRect, Color.White);
+                Texture2D bg = BackgroundTexture;
+                if (bg != null)
+                {
+                    spriteBatch.Draw(bg, dialogRect, Color.White);
+                }
 
                 // ===== 4. 绘制名字 (独立绘制，不混在文本里) =====
-                Vector2 namePos = new Vector2(dialogRect.X + 20, dialogRect.Y + 15);
-                spriteBatch.DrawString(TextFont, currentSpeaker.Name, namePos, Color.Gold);
+                if (TextFont != null)
+                {
+                    Vector2 namePos = new Vector2(dialogRect.X + 20, dialogRect.Y + 15);
+                    spriteBatch.DrawString(TextFont, currentSpeaker.Name, namePos, Color.Gold);
 
                 // ===== 5. 绘制内容 (只绘制 currentText) =====
                 // 确保这里只画 currentText，不要画 dialogue.LeaderText + dialogue.AdvisorText
-                Vector2 textPos = new Vector2(dialogRect.X + 30, dialogRect.Y + 45);
-                string wrappedText = WrapText(TextFont, currentText, DialogueWidth - 60);
-                spriteBatch.DrawString(TextFont, wrappedText, textPos, Color.White);
+                    Vector2 textPos = new Vector2(dialogRect.X + 30, dialogRect.Y + 45);
+                    string wrappedText = WrapText(TextFont, currentText, DialogueWidth - 60);
+                    spriteBatch.DrawString(TextFont, wrappedText, textPos, Color.White);
 
                 // ===== 6. 绘制提示文字 =====
-                string hint = "";
-                if (currentText.Length < targetText.Length)
-                {
-                    hint = "点击跳过打字效果...";
-                }
-                else if (waitingForClick)
-                {
-                    hint = "点击任意位置继续...";
+                    string hint = "";
+                    if (currentText.Length < targetText.Length)
+                    {
+                        hint = "点击跳过打字效果...";
+                    }
+                    else if (waitingForClick)
+                    {
+                        hint = "点击任意位置继续...";
+                    }
+
+                    if (!string.IsNullOrEmpty(hint))
+                    {
+                        Vector2 hintSize = TextFont.MeasureString(hint);
+                        Vector2 hintPos = new Vector2(dialogRect.X + DialogueWidth - hintSize.X - 20, dialogRect.Y + DialogueHeight - 30);
+                        spriteBatch.DrawString(TextFont, hint, hintPos, Color.Yellow);
+                    }
                 }
 
-                if (!string.IsNullOrEmpty(hint))
-                {
-                    Vector2 hintSize = TextFont.MeasureString(hint);
-                    Vector2 hintPos = new Vector2(dialogRect.X + DialogueWidth - hintSize.X - 20, dialogRect.Y + DialogueHeight - 30);
-                    spriteBatch.DrawString(TextFont, hint, hintPos, Color.Yellow);
-                }
-
-                spriteBatch.End();
+                // spriteBatch.End();
             }
             catch (Exception ex)
             {
@@ -599,15 +610,15 @@ namespace WorldOfTheThreeKingdoms.GameManager
         /// </summary>
         private string GetDialogueTitle()
         {
-            if (currentDialogue?.Type == GameGlobal.DialogueType.Recall)
+            if (currentDialogue?.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Recall)
             {
                 return "罢免军师";
             }
-            else if (currentDialogue?.Type == GameGlobal.DialogueType.Bond)
+            else if (currentDialogue?.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Bond)
             {
                 return "特殊羁绊";
             }
-            else if (currentDialogue?.Type == GameGlobal.DialogueType.Personality)
+            else if (currentDialogue?.Type == WorldOfTheThreeKingdoms.GameGlobal.DialogueType.Personality)
             {
                 return "性格匹配";
             }

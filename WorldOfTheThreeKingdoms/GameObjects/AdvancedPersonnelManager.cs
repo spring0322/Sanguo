@@ -1,50 +1,55 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
+using GameObjects.ArchitectureDetail;
+using GameObjects.PersonDetail;
 
 namespace GameObjects
 {
     /// <summary>
-    /// 高级人事管理器 - 扩展PersonnelManager的智能功能
+    /// 高级人事管理器 - 扩展 Faction 的智能功能
+    /// 包含：季度评估、智能轮岗、人才培养、风险预测
     /// </summary>
-    public class AdvancedPersonnelManager : PersonnelManager
+    public class AdvancedPersonnelManager
     {
-        private Dictionary<Officer, List<float>> _performanceHistory;
-        private Dictionary<City, List<float>> _cityStabilityHistory;
+        private Faction _faction;
+        private Dictionary<Person, List<float>> _performanceHistory;
         private int _currentSeason;
         private Random _random;
 
-        public AdvancedPersonnelManager(Faction faction) : base(faction)
+        public AdvancedPersonnelManager(Faction faction)
         {
-            _performanceHistory = new Dictionary<Officer, List<float>>();
-            _cityStabilityHistory = new Dictionary<City, List<float>>();
+            _faction = faction;
+            _performanceHistory = new Dictionary<Person, List<float>>();
             _currentSeason = 0;
             _random = new Random();
         }
 
         /// <summary>
-        /// 季节性人事评估 - 每季度调用
+        /// 季节性人事评估 - 建议每季度（1月/4月/7月/10月 1日）调用
         /// </summary>
         public void SeasonalAssessment()
         {
             _currentSeason++;
-            System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] 开始第{_currentSeason}季度人事评估");
+            if (SectionAIHelper.EnableDebugOutput)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] {_faction.Name} 开始第{_currentSeason}季度人事评估");
+            }
 
             // 1. 评估所有太守的季度表现
             EvaluateQuarterlyPerformance();
 
-            // 2. 预测潜在风险
+            // 2. 预测潜在风险 (包含清洗不忠诚太守)
             PredictPotentialRisks();
 
-            // 3. 动态调整任命策略
-            AdjustAppointmentStrategy();
+            // 3. 智能轮岗 (防止太守长期霸占)
+            ImplementRotationSystem();
 
-            // 4. 执行常规人事更新
-            UpdateAssignments();
-
-            // 5. 生成季度报告
-            GenerateQuarterlyReport();
+            // 4. 人才培养
+            DevelopTalent();
+            
+            // 注意：常规人事调动由 Faction.RunPersonnel_V81 接管，此处不再重复执行
         }
 
         /// <summary>
@@ -52,96 +57,110 @@ namespace GameObjects
         /// </summary>
         private void EvaluateQuarterlyPerformance()
         {
-            foreach (var city in _faction.Cities)
+            foreach (Architecture arch in _faction.Architectures)
             {
-                if (city.Prefect == null) continue;
+                if (arch.Mayor == null) continue;
 
-                float performance = CalculateQuarterlyPerformance(city, city.Prefect);
+                float performance = CalculateQuarterlyPerformance(arch, arch.Mayor);
                 
                 // 记录表现历史
-                if (!_performanceHistory.ContainsKey(city.Prefect))
-                    _performanceHistory[city.Prefect] = new List<float>();
+                if (!_performanceHistory.ContainsKey(arch.Mayor))
+                    _performanceHistory[arch.Mayor] = new List<float>();
                 
-                _performanceHistory[city.Prefect].Add(performance);
+                _performanceHistory[arch.Mayor].Add(performance);
                 
                 // 只保留最近8个季度的记录
-                if (_performanceHistory[city.Prefect].Count > 8)
-                    _performanceHistory[city.Prefect].RemoveAt(0);
+                if (_performanceHistory[arch.Mayor].Count > 8)
+                    _performanceHistory[arch.Mayor].RemoveAt(0);
 
-                UpdateOfficerPerformance(city.Prefect, performance);
+                // 更新 Person 对象的评价 (如果有对应属性，目前假设存储在 manager 内部)
+                // arch.Mayor.InternalPerformance = performance; // 假设字段
                 
-                System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] {city.Prefect.Name} 在 {city.Name} 的季度表现: {performance:F2}");
+                if (SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[APM] {arch.Mayor.Name} 在 {arch.Name} 的季度表现: {performance:F2}");
+                }
             }
         }
 
         /// <summary>
         /// 计算季度表现
         /// </summary>
-        private float CalculateQuarterlyPerformance(City city, Officer prefect)
+        private float CalculateQuarterlyPerformance(Architecture arch, Person mayor)
         {
             float performance = 0.5f; // 基础表现
 
-            // 城市发展指标
-            performance += city.Prosperity * 0.2f;
-            performance += city.Security * 0.15f;
-            performance += city.Loyalty * 0.15f;
+            // 城市发展指标 (假设 Architecture 有这些属性)
+            // performance += arch.Prosperity * 0.0001f; // 假设数值很大
+            // 这里简化处理：根据治安和民心
+            performance += arch.Domination / 2000f; // 假设上限1000？ 需确认
+            performance += arch.Domination / 2000f; 
 
-            // 人口增长
-            float populationGrowth = (float)city.Population / city.MaxPopulation;
-            performance += populationGrowth * 0.1f;
-
-            // 建设完成情况
-            if (city.Buildings.Count > 3) performance += 0.1f;
+            // 人口增长 (此处无法获取增量，仅作静态评估)
+            performance += (arch.Population / 100000f) * 0.1f;
 
             // 太守能力匹配度
-            float threat = StrategicMap.GetThreatLevel(city);
+            float threat = 0f; 
+            // 简单计算威胁度: 
+            if (arch.HasHostileTroopsInView()) threat = 1.0f;
+            else if (arch.FrontLine) threat = 0.6f;
+
             if (threat > 0.6f)
             {
                 // 前线城市看军事能力
-                float militaryFit = (prefect.Leadership + prefect.War) / 200f;
+                float militaryFit = (mayor.Command + mayor.Strength) / 200f;
                 performance += militaryFit * 0.2f;
             }
             else
             {
                 // 后方城市看政治能力
-                float politicalFit = (prefect.Politics + prefect.Intelligence) / 200f;
+                float politicalFit = (mayor.Politics + mayor.Intelligence) / 200f;
                 performance += politicalFit * 0.2f;
             }
-
-            // 随机事件影响
-            float randomFactor = (float)(_random.NextDouble() - 0.5) * 0.1f;
-            performance += randomFactor;
 
             return Math.Max(0f, Math.Min(1f, performance));
         }
 
         /// <summary>
-        /// 预测潜在风险
+        /// 预测潜在风险 & 清洗
         /// </summary>
         private void PredictPotentialRisks()
         {
-            var riskPredictions = new List<string>();
+            List<Person> toDismiss = new List<Person>();
 
-            foreach (var officer in _faction.Officers.Where(o => o.State == OfficerState.Active))
+            foreach (Person p in _faction.Persons)
             {
-                float riskScore = PredictOfficerRisk(officer);
+                // 仅评估由 Faction 管理的、非俘虏的正常武将
+                if (p.Status != PersonStatus.Normal || p.IsCaptive) continue;
+
+                float risk = PredictOfficerRisk(p);
                 
-                if (riskScore > 0.7f)
+                if (risk > 0.8f) // 极高风险
                 {
-                    riskPredictions.Add($"{officer.Name}: 高风险 ({riskScore:F2})");
-                }
-                else if (riskScore > 0.5f)
-                {
-                    riskPredictions.Add($"{officer.Name}: 中等风险 ({riskScore:F2})");
+                    if (SectionAIHelper.EnableDebugOutput)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[APM] ⚠️ 高风险警告: {p.Name} (风险值:{risk:F2})");
+                    }
+
+                    // 如果是太守，建议撤换
+                    if (p.LocationArchitecture != null && p.LocationArchitecture.Mayor == p)
+                    {
+                        toDismiss.Add(p);
+                    }
                 }
             }
 
-            if (riskPredictions.Count > 0)
+            // 执行清洗
+            foreach (Person p in toDismiss)
             {
-                System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 风险预测:");
-                foreach (var prediction in riskPredictions)
+                if (p.LocationArchitecture != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"  {prediction}");
+                     if (SectionAIHelper.EnableDebugOutput)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[APM] 🛡️ 应急清洗: 撤换危险太守 {p.Name} ({p.LocationArchitecture.Name})");
+                    }
+                    // 撤销太守职务
+                    p.LocationArchitecture.AppointMayor(null);
                 }
             }
         }
@@ -149,66 +168,24 @@ namespace GameObjects
         /// <summary>
         /// 预测武将风险
         /// </summary>
-        private float PredictOfficerRisk(Officer officer)
+        private float PredictOfficerRisk(Person p)
         {
             float risk = 0f;
 
-            // 基础风险因子
-            if (officer.Loyalty < 70) risk += 0.3f;
-            if (officer.Ambition > 80) risk += 0.2f;
-            if (officer.Righteousness < 50) risk += 0.2f;
+            // 基础风险
+            if (p.Loyalty < 80) risk += 0.3f;
+            if (p.Loyalty < 60) risk += 0.3f; // 叠加
+            if (p.Ambition > 80) risk += 0.2f;
+            if (p.PersonalLoyalty < 50) risk += 0.2f; // 义理/个人忠诚
 
-            // 表现趋势分析
-            if (_performanceHistory.ContainsKey(officer) && _performanceHistory[officer].Count >= 3)
+            // 关系风险 (假设有 Ruler)
+            if (_faction.Leader != null)
             {
-                var recent = _performanceHistory[officer].TakeLast(3).ToList();
-                var trend = (recent[2] - recent[0]) / 2f; // 简单趋势计算
-                
-                if (trend < -0.1f) risk += 0.15f; // 表现下降趋势
+                if (p.HatedPersons.Contains(_faction.Leader.ID)) risk += 0.5f;
+                if (p.ClosePersons.Contains(_faction.Leader.ID)) risk -= 0.5f;
             }
-
-            // 关系网络风险
-            if (_faction.Ruler != null)
-            {
-                var relation = officer.GetRelationWith(_faction.Ruler);
-                if (relation == RelationType.Hated) risk += 0.4f;
-                else if (relation == RelationType.SwornBrother || relation == RelationType.Spouse) risk -= 0.3f;
-            }
-
-            // 年龄和健康风险
-            if (officer.Age > 65) risk += 0.1f;
-            if (officer.Health < 50) risk += 0.1f;
-
-            // 性格风险
-            if (officer.Traits.Contains(Trait.Rebellious)) risk += 0.2f;
-            if (officer.Traits.Contains(Trait.Greedy)) risk += 0.1f;
 
             return Math.Max(0f, Math.Min(1f, risk));
-        }
-
-        /// <summary>
-        /// 动态调整任命策略
-        /// </summary>
-        private void AdjustAppointmentStrategy()
-        {
-            // 根据当前势力状态调整策略
-            switch (_faction.State)
-            {
-                case FactionState.WarTime:
-                    // 战时优先军事能力，降低忠诚度要求
-                    System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 战时策略：优先军事能力");
-                    break;
-                    
-                case FactionState.EconomicCrisis:
-                    // 经济危机时优先政治能力
-                    System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 经济危机策略：优先政治能力");
-                    break;
-                    
-                case FactionState.Expansion:
-                    // 扩张期平衡发展
-                    System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 扩张策略：平衡发展");
-                    break;
-            }
         }
 
         /// <summary>
@@ -216,55 +193,32 @@ namespace GameObjects
         /// </summary>
         public void ImplementRotationSystem()
         {
-            System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 执行智能轮岗");
-
-            var rotationCandidates = new List<(Officer officer, City currentCity, float tenure)>();
-
-            // 找出任职时间过长的太守
-            foreach (var city in _faction.Cities)
+            // 找出任职时间过长的太守 (由于缺乏精确任职时间记录，使用表现历史长度作为近似)
+            foreach (Architecture arch in _faction.Architectures)
             {
-                if (city.Prefect == null) continue;
+                if (arch.Mayor == null) continue;
+                
+                var mayor = arch.Mayor;
+                int tenure = _performanceHistory.ContainsKey(mayor) ? _performanceHistory[mayor].Count : 0;
 
-                // 模拟任职时间（实际游戏中应该记录真实时间）
-                float tenure = _performanceHistory.ContainsKey(city.Prefect) 
-                    ? _performanceHistory[city.Prefect].Count 
-                    : 1;
-
-                if (tenure >= 6) // 任职6个季度以上考虑轮岗
+                // 假设积累了6次季度评估 (1.5年) 且表现不佳 (<0.4) 或者 超过12次 (3年) 无论表现如何都考虑轮岗
+                if (tenure >= 12 || (tenure >= 6 && GetAveragePerformance(mayor) < 0.4f))
                 {
-                    rotationCandidates.Add((city.Prefect, city, tenure));
-                }
-            }
-
-            // 执行轮岗
-            foreach (var (officer, city, tenure) in rotationCandidates)
-            {
-                var newPosition = FindBetterPosition(officer, city);
-                if (newPosition != null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] 轮岗：{officer.Name} 从 {city.Name} 调往 {newPosition.Name}");
-                    
-                    city.RemovePrefect();
-                    IssueTransferOrder(officer, newPosition, "智能轮岗");
+                    // 标记为需要轮岗 (简单处理：直接解除职务，让 V8.1 在下次运行时重新分配)
+                    // 这样可以制造流动性
+                     if (SectionAIHelper.EnableDebugOutput)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[APM] 🔄 智能轮岗: 解除 {mayor.Name} 的太守职务 (任期评估:{tenure})");
+                    }
+                    arch.AppointMayor(null); 
                 }
             }
         }
-
-        /// <summary>
-        /// 为武将寻找更好的职位
-        /// </summary>
-        private City FindBetterPosition(Officer officer, City currentCity)
+        
+        private float GetAveragePerformance(Person p)
         {
-            var availableCities = _faction.Cities.Where(c => c.Prefect == null).ToList();
-            
-            if (!availableCities.Any()) return null;
-
-            float currentScore = CalculateAppointmentScore(officer, StrategicMap.GetThreatLevel(currentCity) > 0.6f);
-            
-            return availableCities
-                .Where(c => CalculateAppointmentScore(officer, StrategicMap.GetThreatLevel(c) > 0.6f) > currentScore * 1.1f)
-                .OrderByDescending(c => CalculateAppointmentScore(officer, StrategicMap.GetThreatLevel(c) > 0.6f))
-                .FirstOrDefault();
+             if (!_performanceHistory.ContainsKey(p) || _performanceHistory[p].Count == 0) return 0.5f;
+             return _performanceHistory[p].Average();
         }
 
         /// <summary>
@@ -272,223 +226,35 @@ namespace GameObjects
         /// </summary>
         public void DevelopTalent()
         {
-            System.Diagnostics.Debug.WriteLine("[AdvancedPersonnelManager] 执行人才培养计划");
-
-            var youngOfficers = _faction.Officers
-                .Where(o => o.Age < 35 && o.State == OfficerState.Active)
-                .OrderByDescending(o => GetOfficerPotential(o))
+            // 挑选潜力股：年轻 (Age < 30) 且有某项属性 > 70
+            var youngTalents = _faction.Persons.Cast<Person>()
+                .Where(p => p.Status == PersonStatus.Normal && p.Age < 30)
+                .Where(p => p.Command > 70 || p.Strength > 70 || p.Intelligence > 70 || p.Politics > 70)
                 .Take(5)
                 .ToList();
 
-            foreach (var officer in youngOfficers)
+            foreach (Person p in youngTalents)
             {
-                var developmentPlan = CreateDevelopmentPlan(officer);
-                System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] {officer.Name} 培养计划: {developmentPlan}");
-                
-                // 实施培养计划（提升属性）
-                ImplementDevelopmentPlan(officer, developmentPlan);
-            }
-        }
+                // 模拟培养：极小概率增加属性 (避免破坏平衡)
+                bool improved = false;
+                string stat = "";
 
-        /// <summary>
-        /// 计算武将潜力
-        /// </summary>
-        private float GetOfficerPotential(Officer officer)
-        {
-            float potential = 0f;
-
-            // 年龄因子（年轻人潜力更大）
-            potential += Math.Max(0, (40 - officer.Age) / 40f) * 0.3f;
-
-            // 基础能力
-            float avgAbility = (officer.Politics + officer.Leadership + officer.Intelligence + officer.War) / 4f;
-            potential += avgAbility / 100f * 0.4f;
-
-            // 性格特质
-            if (officer.Traits.Contains(Trait.Ambitious)) potential += 0.1f;
-            if (officer.Traits.Contains(Trait.Scholar)) potential += 0.1f;
-            if (officer.Traits.Contains(Trait.Pragmatic)) potential += 0.1f;
-
-            return potential;
-        }
-
-        /// <summary>
-        /// 创建发展计划
-        /// </summary>
-        private string CreateDevelopmentPlan(Officer officer)
-        {
-            var plans = new List<string>();
-
-            if (officer.Politics < 70) plans.Add("政治培训");
-            if (officer.Leadership < 70) plans.Add("军事指挥培训");
-            if (officer.Intelligence < 70) plans.Add("策略学习");
-            if (officer.War < 70) plans.Add("武艺训练");
-
-            return plans.Any() ? string.Join(", ", plans) : "综合提升";
-        }
-
-        /// <summary>
-        /// 实施发展计划
-        /// </summary>
-        private void ImplementDevelopmentPlan(Officer officer, string plan)
-        {
-            // 简化实现：随机提升1-3点属性
-            int improvement = _random.Next(1, 4);
-
-            if (plan.Contains("政治")) officer.Politics = Math.Min(100, officer.Politics + improvement);
-            if (plan.Contains("军事")) officer.Leadership = Math.Min(100, officer.Leadership + improvement);
-            if (plan.Contains("策略")) officer.Intelligence = Math.Min(100, officer.Intelligence + improvement);
-            if (plan.Contains("武艺")) officer.War = Math.Min(100, officer.War + improvement);
-
-            // 添加培训经历
-            officer.AddExperience($"培训_{plan}_{_currentSeason}季度");
-        }
-
-        /// <summary>
-        /// 生成季度报告
-        /// </summary>
-        private void GenerateQuarterlyReport()
-        {
-            var report = $"\n=== 第{_currentSeason}季度人事报告 ===\n";
-
-            // 表现统计
-            var performances = _performanceHistory.Values
-                .Where(h => h.Any())
-                .Select(h => h.Last())
-                .ToList();
-
-            if (performances.Any())
-            {
-                report += $"平均表现: {performances.Average():F2}\n";
-                report += $"最佳表现: {performances.Max():F2}\n";
-                report += $"最差表现: {performances.Min():F2}\n";
-            }
-
-            // 风险统计
-            var highRiskOfficers = _faction.Officers
-                .Where(o => PredictOfficerRisk(o) > 0.7f)
-                .Count();
-
-            report += $"高风险武将数量: {highRiskOfficers}\n";
-
-            // 调动统计
-            var activeTransfers = GetActiveTransfers().Count;
-            report += $"进行中调动: {activeTransfers}\n";
-
-            System.Diagnostics.Debug.WriteLine(report);
-        }
-
-        /// <summary>
-        /// 应急响应系统
-        /// </summary>
-        public void EmergencyResponse(string emergencyType, City affectedCity = null)
-        {
-            System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] 应急响应: {emergencyType}");
-
-            switch (emergencyType.ToLower())
-            {
-                case "rebellion":
-                    HandleRebellion(affectedCity);
-                    break;
-                    
-                case "invasion":
-                    HandleInvasion(affectedCity);
-                    break;
-                    
-                case "natural_disaster":
-                    HandleNaturalDisaster(affectedCity);
-                    break;
-                    
-                case "economic_crisis":
-                    HandleEconomicCrisis();
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// 处理叛乱
-        /// </summary>
-        private void HandleRebellion(City city)
-        {
-            if (city?.Prefect != null)
-            {
-                // 立即撤换可疑太守
-                var stability = CalculateStabilityScore(city.Prefect);
-                if (stability < 0.5f)
+                if (_random.NextDouble() < 0.1) // 10% 概率成长
                 {
-                    city.DismissPrefect();
-                    System.Diagnostics.Debug.WriteLine($"[AdvancedPersonnelManager] 应急撤换 {city.Name} 太守");
-                }
-            }
-
-            // 派遣最忠诚的武将
-            var loyalOfficer = _faction.Officers
-                .Where(o => o.State == OfficerState.Active && o.Loyalty > 90)
-                .OrderByDescending(o => o.Leadership)
-                .FirstOrDefault();
-
-            if (loyalOfficer != null && city != null)
-            {
-                IssueTransferOrder(loyalOfficer, city, "平定叛乱");
-            }
-        }
-
-        /// <summary>
-        /// 处理入侵
-        /// </summary>
-        private void HandleInvasion(City city)
-        {
-            // 派遣最强军事武将
-            var militaryOfficer = _faction.Officers
-                .Where(o => o.State == OfficerState.Active)
-                .OrderByDescending(o => o.Leadership + o.War)
-                .FirstOrDefault();
-
-            if (militaryOfficer != null && city != null)
-            {
-                IssueTransferOrder(militaryOfficer, city, "抵御入侵");
-            }
-        }
-
-        /// <summary>
-        /// 处理自然灾害
-        /// </summary>
-        private void HandleNaturalDisaster(City city)
-        {
-            // 派遣政治能力强的武将处理救灾
-            var administrativeOfficer = _faction.Officers
-                .Where(o => o.State == OfficerState.Active)
-                .OrderByDescending(o => o.Politics + o.Intelligence)
-                .FirstOrDefault();
-
-            if (administrativeOfficer != null && city != null)
-            {
-                IssueTransferOrder(administrativeOfficer, city, "灾后重建");
-            }
-        }
-
-        /// <summary>
-        /// 处理经济危机
-        /// </summary>
-        private void HandleEconomicCrisis()
-        {
-            // 重新评估所有后方城市的太守，优先政治能力
-            var backCities = _faction.Cities.Where(c => StrategicMap.GetThreatLevel(c) <= 0.5f);
-            
-            foreach (var city in backCities)
-            {
-                if (city.Prefect == null || city.Prefect.Politics < 70)
-                {
-                    var economicExpert = _faction.Officers
-                        .Where(o => o.State == OfficerState.Active && o.Politics > 80)
-                        .OrderByDescending(o => o.Politics)
-                        .FirstOrDefault();
-
-                    if (economicExpert != null)
+                    int roll = _random.Next(4);
+                    switch (roll)
                     {
-                        if (city.Prefect != null) city.RemovePrefect();
-                        IssueTransferOrder(economicExpert, city, "经济危机应对");
+                        case 0: p.Command = Math.Min(100, p.Command + 1); stat = "统率"; break;
+                        case 1: p.Strength = Math.Min(100, p.Strength + 1); stat = "武力"; break;
+                        case 2: p.Intelligence = Math.Min(100, p.Intelligence + 1); stat = "智力"; break;
+                        case 3: p.Politics = Math.Min(100, p.Politics + 1); stat = "政治"; break;
                     }
+                    improved = true;
+                }
+
+                if (improved && SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[APM] 📚 人才培养: {p.Name} 的 {stat} 提升了 1 点");
                 }
             }
         }

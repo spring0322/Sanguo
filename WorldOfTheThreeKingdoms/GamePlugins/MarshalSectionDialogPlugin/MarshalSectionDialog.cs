@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GameObjects.ArchitectureDetail;
@@ -10,6 +10,7 @@ using Microsoft.Xna.Framework.Graphics;
 using PluginInterface;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Tools;
 
 namespace MarshalSectionDialogPlugin
@@ -55,6 +56,19 @@ namespace MarshalSectionDialogPlugin
         internal Rectangle OrientationButtonPosition;
         internal PlatformTexture OrientationButtonSelectedTexture;
         internal PlatformTexture OrientationButtonTexture;
+
+        // 军团长选择按钮
+        internal PlatformTexture SectionLeaderButtonDisplayTexture;
+        internal Rectangle SectionLeaderButtonPosition;
+        internal PlatformTexture SectionLeaderButtonSelectedTexture;
+        internal PlatformTexture SectionLeaderButtonTexture;
+
+        // 部队列表切换按钮
+        internal PlatformTexture TroopListButtonDisplayTexture;
+        internal Rectangle TroopListButtonPosition;
+        internal PlatformTexture TroopListButtonSelectedTexture;
+        internal PlatformTexture TroopListButtonTexture;
+
 #pragma warning disable CS0169 // The field 'MarshalSectionDialog.OrientationFaction' is never used
         private Faction OrientationFaction;
 #pragma warning restore CS0169 // The field 'MarshalSectionDialog.OrientationFaction' is never used
@@ -68,6 +82,13 @@ namespace MarshalSectionDialogPlugin
         
         private GameObjectList SectionArchitectureList;
         internal ITabList TabListPlugin;
+
+        // 军团长按钮文字
+        internal FreeText SectionLeaderButtonText;
+
+        // 都督显示
+        internal FreeText ViceroyLabel;
+        internal FreeText ViceroyName;
 
         internal void Draw()
         {
@@ -101,6 +122,8 @@ namespace MarshalSectionDialogPlugin
             sourceRectangle = null;
             CacheManager.Draw(this.ArchitectureListButtonDisplayTexture, this.ArchitectureListButtonDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
             sourceRectangle = null;
+            CacheManager.Draw(this.TroopListButtonDisplayTexture, this.TroopListButtonDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
+            sourceRectangle = null;
             CacheManager.Draw(this.AIDetailButtonDisplayTexture, this.AIDetailButtonDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
             if (this.OrientationButtonEnabled)
             {
@@ -110,11 +133,27 @@ namespace MarshalSectionDialogPlugin
             {
                 CacheManager.Draw(this.OrientationButtonDisabledTexture, this.OrientationButtonDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
             }
+            // 绘制军团长按钮 (不再调用UI图片以避免重叠)
+            // CacheManager.Draw(this.SectionLeaderButtonDisplayTexture, this.SectionLeaderButtonDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.199f);
+            if (this.SectionLeaderButtonText != null)
+            {
+                this.SectionLeaderButtonText.Draw(0.198f);
+            }
+
+            // 绘制都督信息
+            if (this.ViceroyLabel != null)
+            {
+                this.ViceroyLabel.Draw(0.198f);
+            }
+            if (this.ViceroyName != null)
+            {
+                this.ViceroyName.Draw(0.198f);
+            }
         }
 
         internal void Initialize()
         {
-            
+            // 不再需要初始化TroopListManager
         }
 
         private void OK()
@@ -155,6 +194,7 @@ namespace MarshalSectionDialogPlugin
                 this.OriginalSection.OrientationSection = this.EditingSection.OrientationSection;
                 this.OriginalSection.OrientationState = this.EditingSection.OrientationState;
                 this.OriginalSection.OrientationArchitecture = this.EditingSection.OrientationArchitecture;
+                this.OriginalSection.SectionLeader = this.EditingSection.SectionLeader; // 保存军团长
                 GameObjectList list = this.OriginalSection.Architectures.GetList();
                 foreach (Architecture architecture in list)
                 {
@@ -219,6 +259,10 @@ namespace MarshalSectionDialogPlugin
             {
                 text.Text.Text = StaticMethods.GetPropertyValue(this.EditingSection, text.PropertyName).ToString();
             }
+            if (this.ViceroyName != null)
+            {
+                this.ViceroyName.Text = this.EditingSection.SectionLeader != null ? this.EditingSection.SectionLeader.Name : "----";
+            }
         }
 
         private void RefreshOKButton()
@@ -272,6 +316,10 @@ namespace MarshalSectionDialogPlugin
                 {
                     this.ShowArchitectureListFrame();
                 }
+                else if (StaticMethods.PointInRectangle(position, this.TroopListButtonDisplayPosition))
+                {
+                    this.ShowTroopListFrame();
+                }
                 else if (StaticMethods.PointInRectangle(position, this.AIDetailButtonDisplayPosition))
                 {
                     this.ShowAIDetailFrame();
@@ -279,6 +327,10 @@ namespace MarshalSectionDialogPlugin
                 else if (StaticMethods.PointInRectangle(position, this.OrientationButtonDisplayPosition) && this.OrientationButtonEnabled)
                 {
                     this.ShowOrientationFrame();
+                }
+                else if (StaticMethods.PointInRectangle(position, this.SectionLeaderButtonDisplayPosition))
+                {
+                    this.ShowSectionLeaderFrame();
                 }
             }
         }
@@ -305,6 +357,10 @@ namespace MarshalSectionDialogPlugin
                 {
                     this.ArchitectureListButtonDisplayTexture = this.ArchitectureListButtonSelectedTexture;
                 }
+                else if (StaticMethods.PointInRectangle(position, this.TroopListButtonDisplayPosition))
+                {
+                    this.TroopListButtonDisplayTexture = this.TroopListButtonSelectedTexture;
+                }
                 else if (StaticMethods.PointInRectangle(position, this.AIDetailButtonDisplayPosition))
                 {
                     this.AIDetailButtonDisplayTexture = this.AIDetailButtonSelectedTexture;
@@ -316,10 +372,24 @@ namespace MarshalSectionDialogPlugin
                         this.OrientationButtonDisplayTexture = this.OrientationButtonSelectedTexture;
                     }
                 }
+                else if (StaticMethods.PointInRectangle(position, this.SectionLeaderButtonDisplayPosition))
+                {
+                    this.SectionLeaderButtonDisplayTexture = this.SectionLeaderButtonSelectedTexture;
+                    if (this.SectionLeaderButtonText != null)
+                    {
+                        this.SectionLeaderButtonText.TextColor = Color.Yellow; // 悬停状态颜色
+                    }
+                }
                 else
                 {
                     this.ArchitectureListButtonDisplayTexture = this.ArchitectureListButtonTexture;
+                    this.TroopListButtonDisplayTexture = this.TroopListButtonTexture;
                     this.AIDetailButtonDisplayTexture = this.AIDetailButtonTexture;
+                    this.SectionLeaderButtonDisplayTexture = this.SectionLeaderButtonTexture;
+                    if (this.SectionLeaderButtonText != null)
+                    {
+                        this.SectionLeaderButtonText.TextColor = Color.White; // 恢复默认颜色
+                    }
                     if (this.OKButtonEnabled)
                     {
                         this.OKButtonDisplayTexture = this.OKButtonTexture;
@@ -392,6 +462,18 @@ namespace MarshalSectionDialogPlugin
                 text.Label.DisplayOffset = this.DisplayOffset;
                 text.Text.DisplayOffset = this.DisplayOffset;
             }
+            if (this.SectionLeaderButtonText != null)
+            {
+                this.SectionLeaderButtonText.DisplayOffset = this.DisplayOffset;
+            }
+            if (this.ViceroyLabel != null)
+            {
+                this.ViceroyLabel.DisplayOffset = this.DisplayOffset;
+            }
+            if (this.ViceroyName != null)
+            {
+                this.ViceroyName.DisplayOffset = this.DisplayOffset;
+            }
         }
 
         internal void SetFaction(Faction faction)
@@ -405,6 +487,7 @@ namespace MarshalSectionDialogPlugin
             this.EditingSection = new Section();
             this.EditingSection.ID = Session.Current.Scenario.Sections.GetFreeGameObjectID();
             this.EditingSection.BelongedFaction = this.EditingFaction;
+            this.EditingSection.BelongedFactionID = this.EditingFaction.ID; // 🔥 修复：同步 ID
             if (section != null)
             {
                 this.IsNew = false;
@@ -418,6 +501,7 @@ namespace MarshalSectionDialogPlugin
                 this.EditingSection.OrientationSection = section.OrientationSection;
                 this.EditingSection.OrientationState = section.OrientationState;
                 this.EditingSection.OrientationArchitecture = section.OrientationArchitecture;
+                this.EditingSection.SectionLeader = section.SectionLeader; // 复制军团长
                 this.RefreshOKButton();
                 this.RefreshOrientationButton();
                 this.RefreshLabelTextsDisplay();
@@ -425,6 +509,23 @@ namespace MarshalSectionDialogPlugin
             else
             {
                 this.IsNew = true;
+                // 为新建军区设置默认AI设定，确保AutoRun=true（玩家军区也要跟AI一样）
+                GameObjectList defaultAIDetails = Session.Current.Scenario.GameCommonData.AllSectionAIDetails.GetSectionAIDetailsByConditions(SectionOrientationKind.无, true, false, true, true, false);
+                if (defaultAIDetails.Count > 0)
+                {
+                    this.EditingSection.AIDetail = defaultAIDetails[0] as SectionAIDetail;
+                }
+                else
+                {
+                    // 如果没有找到合适的，使用第一个可用的AIDetail
+                    GameObjectList allAIDetails = Session.Current.Scenario.GameCommonData.AllSectionAIDetails.GetSectionAIDetailList();
+                    if (allAIDetails.Count > 0)
+                    {
+                        this.EditingSection.AIDetail = allAIDetails[0] as SectionAIDetail;
+                    }
+                }
+                this.RefreshOKButton();
+                this.RefreshOrientationButton();
                 this.RefreshLabelTextsDisplay();
             }
         }
@@ -649,7 +750,7 @@ namespace MarshalSectionDialogPlugin
                                 this.EditingSection.OrientationFaction = null;
                                 this.EditingSection.OrientationSection = null;
                                 this.EditingSection.OrientationState = null;
-                                this.EditingSection.OrientationArchitecture = this.TabListPlugin.SelectedItem as Architecture;
+                                this.EditingSection.OrientationArchitecture = this.TabListPlugin.SelectedItem is Architecture ? (Architecture)this.TabListPlugin.SelectedItem : null;
                                 this.RefreshOKButton();
                                 this.RefreshLabelTextsDisplay();
                             };
@@ -663,6 +764,130 @@ namespace MarshalSectionDialogPlugin
             {
                 WebTools.TakeWarnMsg("MarshalSectionDialog.ShowOrientationFrame", "", ex);
             }
+        }
+
+        /// <summary>
+        /// 显示军团长选择界面
+        /// 按统率从高到低排序
+        /// </summary>
+        private void ShowSectionLeaderFrame()
+        {
+            try
+            {
+                if (this.EditingSection == null || this.TabListPlugin == null || this.GameFramePlugin == null) return;
+
+                // 获取军区所有武将，按统率排序
+                PersonList allPersons = new PersonList();
+                foreach (Architecture arch in this.EditingSection.Architectures)
+                {
+                    foreach (Person p in arch.Persons)
+                    {
+                        if (p.Status == GameObjects.PersonDetail.PersonStatus.Normal && p.Alive)
+                        {
+                            allPersons.Add(p);
+                        }
+                    }
+                }
+
+                // 按统率从高到低排序
+                allPersons.PropertyName = "Command";
+                allPersons.IsNumber = true;
+                allPersons.ReSort();
+
+                // 预选当前军团长
+                Person currentLeader = this.EditingSection.SectionLeader;
+                GameObjectList preSelectedList = null;
+                if (currentLeader != null && allPersons.HasGameObject(currentLeader))
+                {
+                    preSelectedList = new GameObjectList();
+                    preSelectedList.Add(currentLeader);
+                }
+
+                this.TabListPlugin.InitialValues(allPersons, preSelectedList, InputManager.NowMouse.ScrollWheelValue, "");
+                this.TabListPlugin.SetListKindByName("Person", true, false);
+                this.TabListPlugin.SetSelectedTab("Command");
+                this.GameFramePlugin.Kind = FrameKind.Person;
+                this.GameFramePlugin.Function = FrameFunction.GetRewardPerson;
+                this.GameFramePlugin.SetFrameContent(this.TabListPlugin.TabList, Session.MainGame.mainGameScreen.viewportSizeFull);
+                this.GameFramePlugin.OKButtonEnabled = false;
+                this.GameFramePlugin.CancelButtonEnabled = true;
+                this.GameFramePlugin.SetOKFunction(delegate
+                {
+                    Person selectedLeader = this.TabListPlugin.SelectedItem is Person ? (Person)this.TabListPlugin.SelectedItem : null;
+                    if (selectedLeader != null)
+                    {
+                        this.EditingSection.SectionLeader = selectedLeader;
+                        this.RefreshLabelTextsDisplay();
+                    }
+                });
+                this.GameFramePlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                WebTools.TakeWarnMsg("MarshalSectionDialog.ShowSectionLeaderFrame", "", ex);
+            }
+        }
+
+        /// <summary>
+        /// 显示部队列表框架
+        /// </summary>
+        private void ShowTroopListFrame()
+        {
+            System.Diagnostics.Debug.WriteLine("[ShowTroopListFrame] 开始执行");
+            
+            // 🧊 冷路径：UI事件，可使用LINQ提高可读性
+            // 直接获取玩家手动控制的城外部队（参考ShowArchitectureListFrame的简单实现）
+            var scenario = Session.Current.Scenario;
+            var faction = this.EditingFaction;
+            
+            System.Diagnostics.Debug.WriteLine($"[ShowTroopListFrame] 势力 = {faction.Name}");
+            
+            // 过滤条件：
+            // 1. 属于玩家势力
+            // 2. 城外部队（BelongedArchitecture == null）
+            // 3. 不由AI军团控制（BelongedLegion == null）
+            var fieldTroops = scenario.Troops
+                .GetList()
+                .Cast<Troop>()
+                .Where(t => t.BelongedFaction == faction)
+                .Where(t => t.BelongedArchitecture == null)
+                .Where(t => t.BelongedLegion == null)
+                .ToList();
+            
+            System.Diagnostics.Debug.WriteLine($"[ShowTroopListFrame] 过滤后的部队数量 = {fieldTroops.Count}");
+            
+            // 转换为GameObjectList（TabListPlugin需要的类型）
+            GameObjectList troopList = [];
+            foreach (var troop in fieldTroops)
+            {
+                troopList.Add(troop);
+                System.Diagnostics.Debug.WriteLine($"  - {troop.DisplayName} (兵力:{troop.Quantity})");
+            }
+            
+            // 配置TabListPlugin（完全参考ShowArchitectureListFrame的方式）
+            this.TabListPlugin.InitialValues(
+                troopList,                                      // 所有部队
+                null,                                           // 不需要选中项
+                InputManager.NowMouse.ScrollWheelValue,        // 滚动位置
+                "城外部队列表"                                   // 标题
+            );
+            
+            // 使用TroopSimple类型（TabListData.xml中配置的简化视图）
+            this.TabListPlugin.SetListKindByName("TroopSimple", false, false);
+            this.TabListPlugin.SetSelectedTab("Basic");  // 使用Basic标签页
+            
+            // 配置GameFramePlugin
+            this.GameFramePlugin.Kind = FrameKind.Troop;
+            this.GameFramePlugin.Function = FrameFunction.Browse;
+            this.GameFramePlugin.SetFrameContent(this.TabListPlugin.TabList, Session.MainGame.mainGameScreen.viewportSizeFull);
+            this.GameFramePlugin.OKButtonEnabled = false;
+            this.GameFramePlugin.CancelButtonEnabled = true;
+            this.GameFramePlugin.SetOKFunction(delegate {
+                // 部队列表仅用于查看，不需要选择操作
+            });
+            
+            System.Diagnostics.Debug.WriteLine("[ShowTroopListFrame] 显示GameFramePlugin");
+            this.GameFramePlugin.IsShowing = true;
         }
 
         internal void Update()
@@ -745,6 +970,23 @@ namespace MarshalSectionDialogPlugin
                 return new Rectangle(this.DisplayOffset.X + this.OrientationButtonPosition.X, this.DisplayOffset.Y + this.OrientationButtonPosition.Y, this.OrientationButtonPosition.Width, this.OrientationButtonPosition.Height);
             }
         }
+
+        private Rectangle SectionLeaderButtonDisplayPosition
+        {
+            get
+            {
+                return new Rectangle(this.DisplayOffset.X + this.SectionLeaderButtonPosition.X, this.DisplayOffset.Y + this.SectionLeaderButtonPosition.Y, this.SectionLeaderButtonPosition.Width, this.SectionLeaderButtonPosition.Height);
+            }
+        }
+
+        private Rectangle TroopListButtonDisplayPosition
+        {
+            get
+            {
+                return new Rectangle(this.DisplayOffset.X + this.TroopListButtonPosition.X, this.DisplayOffset.Y + this.TroopListButtonPosition.Y, this.TroopListButtonPosition.Width, this.TroopListButtonPosition.Height);
+            }
+        }
     }
 }
+
 

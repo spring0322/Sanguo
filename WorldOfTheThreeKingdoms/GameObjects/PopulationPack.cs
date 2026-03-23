@@ -11,6 +11,7 @@ namespace GameObjects
         [DataMember]
         public int Population;
 
+        private PopulationPack() { }
         public PopulationPack(int days, int population)
         {
             this.Days = days;

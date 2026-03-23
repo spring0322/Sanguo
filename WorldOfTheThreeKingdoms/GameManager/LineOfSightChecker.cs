@@ -82,12 +82,12 @@ namespace GameManager
                 // 根据地形类型判断是否为障碍物
                 switch (terrainKind)
                 {
-                    case GameGlobal.TerrainKind.山地:
-                    case GameGlobal.TerrainKind.森林:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.山地:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.森林:
                         return true; // 山地和森林阻挡视线和声音
-                    case GameGlobal.TerrainKind.平原:
-                    case GameGlobal.TerrainKind.草原:
-                    case GameGlobal.TerrainKind.水域:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.平原:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.草原:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.水域:
                         return false; // 平原、草原、水域不阻挡
                     default:
                         return false;
@@ -157,7 +157,7 @@ namespace GameManager
 
                 // 检查地形
                 var terrainKind = Session.Current.Scenario.GetTerrainKindByPosition(new Point(x, y));
-                return terrainKind == GameGlobal.TerrainKind.山地; // 只有山地阻挡射击
+                return terrainKind == WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.山地; // 只有山地阻挡射击
             });
         }
 

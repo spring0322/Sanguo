@@ -1,0 +1,59 @@
+using NUnit.Framework;
+using System;
+using GameObjects.ArchitectureDetail.EventEffect;
+using GameObjects.TroopDetail.EventEffect;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 测试类型实例化以确保类型可访问
+    /// </summary>
+    [TestFixture]
+    public class TypeInstantiationTest
+    {
+        [Test]
+        public void CanInstantiateArchitectureEventEffectKindTable()
+        {
+            // 测试是否可以实例化 ArchitectureDetail EventEffectKindTable
+            Assert.DoesNotThrow(() =>
+            {
+                var table = new GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable();
+                Assert.IsNotNull(table);
+                Assert.IsNotNull(table.EventEffectKinds);
+                Console.WriteLine($"成功实例化 ArchitectureDetail EventEffectKindTable，类型: {table.GetType().FullName}");
+            });
+        }
+
+        [Test]
+        public void CanInstantiateTroopEventEffectKindTable()
+        {
+            // 测试是否可以实例化 TroopDetail EventEffectKindTable
+            Assert.DoesNotThrow(() =>
+            {
+                var table = new GameObjects.TroopDetail.EventEffect.EventEffectKindTable();
+                Assert.IsNotNull(table);
+                Assert.IsNotNull(table.EventEffectKinds);
+                Console.WriteLine($"成功实例化 TroopDetail EventEffectKindTable，类型: {table.GetType().FullName}");
+            });
+        }
+
+        [Test]
+        public void CanInstantiateEventEffectKinds()
+        {
+            // 测试是否可以实例化各种 EventEffectKind
+            Assert.DoesNotThrow(() =>
+            {
+                var archEffect0 = new GameObjects.ArchitectureDetail.EventEffect.EventEffect0();
+                Assert.IsNotNull(archEffect0);
+                Console.WriteLine($"成功实例化 ArchitectureDetail EventEffect0，类型: {archEffect0.GetType().FullName}");
+            });
+
+            Assert.DoesNotThrow(() =>
+            {
+                var troopEffect0 = new GameObjects.TroopDetail.EventEffect.EventEffectKindPack.EventEffectKind0();
+                Assert.IsNotNull(troopEffect0);
+                Console.WriteLine($"成功实例化 TroopDetail EventEffectKind0，类型: {troopEffect0.GetType().FullName}");
+            });
+        }
+    }
+}

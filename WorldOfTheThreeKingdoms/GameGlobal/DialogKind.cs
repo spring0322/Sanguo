@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum DialogKind
     {
-        Options,
+        Options = 0,
         SimpleText,
         PersonText,
         Confirmation,

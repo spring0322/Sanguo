@@ -38,6 +38,9 @@ namespace GameObjects
 
         public void LoadFromString(string dataString)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(dataString)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.Clear();

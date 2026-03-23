@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.PersonDetail;
 using Microsoft.Xna.Framework;
@@ -95,7 +95,7 @@ namespace tupianwenziPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.tupianwenzi.NameText = new FreeText(font, color);
             this.tupianwenzi.NameText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-            this.tupianwenzi.NameText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.tupianwenzi.NameText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             //node = nextSibling.ChildNodes.Item(5);
             //this.tupianwenzi.ShowingSeconds = int.Parse(node.Attributes.GetNamedItem("Time").Value);
             //this.tupianwenzi.ShowingSeconds = Session.GlobalVariables.DialogShowTime;
@@ -191,7 +191,8 @@ namespace tupianwenziPlugin
                         }
 
                     }
-                    shijiantupianjuxing = new Microsoft.Xna.Framework.Rectangle(0, 0, 286, 400);
+                    // 🔧 修复：使用智能比例计算，保持图片原始比例
+                    shijiantupianjuxing = CalculateImageRectangle(shijiantupian, tupian, ImageType.Beauty);
 
                 }
                 else if (branchName == "renwusiwang")
@@ -200,21 +201,55 @@ namespace tupianwenziPlugin
                     //shijiantupianjuxing = new Microsoft.Xna.Framework.Rectangle(0, 0, 240, 240);
 
                     //shijiantupian = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\tupianwenzi\Data\tupian\" + "renwusiwang.jpg");
-                    shijiantupianjuxing = new Microsoft.Xna.Framework.Rectangle(0, 0, 512, 384);
+                    // 🔧 修复：使用智能比例计算，保持图片原始比例
+                    shijiantupianjuxing = CalculateImageRectangle(null, "renwusiwang", ImageType.PersonDeath);
                     shijiantupian = null;
                 }
                 else
                 {
                     if (!String.IsNullOrEmpty(tupian))
                     {
-                        shijiantupian = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\tupianwenzi\Data\tupian\" + tupian);
+                        try
+                        {
+                            // 尝试加载指定的图片文件
+                            string imagePath = @"Content\Textures\GameComponents\tupianwenzi\Data\tupian\" + tupian;
+                            
+                            // 如果文件名不包含扩展名，尝试添加.jpg扩展名
+                            if (!tupian.Contains("."))
+                            {
+                                imagePath += ".jpg";
+                            }
+                            
+                            shijiantupian = CacheManager.GetTempTexture(imagePath);
+                            
+                            System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 成功加载图片: {imagePath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 无法加载图片: {tupian}, 错误: {ex.Message}");
+                            
+                            // 如果加载失败，尝试使用默认图片或设为null
+                            try
+                            {
+                                // 尝试使用一个通用的默认图片
+                                shijiantupian = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\tupianwenzi\Data\tupian\caocao.jpg");
+                                System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 使用默认图片: caocao.jpg");
+                            }
+                            catch
+                            {
+                                // 如果连默认图片都加载不了，就设为null
+                                shijiantupian = null;
+                                System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 无法加载任何图片，设为null");
+                            }
+                        }
                     }
                     else
                     {
                         shijiantupian = null;
                     }
 
-                    shijiantupianjuxing = new Microsoft.Xna.Framework.Rectangle(0, 0, 512, 384);
+                    // 🔧 修复：使用智能比例计算，保持图片原始比例
+                    shijiantupianjuxing = CalculateImageRectangle(shijiantupian, tupian, ImageType.Event);
 
                 }
 
@@ -223,6 +258,136 @@ namespace tupianwenziPlugin
                 this.tupianwenzi.shijianshengyinduilie.Enqueue(shijianshengyin);
             }
 
+        }
+
+        /// <summary>
+        /// 🔧 修复：根据图片实际尺寸计算保持比例的显示矩形
+        /// </summary>
+        private Microsoft.Xna.Framework.Rectangle CalculateImageRectangle(PlatformTexture texture, string imageName, ImageType imageType)
+        {
+            try
+            {
+                if (texture != null)
+                {
+                    // 获取原始图片尺寸
+                    int originalWidth = texture.Width;
+                    int originalHeight = texture.Height;
+
+                    // 根据图片类型设置不同的最大尺寸限制
+                    int maxWidth, maxHeight;
+                    switch (imageType)
+                    {
+                        case ImageType.Beauty:
+                            maxWidth = 300;
+                            maxHeight = 400;
+                            break;
+                        case ImageType.PersonDeath:
+                            maxWidth = 250;
+                            maxHeight = 250;
+                            break;
+                        case ImageType.Event:
+                        default:
+                            maxWidth = 600;
+                            maxHeight = 400;
+                            break;
+                    }
+
+                    // 计算保持比例的新尺寸
+                    var newSize = CalculateProportionalSize(originalWidth, originalHeight, maxWidth, maxHeight);
+                    
+                    System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 图片 {imageName} 原始尺寸: {originalWidth}x{originalHeight}, 调整后: {newSize.Width}x{newSize.Height}");
+                    
+                    return new Microsoft.Xna.Framework.Rectangle(0, 0, newSize.Width, newSize.Height);
+                }
+                else
+                {
+                    // 如果纹理为空，返回默认矩形
+                    return GetDefaultRectangle(imageType);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[tupianwenziPlugin] 计算图片比例失败: {ex.Message}");
+                return GetDefaultRectangle(imageType);
+            }
+        }
+
+        /// <summary>
+        /// 计算保持比例的新尺寸
+        /// </summary>
+        private (int Width, int Height) CalculateProportionalSize(int originalWidth, int originalHeight, int maxWidth, int maxHeight)
+        {
+            if (originalWidth <= 0 || originalHeight <= 0)
+            {
+                return (maxWidth, maxHeight);
+            }
+
+            // 计算宽高比
+            float aspectRatio = (float)originalWidth / originalHeight;
+
+            int newWidth = originalWidth;
+            int newHeight = originalHeight;
+
+            // 如果超过最大尺寸，按比例缩小
+            if (originalWidth > maxWidth || originalHeight > maxHeight)
+            {
+                // 按高度限制计算
+                if (originalHeight > maxHeight)
+                {
+                    newHeight = maxHeight;
+                    newWidth = (int)(maxHeight * aspectRatio);
+                }
+
+                // 如果宽度仍然超限，按宽度重新计算
+                if (newWidth > maxWidth)
+                {
+                    newWidth = maxWidth;
+                    newHeight = (int)(maxWidth / aspectRatio);
+                }
+            }
+
+            // 确保不小于最小尺寸
+            const int MIN_SIZE = 150;
+            if (newWidth < MIN_SIZE)
+            {
+                newWidth = MIN_SIZE;
+                newHeight = (int)(MIN_SIZE / aspectRatio);
+            }
+
+            if (newHeight < MIN_SIZE)
+            {
+                newHeight = MIN_SIZE;
+                newWidth = (int)(MIN_SIZE * aspectRatio);
+            }
+
+            return (newWidth, newHeight);
+        }
+
+        /// <summary>
+        /// 获取默认矩形（当无法计算时使用）
+        /// </summary>
+        private Microsoft.Xna.Framework.Rectangle GetDefaultRectangle(ImageType imageType)
+        {
+            switch (imageType)
+            {
+                case ImageType.Beauty:
+                    return new Microsoft.Xna.Framework.Rectangle(0, 0, 286, 400);
+                case ImageType.PersonDeath:
+                    return new Microsoft.Xna.Framework.Rectangle(0, 0, 240, 240);
+                case ImageType.Event:
+                default:
+                    return new Microsoft.Xna.Framework.Rectangle(0, 0, 512, 384);
+            }
+        }
+
+        /// <summary>
+        /// 图片类型枚举
+        /// </summary>
+        private enum ImageType
+        {
+            Event,      // 普通事件图片
+            Beauty,     // 美女图片
+            PersonDeath // 人物死亡图片
         }
 
         public void SetGraphicsDevice()

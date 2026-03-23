@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -98,7 +98,7 @@ namespace BianduiLiebiaoChajian
                     var depth = 0.03498f;
                     if (this.tabList.FocusedObject is Person)
                     {
-                        person = this.tabList.FocusedObject as Person;
+                        person = this.tabList.FocusedObject is Person ? (Person)this.tabList.FocusedObject : null;
                     }
                     else if (this.tabList.FocusedObject is Captive)
                     {
@@ -106,19 +106,19 @@ namespace BianduiLiebiaoChajian
                     }
                     else if (this.tabList.FocusedObject is Faction)
                     {
-                        person = (this.tabList.FocusedObject as Faction).Leader;
+                        person = (this.tabList.FocusedObject is Faction ? (Faction)this.tabList.FocusedObject : null).Leader;
                     }
                     else if (this.tabList.FocusedObject is Troop)
                     {
-                        person = (this.tabList.FocusedObject as Troop).Leader;
+                        person = (this.tabList.FocusedObject is Troop ? (Troop)this.tabList.FocusedObject : null).Leader;
                     }
                     else if (!(this.tabList.FocusedObject is Architecture))
                     {
                         if (this.tabList.FocusedObject is Military)
                         {
-                            if ((this.tabList.FocusedObject as Military).Leader != null)
+                            if ((this.tabList.FocusedObject is Military ? (Military)this.tabList.FocusedObject : null).Leader != null)
                             {
-                                person = (this.tabList.FocusedObject as Military).Leader;
+                                person = (this.tabList.FocusedObject is Military ? (Military)this.tabList.FocusedObject : null).Leader;
                             }
                         }
                         else if (this.tabList.FocusedObject is Treasure)
@@ -135,15 +135,16 @@ namespace BianduiLiebiaoChajian
                 nullable = null;
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.RightScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3498f);
                 nullable = null;
-                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.VerticalScrollBar, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3498f);
+                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.VerticalScrollBar, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3497f);
             }
+            
             if (this.tabList.ShowHorizontalScrollBar)
             {
                 nullable = null;
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.UpperScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3498f);
                 nullable = null;
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.LowerScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3498f);
-                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.HorizontalScrollBar, null, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3498f);
+                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.HorizontalScrollBar, null, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.3497f);
             }
         }
 
@@ -215,7 +216,7 @@ namespace BianduiLiebiaoChajian
                 column.ColumnTextList = new FreeTextList(font);
                 column.ColumnTextList.TextColor = color;
                 //column.ColumnTextList.TextColor =new Microsoft.Xna.Framework.Color (0.5f,0.5f,0.5f);
-                column.ColumnTextList.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node2.Attributes.GetNamedItem("Align").Value);
+                column.ColumnTextList.Align = Enum.Parse<TextAlign>(node2.Attributes.GetNamedItem("Align").Value);
                 column.Text.Text = column.DisplayName;
                 
                 this.AllColumns.Add(column);
@@ -407,7 +408,10 @@ namespace BianduiLiebiaoChajian
                 }
                 this.LeftScrollTrack = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - (2 * this.tabList.scrolltrackWidth)) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
                 this.RightScrollTrack = new Microsoft.Xna.Framework.Rectangle(realLowerVisibleClient.Right - this.tabList.scrolltrackWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
-                this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - this.tabList.scrolltrackWidth) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrollbuttonWidth, (this.VerticalScrollTrackLength * realLowerVisibleClient.Height) / this.tabList.FullLowerClient.Height);
+                
+                int calculatedHeight = (this.VerticalScrollTrackLength * realLowerVisibleClient.Height) / this.tabList.FullLowerClient.Height;
+                this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - this.tabList.scrolltrackWidth) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrollbuttonWidth, Math.Max(20, calculatedHeight));
+                
                 this.tabList.ShrinkRectanglesWidth();
             }
             else
@@ -481,4 +485,5 @@ namespace BianduiLiebiaoChajian
         }
     }
 }
+
 

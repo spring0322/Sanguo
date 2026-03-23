@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework;
 
 using Microsoft.Xna.Framework.Graphics;
 using System.Xml;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameFreeText;
 using GameObjects;
 using PluginInterface;
@@ -66,43 +66,43 @@ namespace ArchitectureSurveyPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.NameText = new FreeText(font, color);
             this.architectureSurvey.NameText.Position = rectangle;
-            this.architectureSurvey.NameText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.NameText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(3);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.KindText = new FreeText(font, color);
             this.architectureSurvey.KindText.Position = rectangle;
-            this.architectureSurvey.KindText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.KindText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(4);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.FactionText = new FreeText(font, color);
             this.architectureSurvey.FactionText.Position = rectangle;
-            this.architectureSurvey.FactionText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.FactionText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(5);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.PopulationText = new FreeText(font, color);
             this.architectureSurvey.PopulationText.Position = rectangle;
-            this.architectureSurvey.PopulationText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.PopulationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(6);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.ArmyText = new FreeText(font, color);
             this.architectureSurvey.ArmyText.Position = rectangle;
-            this.architectureSurvey.ArmyText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.ArmyText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(7);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.DominationText = new FreeText(font, color);
             this.architectureSurvey.DominationText.Position = rectangle;
-            this.architectureSurvey.DominationText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.DominationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(8);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.EnduranceText = new FreeText(font, color);
             this.architectureSurvey.EnduranceText.Position = rectangle;
-            this.architectureSurvey.EnduranceText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.EnduranceText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(9);
             this.architectureSurvey.ControllingBackgroundTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\ArchitectureSurvey\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.architectureSurvey.ControllingBackgroundSize = new Point(int.Parse(node.Attributes.GetNamedItem("Width").Value), int.Parse(node.Attributes.GetNamedItem("Height").Value));
@@ -111,75 +111,75 @@ namespace ArchitectureSurveyPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.FundText = new FreeText(font, color);
             this.architectureSurvey.FundText.Position = rectangle;
-            this.architectureSurvey.FundText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.FundText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(11);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.FoodText = new FreeText(font, color);
             this.architectureSurvey.FoodText.Position = rectangle;
-            this.architectureSurvey.FoodText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.FoodText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(12);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.PersonCountText = new FreeText(font, color);
             this.architectureSurvey.PersonCountText.Position = rectangle;
-            this.architectureSurvey.PersonCountText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.PersonCountText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(13);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.NoFactionPersonCountText = new FreeText(font, color);
             this.architectureSurvey.NoFactionPersonCountText.Position = rectangle;
-            this.architectureSurvey.NoFactionPersonCountText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.NoFactionPersonCountText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(14);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.AgricultureText = new FreeText(font, color);
             this.architectureSurvey.AgricultureText.Position = rectangle;
-            this.architectureSurvey.AgricultureText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.AgricultureText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(15);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.CommerceText = new FreeText(font, color);
             this.architectureSurvey.CommerceText.Position = rectangle;
-            this.architectureSurvey.CommerceText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.CommerceText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(0x10);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.TechnologyText = new FreeText(font, color);
             this.architectureSurvey.TechnologyText.Position = rectangle;
-            this.architectureSurvey.TechnologyText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.TechnologyText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(0x11);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.MoraleText = new FreeText(font, color);
             this.architectureSurvey.MoraleText.Position = rectangle;
-            this.architectureSurvey.MoraleText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.MoraleText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(18);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.MilitaryPopulationText = new FreeText(font, color);
             this.architectureSurvey.MilitaryPopulationText.Position = rectangle;
-            this.architectureSurvey.MilitaryPopulationText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.MilitaryPopulationText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(19);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.FacilityCountText = new FreeText(font, color);
             this.architectureSurvey.FacilityCountText.Position = rectangle;
-            this.architectureSurvey.FacilityCountText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.FacilityCountText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(20);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.BuildingDaysLeftText = new FreeText(font, color);
             this.architectureSurvey.BuildingDaysLeftText.Position = rectangle;
-            this.architectureSurvey.BuildingDaysLeftText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.BuildingDaysLeftText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(21);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.architectureSurvey.MayorNameText = new FreeText(font, color);
             this.architectureSurvey.MayorNameText.Position = rectangle;
-            this.architectureSurvey.MayorNameText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.architectureSurvey.MayorNameText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             //以下新功能相关设定
             //↓功能开关
@@ -346,13 +346,13 @@ namespace ArchitectureSurveyPlugin
         public void SetArchitecture(object architecture, Point position)
         {
             this.enableUpdate = this.architectureSurvey.ArchitectureToSurvey != architecture;
-            this.architectureSurvey.ArchitectureToSurvey = architecture as Architecture;
+            this.architectureSurvey.ArchitectureToSurvey = (architecture is Architecture ? (Architecture)architecture : null);
             this.architectureSurvey.CurrentPosition = position;
         }
 
         public void SetFaction(object faction)
         {
-            this.architectureSurvey.ViewingFaction = faction as Faction;
+            this.architectureSurvey.ViewingFaction = (faction is Faction ? (Faction)faction : null);
             if (this.architectureSurvey.ViewingFaction != null)
             {
                 InformationLevel knownAreaData = this.architectureSurvey.ViewingFaction.GetKnownAreaData(this.architectureSurvey.CurrentPosition);

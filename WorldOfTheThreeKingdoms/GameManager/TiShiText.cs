@@ -1,4 +1,4 @@
-﻿using Platforms;
+using Platforms;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -29,7 +29,7 @@ namespace WorldOfTheThreeKingdoms
 
         public String getRandomText()
         {
-            return text[GameGlobal.StaticMethods.Random(text.Count)];
+            return text[WorldOfTheThreeKingdoms.GameGlobal.StaticMethods.Random(text.Count)];
         }
     }
 }

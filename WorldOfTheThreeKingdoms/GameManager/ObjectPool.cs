@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using GameObjects;
 using WorldOfTheThreeKingdoms.GameManager;
+using System.Diagnostics.CodeAnalysis;
 
 namespace GameManager
 {
@@ -27,7 +28,7 @@ namespace GameManager
     /// 4. 线程安全的基础操作
     /// </summary>
     /// <typeparam name="T">池化对象类型</typeparam>
-    public class ObjectPool<T> where T : class
+    public class ObjectPool<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T> where T : class
     {
         // 使用 Stack 提高 CPU 缓存命中率 (LIFO)
         private readonly Stack<T> _pool;
@@ -48,10 +49,14 @@ namespace GameManager
 
         /// <summary>
         /// 构造函数 - 使用默认new()创建对象 (需要T有无参构造函数)
+        /// ⚠️ AOT 升级：此构造函数已废弃，必须使用工厂方法版本
         /// </summary>
+        [Obsolete("AOT 环境不支持通过反射创建泛型对象。请使用带有 Func<T> factory 的构造函数。", error: true)]
         public ObjectPool(int initialCapacity = 100, int maxCapacity = 1000) 
             : this(() => (T)System.Activator.CreateInstance(typeof(T)), initialCapacity, maxCapacity)
         {
+            throw new NotSupportedException(
+                "中华三国志 AOT 升级：严禁使用反射初始化对象池，必须显式传入工厂方法。");
         }
         
         /// <summary>
@@ -357,9 +362,9 @@ namespace GameManager
     /// </summary>
     public static class ObjectPoolManager
     {
-        // 常用对象池
-        public static ObjectPool<List<object>> ListPool = new ObjectPool<List<object>>(50, 200);
-        public static ObjectPool<Dictionary<int, object>> DictPool = new ObjectPool<Dictionary<int, object>>(20, 100);
+        // 常用对象池（AOT 安全：使用工厂方法）
+        public static ObjectPool<List<object>> ListPool = new ObjectPool<List<object>>(() => new List<object>(), 50, 200);
+        public static ObjectPool<Dictionary<int, object>> DictPool = new ObjectPool<Dictionary<int, object>>(() => new Dictionary<int, object>(), 20, 100);
         
         // 游戏特定对象池 - 根据需要添加
         public static ObjectPool<TroopDamage> DamagePool = new ObjectPool<TroopDamage>(() => new TroopDamage(), 500, 2000);
@@ -392,7 +397,7 @@ namespace GameManager
             PathPool.Clear();
             // 清空其他池子
             
-            System.Diagnostics.Debug.WriteLine("[ObjectPoolManager] 所有对象池已清空");
+            // System.Diagnostics.Debug.WriteLine("[ObjectPoolManager] 所有对象池已清空");
         }
 
         /// <summary>
@@ -402,13 +407,13 @@ namespace GameManager
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine("[ObjectPoolManager] 开始智能预热所有对象池...");
+                // System.Diagnostics.Debug.WriteLine("[ObjectPoolManager] 开始智能预热所有对象池...");
                 
                 // 检测系统内存情况，智能调整预热策略
                 long availableMemoryMB = GC.GetTotalMemory(false) / (1024 * 1024);
                 string memoryLevel = availableMemoryMB < 512 ? "low" : availableMemoryMB > 2048 ? "high" : "medium";
                 
-                System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 检测到内存级别: {memoryLevel} (当前使用: {availableMemoryMB}MB)");
+                // System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 检测到内存级别: {memoryLevel} (当前使用: {availableMemoryMB}MB)");
                 
                 // 根据内存情况调整预热数量
                 int listPoolSize, dictPoolSize;
@@ -435,11 +440,11 @@ namespace GameManager
                 PathPool.Prewarm(Math.Min(100, listPoolSize * 2)); // 路径池适中
                 // 预热其他池子
                 
-                System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 智能预热完成 (内存级别: {memoryLevel})");
+                // System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 智能预热完成 (内存级别: {memoryLevel})");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 预热错误: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[ObjectPoolManager] 预热错误: {ex.Message}");
             }
         }
         

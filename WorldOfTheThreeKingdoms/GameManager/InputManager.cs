@@ -129,6 +129,14 @@ namespace GameManager
             }
         }
 
+        /// <summary>
+        /// 判断按键是否刚刚被按下（不是持续按住）
+        /// </summary>
+        public static bool IsKeyPressed(Keys key)
+        {
+            return KeyBoardState.IsKeyDown(key) && !KeyBoardStatePre.IsKeyDown(key);
+        }
+
         public static void Update(float gameTime)
         {
 			if (Platform.IsActive)

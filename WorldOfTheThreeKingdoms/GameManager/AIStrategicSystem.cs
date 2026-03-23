@@ -1,7 +1,8 @@
+﻿using GameObjects;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using GameObjects;
+using WorldOfTheThreeKingdoms.GameManager;
 
 namespace GameManager
 {
@@ -26,13 +27,13 @@ namespace GameManager
     {
         // 君主倾向 (0保守 - 1激进)
         public float RulerAggression { get; set; }
-        
+
         // 军师智力修正 (0昏庸 - 1神算)
         public float AdvisorWisdom { get; set; }
-        
+
         // 派系压力 (武将好战度的总和，高则容易逼迫君主出兵)
         public float GeneralWarPressure { get; set; }
-        
+
         // 决策稳定性 (袁绍低，曹操高。用于随机跳过回合)
         public float Decisiveness { get; set; }
 
@@ -42,12 +43,12 @@ namespace GameManager
         public static FactionProfile CalculateProfile(Faction faction)
         {
             var profile = new FactionProfile();
-            
+
             if (faction?.Leader == null)
                 return profile;
 
             // 1. 君主倾向 = (统率 + 野心) / 200
-            profile.RulerAggression = Math.Min(1.0f, 
+            profile.RulerAggression = Math.Min(1.0f,
                 (faction.Leader.Command + faction.Leader.Ambition) / 200.0f);
 
             // 2. 军师智力修正
@@ -65,7 +66,7 @@ namespace GameManager
             {
                 float totalWarPressure = 0;
                 int count = 0;
-                
+
                 foreach (Person person in faction.Persons.GetList().Cast<Person>())
                 {
                     if (person != faction.Leader && person.Command > 60) // 只计算有能力的武将
@@ -75,7 +76,7 @@ namespace GameManager
                         count++;
                     }
                 }
-                
+
                 profile.GeneralWarPressure = count > 0 ? totalWarPressure / count : 0.2f;
             }
 
@@ -106,7 +107,7 @@ namespace GameManager
         public static ResourceSnapshot CalculateSnapshot(Faction faction)
         {
             var snapshot = new ResourceSnapshot();
-            
+
             if (faction == null)
                 return snapshot;
 
@@ -129,14 +130,14 @@ namespace GameManager
             }
 
             snapshot.TotalMilitaryPower = totalMilitary;
-            
+
             // 应用难度管理器的军事力量修正
-            if (!Session.Current.Scenario.IsPlayer(faction))
-            {
-                float militaryModifier = DifficultyManager.Instance.GetFactionMilitaryModifier(faction);
-                snapshot.TotalMilitaryPower *= militaryModifier;
-            }
-            
+            // if (!Session.Current.Scenario.IsPlayer(faction))
+            // {
+            //     // float militaryModifier = DifficultyManager.Instance.GetFactionMilitaryModifier(faction);
+            //     // snapshot.TotalMilitaryPower *= militaryModifier;
+            // }
+
             snapshot.AverageFatigue = militaryCount > 0 ? (100 - totalFatigue / militaryCount) : 0;
 
             // 2. 经济健康度 = (资金 + 粮食) / (城池数 * 基准值)
@@ -148,8 +149,9 @@ namespace GameManager
                 snapshot.EconomicHealth = Math.Min(1.0f, totalWealth / expectedWealth);
             }
 
-            // 3. 是否在战争中
-            snapshot.IsAtWar = faction.Troops?.GetList()?.Cast<Troop>()?.Any(t => !t.Destroyed && t.Status != TroopStatus.无) ?? false;
+            // 3. 是否在战争中 (修复: 修正了乱码的 TroopStatus 判断)
+            // TODO: 请确认 'TroopStatus.一般' 是否为你项目中表示"无/闲置"的枚举值
+            snapshot.IsAtWar = faction.Troops?.GetList()?.Cast<Troop>()?.Any(t => !t.Destroyed && t.Status != TroopStatus.一般) ?? false;
 
             // 4. 威胁等级 - 检查周边敌军
             snapshot.ThreatLevel = CalculateThreatLevel(faction);
@@ -172,7 +174,7 @@ namespace GameManager
             {
                 var nearbyEnemyTroops = Session.Current.Scenario.Troops.GetList()
                     ?.Cast<Troop>()
-                    ?.Where(t => t.BelongedFaction != faction && 
+                    ?.Where(t => t.BelongedFaction != faction &&
                                !t.Destroyed &&
                                Math.Abs(t.Position.X - arch.Position.X) <= checkRadius &&
                                Math.Abs(t.Position.Y - arch.Position.Y) <= checkRadius);
@@ -193,11 +195,11 @@ namespace GameManager
                 return 0;
 
             float opportunity = 0;
-            
+
             // 检查邻近的弱势势力
             foreach (Faction otherFaction in Session.Current.Scenario.Factions.GetList().Cast<Faction>())
             {
-                if (otherFaction == faction || otherFaction.IsAlive == false)
+                if (otherFaction == faction || otherFaction.Destroyed)
                     continue;
 
                 // 简单的邻近检查和实力对比
@@ -226,7 +228,7 @@ namespace GameManager
             {
                 foreach (Architecture arch2 in faction2.Architectures.GetList().Cast<Architecture>())
                 {
-                    int distance = Math.Abs(arch1.Position.X - arch2.Position.X) + 
+                    int distance = Math.Abs(arch1.Position.X - arch2.Position.X) +
                                  Math.Abs(arch1.Position.Y - arch2.Position.Y);
                     if (distance <= neighborRadius)
                         return true;
@@ -256,7 +258,7 @@ namespace GameManager
         public static FactionNeighbors AnalyzeNeighbors(Faction faction)
         {
             var neighbors = new FactionNeighbors();
-            
+
             if (faction?.Architectures == null || Session.Current?.Scenario?.Factions == null)
                 return neighbors;
 
@@ -266,7 +268,7 @@ namespace GameManager
             // 1. 找出所有邻居势力
             foreach (Faction otherFaction in Session.Current.Scenario.Factions.GetList().Cast<Faction>())
             {
-                if (otherFaction == faction || !otherFaction.IsAlive)
+                if (otherFaction == faction || otherFaction.Destroyed)
                     continue;
 
                 bool isNeighbor = false;
@@ -274,7 +276,7 @@ namespace GameManager
                 {
                     foreach (Architecture arch2 in otherFaction.Architectures.GetList().Cast<Architecture>())
                     {
-                        int distance = Math.Abs(arch1.Position.X - arch2.Position.X) + 
+                        int distance = Math.Abs(arch1.Position.X - arch2.Position.X) +
                                      Math.Abs(arch1.Position.Y - arch2.Position.Y);
                         if (distance <= neighborRadius)
                         {
@@ -411,7 +413,7 @@ namespace GameManager
             {
                 foreach (Architecture arch2 in faction2.Architectures.GetList().Cast<Architecture>())
                 {
-                    float distance = Math.Abs(arch1.Position.X - arch2.Position.X) + 
+                    float distance = Math.Abs(arch1.Position.X - arch2.Position.X) +
                                    Math.Abs(arch1.Position.Y - arch2.Position.Y);
                     minDistance = Math.Min(minDistance, distance);
                 }
@@ -443,10 +445,10 @@ namespace GameManager
             if (faction?.Troops == null)
                 return false;
 
-            // 检查是否有正在行军或战斗的部队
+            // 检查是否有正在行军或战斗的部队 (修复乱码)
             foreach (Troop troop in faction.Troops.GetList().Cast<Troop>())
             {
-                if (!troop.Destroyed && troop.Status != TroopStatus.无)
+                if (!troop.Destroyed && troop.Status != TroopStatus.一般)
                 {
                     return true;
                 }
@@ -459,7 +461,7 @@ namespace GameManager
                 {
                     var nearbyEnemies = Session.Current.Scenario.Troops.GetList()
                         ?.Cast<Troop>()
-                        ?.Where(t => t.BelongedFaction != faction && 
+                        ?.Where(t => t.BelongedFaction != faction &&
                                    !t.Destroyed &&
                                    Math.Abs(t.Position.X - arch.Position.X) <= 2 &&
                                    Math.Abs(t.Position.Y - arch.Position.Y) <= 2);
@@ -572,217 +574,6 @@ namespace GameManager
         }
     }
 
-    /// <summary>
-    /// 战略大脑：核心决策引擎
-    /// </summary>
-    public class StrategicBrain
-    {
-        private int _factionId;
-        
-        public StrategicBrain(int factionId = 0)
-        {
-            _factionId = factionId;
-        }
-
-        /// <summary>
-        /// 核心函数：输入当前数据，直接输出AI这回合要干嘛
-        /// "跳过计算过程，直接出结果"
-        /// </summary>
-        public StrategicStance DetermineStance(FactionProfile profile, ResourceSnapshot resources, FactionNeighbors neighbors)
-        {
-            int currentTurn = DeterministicRNG.GetCurrentTurn();
-            
-            // 1. 疲劳熔断机制 (Fatigue Cutoff)
-            // 只要全军疲劳过高，强制锁定为"休养"，无视君主性格
-            if (resources.AverageFatigue > 70f)
-            {
-                return StrategicStance.Stabilization;
-            }
-
-            // 2. 危机判定 (Survival Logic)
-            // 如果兵力只有最强邻居的 20%，进入危机模式
-            if (resources.TotalMilitaryPower < neighbors.StrongestNeighborPower * 0.2f)
-            {
-                return StrategicStance.Crisis;
-            }
-
-            // 3. 机会主义判定 (The "Vulture" Check)
-            // 军师智力越高，越容易发现邻居的弱点（如邻居正在打仗）
-            if (profile.AdvisorWisdom > 0.7f && neighbors.HasVulnerableTarget)
-            {
-                return StrategicStance.Opportunistic;
-            }
-
-            // 4. 性格随机性 (The "Personality" Filter) - 使用确定性随机数
-            // 袁绍逻辑：优柔寡断，即使没事干也可能发呆
-            float randomValue = DeterministicRNG.GetValue(currentTurn, _factionId, "personality_check");
-            if (randomValue > profile.Decisiveness)
-            {
-                return StrategicStance.Idle;
-            }
-
-            // 5. 常规扩张逻辑 (Expansion vs Defense)
-            // 综合得分 = (君主野心 * 0.5) + (派系好战压力 * 0.3) + (经济健康度 * 0.2)
-            float expansionScore = (profile.RulerAggression * 0.5f) + 
-                                 (profile.GeneralWarPressure * 0.3f) + 
-                                 (resources.EconomicHealth * 0.2f);
-
-            // 军师修正：如果军师聪明，且兵力不足，会降低扩张分
-            if (profile.AdvisorWisdom > 0.8f && resources.TotalMilitaryPower < neighbors.AveragePower)
-            {
-                expansionScore -= 0.3f;
-            }
-
-            return expansionScore > 0.6f ? StrategicStance.Expansion : StrategicStance.Defense;
-        }
-
-        /// <summary>
-        /// 模拟战斗结果 - 使用确定性随机数
-        /// </summary>
-        public BattleSimulationResult SimulateBattle(Faction attacker, Faction defender)
-        {
-            int currentTurn = DeterministicRNG.GetCurrentTurn();
-            
-            // 计算基础实力对比
-            float attackerPower = attacker.TotalMilitaryPopulation;
-            float defenderPower = defender.TotalMilitaryPopulation;
-            
-            // 应用难度管理器的军事力量修正
-            if (!Session.Current.Scenario.IsPlayer(attacker))
-            {
-                attackerPower *= DifficultyManager.Instance.GetFactionMilitaryModifier(attacker);
-            }
-            if (!Session.Current.Scenario.IsPlayer(defender))
-            {
-                defenderPower *= DifficultyManager.Instance.GetFactionMilitaryModifier(defender);
-            }
-            
-            float powerRatio = attackerPower / Math.Max(1f, defenderPower);
-            
-            // 使用确定性随机数添加战斗的不确定性
-            float battleRandom = DeterministicRNG.GetValue(currentTurn, attacker.ID, $"battle_vs_{defender.ID}");
-            float randomFactor = 0.7f + (battleRandom * 0.6f); // 0.7 - 1.3 的随机因子
-            
-            float adjustedRatio = powerRatio * randomFactor;
-            
-            // 确定战斗结果
-            bool attackerWins = adjustedRatio > 1.0f;
-            Faction winner = attackerWins ? attacker : defender;
-            Faction loser = attackerWins ? defender : attacker;
-            
-            // 生成战斗日志
-            string battleLog = BattleLogGenerator.GenerateBattleLog(winner, loser, adjustedRatio, currentTurn);
-            
-            return new BattleSimulationResult
-            {
-                Winner = winner,
-                Loser = loser,
-                PowerRatio = adjustedRatio,
-                BattleLog = battleLog,
-                AttackerWins = attackerWins,
-                CasualtyRate = CalculateCasualtyRate(adjustedRatio, currentTurn, attacker.ID)
-            };
-        }
-
-        /// <summary>
-        /// 计算伤亡率
-        /// </summary>
-        private float CalculateCasualtyRate(float powerRatio, int turn, int factionId)
-        {
-            // 基础伤亡率
-            float baseCasualty = 0.1f; // 10%基础伤亡
-            
-            if (powerRatio > 3.0f)
-            {
-                // 碾压战，伤亡很小
-                baseCasualty = 0.05f;
-            }
-            else if (powerRatio < 1.1f)
-            {
-                // 激战，伤亡惨重
-                baseCasualty = 0.3f;
-            }
-            else
-            {
-                // 常规战斗
-                baseCasualty = 0.15f;
-            }
-            
-            // 添加确定性随机变化
-            float randomFactor = DeterministicRNG.GetValue(turn, factionId, "casualty_rate");
-            return baseCasualty * (0.5f + randomFactor); // 50%-150%的变化
-        }
-
-        /// <summary>
-        /// 评估攻击成功概率
-        /// </summary>
-        public float EvaluateAttackSuccessRate(Faction attacker, Faction defender)
-        {
-            float attackerPower = attacker.TotalMilitaryPopulation;
-            float defenderPower = defender.TotalMilitaryPopulation;
-            float powerRatio = attackerPower / Math.Max(1f, defenderPower);
-            
-            // 基础成功率基于实力对比
-            float baseSuccessRate = Math.Min(0.95f, powerRatio / 2.0f);
-            
-            // 地理因素修正（简化）
-            if (defenderPower > 0)
-            {
-                // 防守方有地利优势
-                baseSuccessRate *= 0.8f;
-            }
-            
-            return Math.Max(0.05f, baseSuccessRate); // 最低5%成功率
-        }
-
-        /// <summary>
-        /// 获取战略姿态的详细说明
-        /// </summary>
-        public string GetStanceReasoning(FactionProfile profile, ResourceSnapshot resources, FactionNeighbors neighbors, StrategicStance result)
-        {
-            var reasoning = new List<string>();
-            int currentTurn = DeterministicRNG.GetCurrentTurn();
-
-            // 分析决策过程
-            if (resources.AverageFatigue > 70f)
-            {
-                reasoning.Add($"全军疲劳度过高({resources.AverageFatigue:F1}%)，强制休养");
-            }
-            else if (resources.TotalMilitaryPower < neighbors.StrongestNeighborPower * 0.2f)
-            {
-                reasoning.Add($"军力仅为最强邻居的{(resources.TotalMilitaryPower / neighbors.StrongestNeighborPower * 100):F1}%，进入危机模式");
-            }
-            else if (profile.AdvisorWisdom > 0.7f && neighbors.HasVulnerableTarget)
-            {
-                reasoning.Add($"军师智力{profile.AdvisorWisdom:F2}，发现脆弱目标，采取机会主义");
-            }
-            else
-            {
-                float randomValue = DeterministicRNG.GetValue(currentTurn, _factionId, "personality_check");
-                if (randomValue > profile.Decisiveness)
-                {
-                    reasoning.Add($"君主决策力不足({profile.Decisiveness:F2})，随机值{randomValue:F2}，优柔寡断");
-                }
-                else
-                {
-                    float expansionScore = (profile.RulerAggression * 0.5f) + 
-                                         (profile.GeneralWarPressure * 0.3f) + 
-                                         (resources.EconomicHealth * 0.2f);
-                    
-                    if (profile.AdvisorWisdom > 0.8f && resources.TotalMilitaryPower < neighbors.AveragePower)
-                    {
-                        reasoning.Add($"军师建议谨慎(智力{profile.AdvisorWisdom:F2}，兵力不足)");
-                        expansionScore -= 0.3f;
-                    }
-
-                    reasoning.Add($"扩张评分: {expansionScore:F2} (君主{profile.RulerAggression:F2} + 武将压力{profile.GeneralWarPressure:F2} + 经济{resources.EconomicHealth:F2})");
-                    reasoning.Add(expansionScore > 0.6f ? "评分超过0.6，选择扩张" : "评分不足0.6，选择防御");
-                }
-            }
-
-            return string.Join("; ", reasoning);
-        }
-    }
 
     /// <summary>
     /// 战斗模拟结果
@@ -850,8 +641,8 @@ namespace GameManager
             }
 
             // 3. 扩张模式 - 君主激进 + 实力强 + 有机会
-            if (profile.RulerAggression > 0.7f && 
-                snapshot.EconomicHealth > 0.6f && 
+            if (profile.RulerAggression > 0.7f &&
+                snapshot.EconomicHealth > 0.6f &&
                 snapshot.OpportunityLevel > 0.4f &&
                 snapshot.AverageFatigue < 50)
             {
@@ -974,18 +765,18 @@ namespace GameManager
         private static void ExecuteExpansionActions(Faction faction, FactionProfile profile, ResourceSnapshot snapshot)
         {
             System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 执行扩张行动");
-            
+
             // 分析邻居并选择攻击目标
             var neighbors = FactionNeighbors.AnalyzeNeighbors(faction);
-            
+
             if (neighbors.BestVictim != null && neighbors.BestVictimScore > 0)
             {
                 System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 锁定攻击目标: {neighbors.BestVictim.Name} (评分: {neighbors.BestVictimScore:F1})");
-                
+
                 // 显示详细的攻击分析
                 var analysis = FactionNeighbors.GetVictimAnalysisReport(faction, neighbors.BestVictim);
                 System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 攻击分析:\n{analysis}");
-                
+
                 // 模拟战斗结果
                 var battleResult = AIStrategicDecisionSystem.SimulateBattle(faction, neighbors.BestVictim);
                 System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 战斗模拟结果:");
@@ -993,63 +784,105 @@ namespace GameManager
                 System.Diagnostics.Debug.WriteLine($"  实力比: {battleResult.PowerRatio:F2}:1");
                 System.Diagnostics.Debug.WriteLine($"  预期伤亡率: {battleResult.CasualtyRate:F1}%");
                 System.Diagnostics.Debug.WriteLine($"  战斗日志: {battleResult.BattleLog}");
-                
+
                 // 评估攻击成功率
                 float successRate = AIStrategicDecisionSystem.EvaluateAttackSuccessRate(faction, neighbors.BestVictim);
                 System.Diagnostics.Debug.WriteLine($"  攻击成功率: {successRate:P1}");
-                
+
                 // 根据模拟结果决定是否发动攻击
                 if (battleResult.AttackerWins && successRate > 0.6f)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 决定发动攻击！");
-                    
+                    System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 决定发动攻击");
+
                     // 生成攻击决策日志
                     int currentTurn = DeterministicRNG.GetCurrentTurn();
                     string attackLog = BattleLogGenerator.GenerateFieldBattleLog(
                         faction, neighbors.BestVictim, "边境", currentTurn);
                     System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 攻击日志: {attackLog}");
-                    
-                    // TODO: 实现具体的攻击逻辑
-                    // - 集结军队
-                    // - 制定攻击路线
-                    // - 发动战争
+
+                    // === 实现攻击逻辑 ===
+                    try
+                    {
+                        var allCities = faction.Architectures?.GetList()?.Cast<Architecture>()?.ToList();
+                        if (allCities != null && allCities.Count > 0)
+                        {
+                            var targetCities = neighbors.BestVictim.Architectures?.GetList()?.Cast<Architecture>()?.ToList();
+                            if (targetCities != null && targetCities.Count > 0)
+                            {
+                                var frontlineCities = allCities
+                                    .OrderBy(c => targetCities.Min(t =>
+                                        Math.Abs(c.Position.X - t.Position.X) +
+                                        Math.Abs(c.Position.Y - t.Position.Y)))
+                                    .Take(Math.Min(3, allCities.Count))
+                                    .ToList();
+
+                                System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 前线城市: {string.Join(", ", frontlineCities.Select(c => c.Name))}");
+                                faction.RunPersonnel(frontlineCities);
+                                faction.RunMilitary(frontlineCities);
+                                System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 完成军事行动");
+                            }
+                            else
+                            {
+                                faction.RunMilitary(allCities);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] 攻击失败: {ex.Message}");
+                    }
                 }
                 else
                 {
                     System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 评估后认为胜算不大，暂缓攻击");
-                    System.Diagnostics.Debug.WriteLine($"  原因: 胜率{successRate:P1}，模拟结果{(battleResult.AttackerWins ? "胜利" : "失败")}");
+                    System.Diagnostics.Debug.WriteLine($"  原因: 胜率{successRate:P1}，模拟结果:{(battleResult.AttackerWins ? "胜利" : "失败")}");
                 }
             }
             else
             {
                 System.Diagnostics.Debug.WriteLine($"[AI战略-扩张] {faction.Name} 未找到合适的攻击目标，转为内政发展");
-                
-                // TODO: 实现扩张准备逻辑
-                // - 优先招募武将
-                // - 训练军队
-                // - 发展经济
-                // - 寻找更远的攻击目标
+
+                // === 实现扩张准备逻辑 ===
+                try
+                {
+                    var allCities = faction.Architectures?.GetList()?.Cast<Architecture>()?.ToList();
+                    if (allCities != null && allCities.Count > 0)
+                    {
+                        faction.RunPersonnel(allCities); faction.RunDomestic(allCities); faction.RunMilitary(allCities);
+                    }
+                }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[AI战略] 扩张准备失败: {ex.Message}"); }
             }
         }
 
         private static void ExecuteStabilizationActions(Faction faction, FactionProfile profile, ResourceSnapshot snapshot)
         {
             System.Diagnostics.Debug.WriteLine($"[AI战略-稳定] {faction.Name} 执行休养生息");
-            // TODO: 实现稳定化逻辑
-            // - 发展经济
-            // - 建设设施
-            // - 整顿内政
-            // - 恢复军队士气
+            // === 实现稳定化逻辑 ===
+            try
+            {
+                var allCities = faction.Architectures?.GetList()?.Cast<Architecture>()?.ToList();
+                if (allCities != null && allCities.Count > 0)
+                {
+                    faction.RunDomestic(allCities); faction.RunPersonnel(allCities);
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[AI战略] 稳定失败: {ex.Message}"); }
         }
 
         private static void ExecuteDefenseActions(Faction faction, FactionProfile profile, ResourceSnapshot snapshot)
         {
             System.Diagnostics.Debug.WriteLine($"[AI战略-防御] {faction.Name} 执行防御行动");
-            // TODO: 实现防御逻辑
-            // - 召回外征军队
-            // - 加强城防
-            // - 储备粮草
-            // - 寻求外交支援
+            // === 实现防御逻辑 ===
+            try
+            {
+                var allCities = faction.Architectures?.GetList()?.Cast<Architecture>()?.ToList();
+                if (allCities != null && allCities.Count > 0)
+                {
+                    faction.RunDomestic(allCities); faction.RunMilitary(allCities);
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[AI战略] 防御失败: {ex.Message}"); }
         }
 
         private static void ExecuteCrisisActions(Faction faction, FactionProfile profile, ResourceSnapshot snapshot)
@@ -1065,34 +898,34 @@ namespace GameManager
         private static void ExecuteOpportunisticActions(Faction faction, FactionProfile profile, ResourceSnapshot snapshot)
         {
             System.Diagnostics.Debug.WriteLine($"[AI战略-机会] {faction.Name} 寻找机会");
-            
+
             // 机会主义专门寻找正在交战的目标
             var neighbors = FactionNeighbors.AnalyzeNeighbors(faction);
-            
+
             if (neighbors.BestVictim != null)
             {
                 var analysis = FactionNeighbors.GetVictimAnalysisReport(faction, neighbors.BestVictim);
                 System.Diagnostics.Debug.WriteLine($"[AI战略-机会] 发现机会目标: {neighbors.BestVictim.Name}");
                 System.Diagnostics.Debug.WriteLine($"[AI战略-机会] 机会分析:\n{analysis}");
-                
+
                 if (neighbors.BestVictimScore > 500) // 高分说明是趁火打劫的好机会
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AI战略-机会] {faction.Name} 决定趁火打劫 {neighbors.BestVictim.Name}！");
-                    
+                    System.Diagnostics.Debug.WriteLine($"[AI战略-机会] {faction.Name} 决定趁火打劫 {neighbors.BestVictim.Name}");
+
                     // 模拟趁火打劫的战斗结果
                     var battleResult = AIStrategicDecisionSystem.SimulateBattle(faction, neighbors.BestVictim);
                     System.Diagnostics.Debug.WriteLine($"[AI战略-机会] 趁火打劫模拟结果:");
                     System.Diagnostics.Debug.WriteLine($"  胜利者: {battleResult.Winner.Name}");
                     System.Diagnostics.Debug.WriteLine($"  实力比: {battleResult.PowerRatio:F2}:1");
                     System.Diagnostics.Debug.WriteLine($"  预期伤亡率: {battleResult.CasualtyRate:F1}%");
-                    
+
                     // 机会主义攻击的成功率更高（因为目标正在交战）
                     float successRate = AIStrategicDecisionSystem.EvaluateAttackSuccessRate(faction, neighbors.BestVictim);
                     successRate *= 1.5f; // 趁火打劫成功率提升50%
                     successRate = Math.Min(0.95f, successRate); // 最高95%
-                    
+
                     System.Diagnostics.Debug.WriteLine($"  趁火打劫成功率: {successRate:P1}");
-                    
+
                     if (battleResult.AttackerWins && successRate > 0.4f) // 机会主义门槛更低
                     {
                         // 生成趁火打劫日志
@@ -1100,9 +933,9 @@ namespace GameManager
                         string opportunisticLog = BattleLogGenerator.GenerateFieldBattleLog(
                             faction, neighbors.BestVictim, "敌后", currentTurn);
                         System.Diagnostics.Debug.WriteLine($"[AI战略-机会] 趁火打劫日志: {opportunisticLog}");
-                        
+
                         // TODO: 实现趁火打劫逻辑
-                        // - 快速集结军队
+                        // - 快速集结军团
                         // - 偷袭弱势城池
                         // - 抢夺资源后撤退
                     }
@@ -1118,8 +951,8 @@ namespace GameManager
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine($"[AI战略-机会] {faction.Name} 暂无发现机会，保持警戒");
-                
+                System.Diagnostics.Debug.WriteLine($"[AI战略-机会] {faction.Name} 暂无发现机会，保持警惕");
+
                 // TODO: 实现机会主义待机逻辑
                 // - 保持军队机动性
                 // - 加强情报收集

@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;

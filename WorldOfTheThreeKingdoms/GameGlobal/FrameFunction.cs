@@ -1,4 +1,4 @@
-﻿namespace GameGlobal
+﻿namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum FrameFunction
     {
@@ -19,6 +19,9 @@
         GetGossipTargetForAnalysis,    // 新增：用于智能流言的目标分析
         GetEnhanceDiplomaticRelationTargetForAnalysis, // 亲善目标分析
         GetEnhanceDiplomaticRelationCost,              // 亲善代价选择
+        GetTruceDiplomaticRelationTargetForAnalysis,   // 停战目标分析
+        GetInduceSurrenderTargetForAnalysis,           // 劝降目标分析
+        GetInduceSurrenderPerson,                      // 劝降执行人选择
         GetJailBreakTargetForAnalysis,   // 新增：用于智能劫牢的目标分析
         GetAssassinateTargetForAnalysis, // 新增：用于智能暗杀的目标分析
         GetYearlyTalentRecommendation,    // 新增：用于年度人才举荐选择
@@ -44,6 +47,10 @@
         GetNewCapital,
         GetFriendlyDiplomaticRelation,
         GetAllyDiplomaticRelation,
+        GetAllyDiplomaticRelationTargetForAnalysis,
+        GetAllyTargetForAnalysis,                // 结盟目标分析
+        GetTruceTargetForAnalysis,           // 停战目标分析
+        GetInduceSurrenderExecutor,          // 劝降执行人选择
         GetEnhanceDiplomaticRelation,
         GetEnhanceDiplomaticRelationPerson,
         GetAllyDiplomaticRelationPerson,
@@ -99,6 +106,11 @@
         /// 宝物-出售
         /// </summary>
         GetSellTreasure,
+        /// <summary>
+        /// 宝物-购买
+        /// 🔥 2026-03-03 新增
+        /// </summary>
+        GetBuyTreasure,
 
         xuanzemeinv,
         chongxingmeinv,
@@ -133,7 +145,18 @@
         SelectMarryTo,
         SelectTrainableChildren,
         SelectTrainPolicy,
-        GetGeDiDiplomaticRelation
+        GetGeDiDiplomaticRelation,
+        
+        // 编辑器相关功能
+        GetEditArchitecture,    // 选择要编辑的城池
+        GetEditTroop,          // 选择要编辑的部队
+        GetEditFaction,        // 选择要编辑的势力
+        GetEditPerson,         // 选择要编辑的武将
+        GetEditMilitary,       // 选择要编辑的编队
+        GetEditTreasure,       // 选择要编辑宝物的武将
+        GetEditTitle,          // 选择要编辑称号的武将
+        GetEditSkill,          // 选择要编辑特技的武将
+        Editor_SelectInfluence // 编辑器选择影响
     }
 }
 

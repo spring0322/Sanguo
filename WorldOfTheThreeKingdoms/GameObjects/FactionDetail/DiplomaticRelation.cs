@@ -82,7 +82,7 @@ namespace GameObjects.FactionDetail
             {
                 if (this.relationFaction1 == null)
                 {
-                    this.relationFaction1 = Session.Current.Scenario.Factions.GetGameObject(this.relationFaction1ID) as Faction;
+                    this.relationFaction1 = (Session.Current.Scenario.Factions.GetGameObject(this.relationFaction1ID) is Faction ? (Faction)Session.Current.Scenario.Factions.GetGameObject(this.relationFaction1ID) : null);
                 }
                 return this.relationFaction1;
             }
@@ -119,7 +119,7 @@ namespace GameObjects.FactionDetail
             {
                 if (this.relationFaction2 == null)
                 {
-                    this.relationFaction2 = Session.Current.Scenario.Factions.GetGameObject(this.relationFaction2ID) as Faction;
+                    this.relationFaction2 = (Session.Current.Scenario.Factions.GetGameObject(this.relationFaction2ID) is Faction ? (Faction)Session.Current.Scenario.Factions.GetGameObject(this.relationFaction2ID) : null);
                 }
                 return this.relationFaction2;
             }
@@ -163,4 +163,5 @@ namespace GameObjects.FactionDetail
         }
     }
 }
+
 

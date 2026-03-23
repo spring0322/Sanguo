@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -16,7 +16,7 @@ namespace GameFreeText
         private TextAlign align;
         //public FreeTextBuilder Builder;
 
-        Font Font;
+        public Font Font;
 
         private Microsoft.Xna.Framework.Point displayOffset;
         private Microsoft.Xna.Framework.Color textColor;

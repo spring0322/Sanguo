@@ -8,8 +8,11 @@ namespace GameObjects.Conditions
     [DataContract]
     public class ConditionKindTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, ConditionKind> ConditionKinds = new Dictionary<int, ConditionKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, ConditionKind>))]
+        public Dictionary<int, ConditionKind> ConditionKinds = [];
 
         public bool AddConditionKind(ConditionKind ck)
         {
@@ -45,6 +48,9 @@ namespace GameObjects.Conditions
 
         public void LoadFromString(ConditionKindTable allConditionKinds, string conditionIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(conditionIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = conditionIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             ConditionKind kind = null;

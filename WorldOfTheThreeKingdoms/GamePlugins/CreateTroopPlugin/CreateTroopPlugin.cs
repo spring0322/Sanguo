@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GameObjects.TroopDetail;
@@ -170,7 +170,7 @@ namespace CreateTroopPlugin
 
         public void SetArchitecture(object architecture)
         {
-            this.createTroop.SetArchitecture(architecture as Architecture);
+            this.createTroop.SetArchitecture((architecture is Architecture ? (Architecture)architecture : null));
         }
 
         public void SetCreateFunction(GameDelegates.VoidFunction function)
@@ -205,7 +205,7 @@ namespace CreateTroopPlugin
 
         public void SetShellMilitaryKind(object kind)
         {
-            this.createTroop.ShellMilitaryKind = kind as MilitaryKind;
+            this.createTroop.ShellMilitaryKind = (kind is MilitaryKind ? (MilitaryKind)kind : null);
         }
 
         public void SetTabList(ITabList iTabList)
@@ -318,4 +318,5 @@ namespace CreateTroopPlugin
         }
     }
 }
+
 

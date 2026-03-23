@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 using System.Runtime.InteropServices;
@@ -10,6 +10,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind393 : InfluenceKind
     {
+        [DataMember]
         private int id = 0;
 
         public override void ApplyInfluenceKind(Troop troop)

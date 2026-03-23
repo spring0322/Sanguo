@@ -1,4 +1,5 @@
 ﻿using GameObjects;
+using GameObjects.TroopDetail;
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework;
@@ -465,11 +466,15 @@ namespace GameObjects.Influences
         {
             if (this.Type == InfluenceType.建筑 || this.Type == InfluenceType.建筑战斗)
             {
-                if (i.appliedArch.Add(new ApplyingArchitecture(architecture, applier, applierID)))
+                bool added = i.appliedArch.Add(new ApplyingArchitecture(architecture, applier, applierID));
+                
+
+                
+                if (added)
                 {
                     ApplyInfluenceKind(architecture);
                 }
-            } 
+            }
             else if (this.Type == InfluenceType.个人)
             {
                 foreach (Person p in architecture.Persons)
@@ -564,7 +569,7 @@ namespace GameObjects.Influences
         {
         }
 
-        public virtual int GetCredit(Troop source, Troop destination)
+        public virtual int GetCredit(Troop source, Troop destination, Stratagem stratagem = null)
         {
             return 0;
         }

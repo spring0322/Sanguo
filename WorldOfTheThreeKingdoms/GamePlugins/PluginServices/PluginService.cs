@@ -24,7 +24,7 @@ namespace PluginServices
 
         public void InitPlugins()
         {
-
+            StaticPluginRegistry.RegisterAllPlugins(this);
         }
 
         //private void AddPlugin(string FileName)

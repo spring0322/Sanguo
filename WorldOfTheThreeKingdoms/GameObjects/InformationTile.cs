@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 using System.Runtime.InteropServices;
 

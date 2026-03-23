@@ -25,7 +25,7 @@ namespace GameManager
         private const float _dayInterval = 0.1f; // 每0.1秒跳过一天
         
         // 事件委托
-        public event Action<AdviceData> OnStrategistAdvice;
+        // public event Action<AdviceData> OnStrategistAdvice;
         public event Action<int> OnDayAdvanced;
         public event Action OnTimeSkipCompleted;
         public event Action OnTimeSkipInterrupted;

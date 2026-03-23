@@ -1,5 +1,6 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -8,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind390 : InfluenceKind
     {
+        [DataMember]
         private int baseDecrement;
 
         public override void ApplyInfluenceKind(Troop troop)
@@ -25,13 +27,13 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             int num = 0;
             int pureFightingForce = source.PureFightingForce;
             foreach (Troop troop in source.GetAreaStratagemTroops(destination, false))
             {
-                int num3 = source.GetStratagemSuccessChanceCredit(troop, source.InevitableGongxinOnLowerIntelligence || source.InevitableStratagemOnLowerIntelligence, troop.InvincibleGongxin, troop.InvincibleStratagemFromLowerIntelligence);
+                int num3 = source.GetStratagemSuccessChanceCredit(stratagem, troop, source.InevitableGongxinOnLowerIntelligence || source.InevitableStratagemOnLowerIntelligence, troop.InvincibleGongxin, troop.InvincibleStratagemFromLowerIntelligence);
                 num3 -= destination.MoraleIncreaseByViewArea * 50;
                 num3 -= destination.MoraleIncreaseInViewArea * 50;
                 num3 += destination.MoraleDecreaseByViewArea * 50;

@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -69,6 +69,13 @@ namespace WorldOfTheThreeKingdoms.Resources
             }
             try
             {
+                // 添加null检查
+                if (Session.Current?.Scenario?.GameCommonData?.AllTerrainDetails?.TerrainDetails == null)
+                {
+
+                    return;
+                }
+
                 foreach (TerrainDetail detail in Session.Current.Scenario.GameCommonData.AllTerrainDetails.TerrainDetails.Values)
                 {
                     detail.Textures = new TerrainTextures();
@@ -164,50 +171,65 @@ namespace WorldOfTheThreeKingdoms.Resources
             //}
             try
             {
-                foreach (MilitaryKind kind2 in Session.Current.Scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Values)
+                // 💡 修复：避免直接 return 导致后续的 MapVeilTextures 等其他重要纹理被跳过加载
+                if (Session.Current?.Scenario?.GameCommonData?.AllMilitaryKinds?.MilitaryKinds != null)
                 {
-                    str = "Content/Textures/Resources/Troop/" + kind2.ID.ToString() + "/";
-
-                    var files = Platform.Current.GetMODFiles(str, false);
-
-                    //重複的兵模，載入原始圖
-                    if (files.Length == 1 && files[0].Contains("same"))
+                    foreach (MilitaryKind kind2 in Session.Current.Scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Values)
                     {
-                        var same = files[0].Substring(files[0].LastIndexOf("same")).Replace("same", "").Replace(".txt", "");
+                        string originalId = kind2.ID.ToString();
+                        string effectiveId = originalId; // 默认使用自身 ID
 
-                        str = "Content/Textures/Resources/Troop/" + same + "/";
-                    }
+                        string troopDir = $"Content/Textures/Resources/Troop/{originalId}/";
+                        
+                        // 假设 Platform.Current.GetMODFiles 已经处理了 null 返回的情况，安全起见加上 NullToEmptyArray()
+                        var files = Platform.Current.GetMODFiles(troopDir, false).NullToEmptyArray();
 
-                    string soundDir = @"Content\Sound\Troop\" + kind2.ID.ToString() + "/";
-                    //if (Platform.Current.DirectoryExists(str))  // Directory.Exists(str))
-                    //{
+                        // 💡 修复 1：放弃脆弱的 Length == 1 判断，使用 LINQ 安全查找 sameX 文件，无视隐藏文件干扰
+                        var sameFile = files.FirstOrDefault(f => f.Contains("same", StringComparison.OrdinalIgnoreCase));
+
+                        if (!string.IsNullOrEmpty(sameFile))
+                        {
+                            // 💡 修复 2：使用跨平台的 Path 类安全提取文件名（如 "same1"），避免 Substring 越界崩溃
+                            string fileName = Path.GetFileNameWithoutExtension(sameFile);
+                            effectiveId = fileName.Replace("same", "", StringComparison.OrdinalIgnoreCase);
+
+                            // 更新贴图目录路径到被复用的目标 ID
+                            troopDir = $"Content/Textures/Resources/Troop/{effectiveId}/";
+
+                        }
+
+                        // 💡 修复 3：统一音效路径，并跟随 effectiveId 复用逻辑！同时将反斜杠替换为跨平台安全的正杠
+                        string soundDir = $"Content/Sound/Troop/{effectiveId}/";
+
+                        // 使用 C# 字符串内插，代码更易读
                         TroopTextures textures = new TroopTextures
                         {
-                            //Device = device,
-                            MoveTextureFileName = str + "Move.png",
-                            AttackTextureFileName = str + "Attack.png",
-                            BeAttackedTextureFileName = str + "BeAttacked.png",
-                            CastTextureFileName = str + "Cast.png",
-                            BeCastedTextureFileName = str + "BeCasted.png"
+                            MoveTextureFileName = $"{troopDir}Move.png",
+                            AttackTextureFileName = $"{troopDir}Attack.png",
+                            BeAttackedTextureFileName = $"{troopDir}BeAttacked.png",
+                            CastTextureFileName = $"{troopDir}Cast.png",
+                            BeCastedTextureFileName = $"{troopDir}BeCasted.png"
                         };
-                        //if (!Platform.Current.FileExists(textures.CastTextureFileName))
-                        //{
-                        //    textures.CastTextureFileName = textures.AttackTextureFileName;
-                        //}
-                        //textures.BeCastedTextureFileName = str + "BeCasted.png";
-                        //if (!Platform.Current.FileExists(textures.BeCastedTextureFileName))
-                        //{
-                        //    textures.BeCastedTextureFileName = textures.BeAttackedTextureFileName;
-                        //}
-                        kind2.Textures = textures;                        
+                        kind2.Textures = textures;
+                        
+
+                        
+                        // 🔥 性能优化：预加载 Move 纹理，避免首次渲染时的延迟
+                        // 只预加载 Move 纹理（最常用），其他纹理保持懒加载以节省内存
+                        _ = textures.MoveTexture;
+
                         TroopSounds sounds = new TroopSounds
                         {
-                            MovingSoundPath = soundDir + "Moving",
-                            NormalAttackSoundPath = soundDir + "NormalAttack",
-                            CriticalAttackSoundPath = soundDir + "CriticalAttack"
+                            MovingSoundPath = $"{soundDir}Moving",
+                            NormalAttackSoundPath = $"{soundDir}NormalAttack",
+                            CriticalAttackSoundPath = $"{soundDir}CriticalAttack"
                         };
                         kind2.Sounds = sounds;
-                    //}
+                    }
+                }
+                else
+                {
+
                 }
             }
             catch (Exception exception4)
@@ -269,21 +291,24 @@ namespace WorldOfTheThreeKingdoms.Resources
             }
             //try
             //{
-                foreach (Animation animation in Session.Current.Scenario.GameCommonData.AllTileAnimations.Animations.Values)
+                // 添加null检查
+                if (Session.Current?.Scenario?.GameCommonData?.AllTileAnimations?.Animations != null)
                 {
-                    //animation.Device = device;
-                    animation.TextureFileName = "Content/Textures/Resources/Effects/TileEffect/" + animation.Name + ".png";
+                    foreach (Animation animation in Session.Current.Scenario.GameCommonData.AllTileAnimations.Animations.Values)
+                    {
+                        //animation.Device = device;
+                        animation.TextureFileName = "Content/Textures/Resources/Effects/TileEffect/" + animation.Name + ".png";
 
-                    //if (!Platform.Current.FileContentExists(animation.MaleSoundPath, ""))
-                    //{
-                    //    animation.MaleSoundPath = "Content/Sound/Animation/" + animation.Name;
-                    //}
+                        //if (!Platform.Current.FileContentExists(animation.MaleSoundPath, ""))
+                        //{
+                        //    animation.MaleSoundPath = "Content/Sound/Animation/" + animation.Name;
+                        //}
 
-                    //if (!Platform.Current.FileContentExists(animation.FemaleSoundPath, ""))
-                    //{
-                    //    animation.FemaleSoundPath = "Content/Sound/Animation/" + animation.Name;
-                    //}
-
+                        //if (!Platform.Current.FileContentExists(animation.FemaleSoundPath, ""))
+                        //{
+                        //    animation.FemaleSoundPath = "Content/Sound/Animation/" + animation.Name;
+                        //}
+                    }
                 }
             //}
             //catch (Exception exception8)
@@ -293,7 +318,11 @@ namespace WorldOfTheThreeKingdoms.Resources
             //}
             try
             {
-                Session.Current.Scenario.GameCommonData.NumberGenerator.TextureFileName = "Content/Textures/Resources/Effects/CombatNumber/CombatNumber.png";
+                // 添加null检查
+                if (Session.Current?.Scenario?.GameCommonData?.NumberGenerator != null)
+                {
+                    Session.Current.Scenario.GameCommonData.NumberGenerator.TextureFileName = "Content/Textures/Resources/Effects/CombatNumber/CombatNumber.png";
+                }
             }
             catch (Exception exception9)
             {
@@ -349,33 +378,66 @@ namespace WorldOfTheThreeKingdoms.Resources
             string[] filePaths = Platform.Current.GetFiles("Content/Textures/Resources/Architecture/", false).NullToEmptyList().Where(fi => fi.EndsWith(".png")).NullToEmptyArray();
             foreach (String s in filePaths)
             {
-                string fileName = s.Substring(s.LastIndexOf('/') + 1, s.LastIndexOf('.') - s.LastIndexOf('/') - 1);
+                // 🔥 技术性修复：同时处理正斜杠和反斜杠，避免在Windows上解析失败
+                int lastSlash = Math.Max(s.LastIndexOf('/'), s.LastIndexOf('\\'));
+                int lastDot = s.LastIndexOf('.');
+                
+                if (lastDot <= lastSlash)
+                {
+                    continue; // 跳过格式不正确的文件名
+                }
+                
+                string fileName = s.Substring(lastSlash + 1, lastDot - lastSlash - 1);
+                // System.Diagnostics.Debug.WriteLine($"[CacheManager] Extracted fileName: {fileName}");
                 if (fileName.IndexOf('-') < 0)
                 {
                     continue;
                 }
-                string archIdStr = fileName.Substring(0, fileName.IndexOf('-'));
-                string size = fileName.Substring(fileName.IndexOf('-') + 1);
+                
+                int dashIndex = fileName.IndexOf('-');
+                if (dashIndex <= 0 || dashIndex >= fileName.Length - 1)
+                {
+                    continue; // 跳过格式不正确的文件名
+                }
+                
+                string archIdStr = fileName.Substring(0, dashIndex);
+                string size = fileName.Substring(dashIndex + 1);
 
                 int archId;
                 if (int.TryParse(archIdStr, out archId) && (size.Equals("5") || size.Equals("13")))
                 {
                     if (size.Equals("5"))
                     {
-                        var tex = new PlatformTexture()
+                        var loadedTex = Platform.Current.LoadTexture(s, false);
+                        if (loadedTex != null)
                         {
-                            Name = s
-                        };
-                        mediumCityImg.Add(archId, tex);  // { Platform.Current.LoadTexture(s, false));
+                            var pt = new PlatformTexture(loadedTex) { Name = s };
+                            mediumCityImg.Add(archId, pt);
+                            // System.Diagnostics.Debug.WriteLine($"[GameTextures] Loaded medium city img: {s} -> ID:{archId}");
+                        }
+                        else
+                        {
+
+                        }
                     }
                     else
                     {
-                        var tex = new PlatformTexture()
+                        var loadedTex = Platform.Current.LoadTexture(s, false);
+                        if (loadedTex != null)
                         {
-                            Name = s
-                        };
-                        largeCityImg.Add(archId, tex);  // Platform.Current.LoadTexture(s, false));
+                            var pt = new PlatformTexture(loadedTex) { Name = s };
+                            largeCityImg.Add(archId, pt);
+                            // System.Diagnostics.Debug.WriteLine($"[GameTextures] Loaded large city img: {s} -> ID:{archId}");
+                        }
+                        else
+                        {
+
+                        }
                     }
+                }
+                else
+                {
+
                 }
             }
 

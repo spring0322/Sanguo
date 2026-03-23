@@ -68,6 +68,7 @@ namespace GameObjects.PersonDetail
             }
         }
 
+        private PersonRelationValue() { }
         public PersonRelationValue(Person source, Person person, int relationValue)
         {
             this.Source = source;

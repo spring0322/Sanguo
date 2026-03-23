@@ -8,8 +8,11 @@ namespace GameObjects.FactionDetail
     [DataContract]
     public class TechniqueTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, Technique> Techniques = new Dictionary<int, Technique>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, Technique>))]
+        public Dictionary<int, Technique> Techniques = [];
 
         public bool AddTechnique(Technique technique)
         {
@@ -46,6 +49,10 @@ namespace GameObjects.FactionDetail
         public List<string> LoadFromString(TechniqueTable allTechniques, string techniqueIDs)
         {
             List<string> errorMsg = new List<string>();
+            if (string.IsNullOrEmpty(techniqueIDs))
+            {
+                return errorMsg;
+            }
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = techniqueIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             Technique technique = null;

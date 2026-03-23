@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using System.Runtime.Serialization;
 
 namespace GameObjects

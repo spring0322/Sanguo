@@ -1,16 +1,16 @@
 using Microsoft.Xna.Framework;
 using Platforms;
-using SpriteFontPlus;
+using FontStashSharp;
+using FontStashSharp.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using FontStashSharp;
 using Microsoft.Xna.Framework.Graphics;
 using Tools;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameManager
 {
@@ -30,7 +30,9 @@ namespace GameManager
     public static class TextManager
     {
 
-        public static DynamicSpriteFont font = null;
+        // Proxy to FontManager
+        // public static FontSystem fontSystem = null; 
+        // public static SpriteFontBase font = null;
 
         public static Object lockObj = new Object();
         
@@ -42,6 +44,13 @@ namespace GameManager
 
         public static void Init(string name, int size)
         {
+            // 🔥 技术性修复：防御式检查 GraphicsDevice
+            if (Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
+            {
+                System.Diagnostics.Debug.WriteLine("[TextManager] GraphicsDevice 为 null 或已释放，跳过 Init");
+                return;
+            }
+
             // [新增] 防止重复初始化检查
             lock (lockObj)
             {
@@ -52,7 +61,8 @@ namespace GameManager
                 }
                 
                 string fontKey = $"{name}_{size}";
-                if (font != null && _lastInitializedFont == fontKey)
+                // Check if FontManager has this font
+                if (FontManager.Instance.GetFont(size) != null && _lastInitializedFont == fontKey)
                 {
                     System.Diagnostics.Debug.WriteLine($"[TextManager] 字体已存在，跳过初始化: {name}");
                     return;
@@ -74,23 +84,17 @@ namespace GameManager
                 
                 System.Diagnostics.Debug.WriteLine($"[TextManager] 字体文件加载成功，大小: {bytes.Length} 字节");
                 
-                font = DynamicSpriteFont.FromTtf(bytes, size, 2048, 2048);
+                // Use FontManager
+                FontManager.Instance.LoadFont(name, size);
                 
-                if (font != null)
-                {
-                    _lastInitializedFont = $"{name}_{size}";
-                    System.Diagnostics.Debug.WriteLine($"[TextManager] 字体初始化成功");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"[TextManager] 字体初始化失败，font为null");
-                }
+                string fontKey = $"{name}_{size}";
+                _lastInitializedFont = fontKey;
+                System.Diagnostics.Debug.WriteLine($"[TextManager] 字体初始化成功");
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[TextManager] 字体初始化异常: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[TextManager] 异常堆栈: {ex.StackTrace}");
-                font = null;
             }
             finally
             {
@@ -98,6 +102,31 @@ namespace GameManager
                 {
                     _isInitializing = false;
                 }
+            }
+        }
+
+        /// <summary>
+        /// 重置字体管理器（用于GPU设备恢复）
+        /// </summary>
+        public static void Reset()
+        {
+            lock (lockObj)
+            {
+                FontManager.Instance.Reset();
+                _lastInitializedFont = "";
+                _isInitializing = false;
+                
+                // 清理纹理缓存
+                foreach (var tex in texs.Values)
+                {
+                    if (tex != null && !tex.IsDisposed)
+                    {
+                        try { tex.Dispose(); } catch { }
+                    }
+                }
+                texs.Clear();
+                
+                System.Diagnostics.Debug.WriteLine("[TextManager] 字体管理器已重置");
             }
         }
 
@@ -115,18 +144,28 @@ namespace GameManager
 
             // [新增] 验证GraphicsDevice一致性
             // 这有助于检测SpriteBatch是否持有一个过期的、已被重置的GraphicsDevice引用
-            if (Session.Current.SpriteBatch.GraphicsDevice != Platform.GraphicsDevice)
+            if (Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
             {
-                System.Diagnostics.Debug.WriteLine($"[TextManager] CRITICAL WARNING: SpriteBatch.GraphicsDevice ID ({Session.Current.SpriteBatch.GraphicsDevice.GetHashCode()}) does not match Platform.GraphicsDevice ID ({Platform.GraphicsDevice.GetHashCode()}). This is a strong indicator of a crash risk!");
-                // 暂时不返回，仅记录，看是否真的会导致后续Crash
+                System.Diagnostics.Debug.WriteLine("[TextManager] Platform.GraphicsDevice 为 null 或已释放，停止绘制文本");
+                return;
             }
 
-            // 初始化字体
-            if (font == null)
+            // [新增] 多线程保护：并在AI计算时禁止绘制文本，防止 VertexBuffer NRE
+            if (Session.Current.IsWorking) return;
+
+            if (Session.Current.SpriteBatch.GraphicsDevice != Platform.GraphicsDevice)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TextManager] CRITICAL WARNING: SpriteBatch.GraphicsDevice ID ({Session.Current.SpriteBatch.GraphicsDevice.GetHashCode()}) does not match Platform.GraphicsDevice ID ({Platform.GraphicsDevice.GetHashCode()}). Skipping DRAW to prevent Crash!");
+                return; // 这里应该返回，否则底层必然 Crash
+            }
+
+            // 初始化字体 (using FontManager)
+            if (FontManager.Instance.GetFont(pair.Size) == null)
             {
                 Init(pair.Name, pair.Size);
             }
-
+            
+            var font = FontManager.Instance.GetFont(pair.Size);
             if (font == null) return;
 
             // 处理文本
@@ -142,28 +181,39 @@ namespace GameManager
                     if (!string.IsNullOrEmpty(te))
                     {
                         var drawPos = pos + new Vector2(0, i * pair.Size * scale);
-                        var scaleVector = new Vector2(scale, scale);
                         var drawDepth = depth == null ? 0 : (float)depth;
-                        
-                        font.DrawString(Session.Current.SpriteBatch, te, drawPos, color, scaleVector, drawDepth);
+                        // Use FontManager to draw
+                        FontManager.Instance.DrawString(Session.Current.SpriteBatch, te, drawPos, color, scale, drawDepth);
                     }
                 }
             }
             catch (NullReferenceException ne)
             {
                 System.Diagnostics.Debug.WriteLine($"[TextManager] NullReferenceException in DrawTexts: {ne.Message}");
+                // 🔧 自愈：发生异常时通知FontManager重置
+                FontManager.Instance.Reset();
             }
             catch (Exception ex)
             {
+                // 🔥 检测GPU设备移除异常
+                if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                    ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                {
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
                 // 捕获 SharpDXException 等其他异常
                 System.Diagnostics.Debug.WriteLine($"[TextManager] Exception in DrawTexts: {ex.Message}");
+                // 🔧 自愈
+                FontManager.Instance.Reset();
+                FontManager.Instance.Reset();
             }
         }
 
-        public static List<Bounds> DrawTextsReturnBounds(string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, Microsoft.Xna.Framework.Color color, int space = 0, float scale = 1f, float? depth = null)
+        public static List<GameManager.Bounds> DrawTextsReturnBounds(string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, Microsoft.Xna.Framework.Color color, int space = 0, float scale = 1f, float? depth = null)
         {
-            List<Bounds> bounds = new List<Bounds>();
-            Bounds bound;
+            List<GameManager.Bounds> bounds = new List<GameManager.Bounds>();
+            GameManager.Bounds bound;
 
              // [新增] 安全检查：验证Session及其SpriteBatch
             if (Session.Current == null || Session.Current.SpriteBatch == null)
@@ -171,10 +221,28 @@ namespace GameManager
                 return bounds;
             }
 
+            // [新增] 多线程保护：并在AI计算时禁止绘制文本，防止 VertexBuffer NRE
+            if (Session.Current.IsWorking) return bounds;
+
+            // 🔥 技术性修复：防御式检查
+            if (Session.Current.SpriteBatch == null || Session.Current.SpriteBatch.GraphicsDevice == null || Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
+            {
+                return bounds;
+            }
+
+            if (Session.Current.SpriteBatch.GraphicsDevice != Platform.GraphicsDevice)
+            {
+                return bounds; // 不一致，跳过
+            }
+
+            var font = FontManager.Instance.GetFont(pair.Size);
             if (font == null)
             {
                 Init(pair.Name, pair.Size);
+                font = FontManager.Instance.GetFont(pair.Size);
             }
+
+            if (font == null) return bounds;
 
             text = text.Replace("\r\n", "\n").Replace("\r", "\n");
 
@@ -186,84 +254,141 @@ namespace GameManager
                 {
                     var te = texs[i];
 
-                    bound = font.DrawStringReturnBounds(Session.Current.SpriteBatch, te, pos + new Vector2(0, i * pair.Size * scale), color, new Vector2(scale, scale), depth == null ? 0 : (float)depth);
-                    if (scale != 1f)   //当字体的缩放倍数不为一时，相应的字体范围也要乘以缩放倍数，字体范围才准确
-                    {
-                        bound.X2 = bound.X + bound.Width * scale;
-                        bound.Y2 = bound.Y + bound.Height * scale;
-                    }
+                    // Use FontStashSharp to draw text and calculate bounds
+                    var drawPos = pos + new Vector2(0, i * pair.Size * scale);
+                    // Use FontManager to draw
+                    FontManager.Instance.DrawString(Session.Current.SpriteBatch, te, drawPos, color, scale, depth == null ? 0 : (float)depth);
+                    
+                    // Calculate bounds
+                    var textSize = FontManager.Instance.MeasureString(te, scale);
+                    bound = new GameManager.Bounds(drawPos.X, drawPos.Y, drawPos.X + textSize.X, drawPos.Y + textSize.Y);
                     bounds.Add(bound);
-
                 }
             }
             catch (Exception ex)
             {
+                // 🔥 检测GPU设备移除异常
+                if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                    ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                {
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
                  System.Diagnostics.Debug.WriteLine($"[TextManager] Exception in DrawTextsReturnBounds: {ex.Message}");
+                 FontManager.Instance.Reset(); // 🔧 自愈
             }
 
             return bounds;
-            //Session.Current.SpriteBatch.Draw(font.Texture, pos, null, color, 0f, Vector2.Zero, scale, Microsoft.Xna.Framework.Graphics.SpriteEffects.None, depth == null ? 0 : (float)depth);
         }
-        public static List<Bounds> DrawTextsReturnBounds(SpriteBatch batch, string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, Microsoft.Xna.Framework.Color color, int space = 0, float scale = 1f, float? depth = null)
+        public static List<GameManager.Bounds> DrawTextsReturnBounds(SpriteBatch batch, string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, Microsoft.Xna.Framework.Color color, int space = 0, float scale = 1f, float? depth = null)
         {
-            List<Bounds> bounds = new List<Bounds>();
-            Bounds bound;
+            List<GameManager.Bounds> bounds = new List<GameManager.Bounds>();
+            GameManager.Bounds bound;
+            
+            // 🔥 技术性修复：防御式检查
+            if (batch == null || batch.GraphicsDevice == null || Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
+            {
+                return bounds;
+            }
+
+            // [新增] 多线程保护：并在AI计算时禁止绘制文本，防止 VertexBuffer NRE
+            if (Session.Current.IsWorking) return bounds;
+
+            if (batch.GraphicsDevice != Platform.GraphicsDevice)
+            {
+                return bounds; // 不一致，跳过
+            }
+            
+            var font = FontManager.Instance.GetFont(pair.Size);
             if (font == null)
             {
                 Init(pair.Name, pair.Size);
+                font = FontManager.Instance.GetFont(pair.Size);
             }
+
+            if (font == null) return bounds;
 
             text = text.Replace("\r\n", "\n").Replace("\r", "\n");
 
             var texs = text.Split('\n');
 
-            for (int i = 0; i < texs.Length; i++)
+            try
             {
-                var te = texs[i];
-
-                bound = font.DrawStringReturnBounds(batch, te, pos + new Vector2(0, i * pair.Size * scale), color, new Vector2(scale, scale), depth == null ? 0 : (float)depth);
-                if (scale != 1f)   //当字体的缩放倍数不为一时，相应的字体范围也要乘以缩放倍数，字体范围才准确
+                for (int i = 0; i < texs.Length; i++)
                 {
-                    bound.X2 = bound.X + bound.Width * scale;
-                    bound.Y2 = bound.Y + bound.Height * scale;
-                }
-                bounds.Add(bound);
+                    var te = texs[i];
 
+                    // Use FontStashSharp to draw text and calculate bounds
+                    var drawPos = pos + new Vector2(0, i * pair.Size * scale);
+                    // Use FontManager to draw
+                    FontManager.Instance.DrawString(batch, te, drawPos, color, scale, depth == null ? 0 : (float)depth);
+                    
+                    // Calculate bounds
+                    var textSize = FontManager.Instance.MeasureString(te, scale);
+                    bound = new GameManager.Bounds(drawPos.X, drawPos.Y, drawPos.X + textSize.X, drawPos.Y + textSize.Y);
+                    bounds.Add(bound);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 🔥 检测GPU设备移除异常
+                if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                    ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                {
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[TextManager] DrawTextsReturnBounds (batch) 异常: {ex.Message}");
+                FontManager.Instance.Reset(); // 🔧 自愈
             }
 
             return bounds;
-            //Session.Current.SpriteBatch.Draw(font.Texture, pos, null, color, 0f, Vector2.Zero, scale, Microsoft.Xna.Framework.Graphics.SpriteEffects.None, depth == null ? 0 : (float)depth);
         }
 
-        public static List<Bounds> CalcTextsBounds(string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, int space = 0, float scale = 1f, float? depth = null)
+        public static List<GameManager.Bounds> CalcTextsBounds(string text, FontPair pair, Microsoft.Xna.Framework.Vector2 pos, int space = 0, float scale = 1f, float? depth = null)
         {
-            List<Bounds> bounds = new List<Bounds>();
-            Bounds bound;
-            if (font == null)
+            List<GameManager.Bounds> bounds = new List<GameManager.Bounds>();
+            try
             {
-                Init(pair.Name, pair.Size);
-            }
-
-            text = text.Replace("\r\n", "\n").Replace("\r", "\n");
-
-            var texs = text.Split('\n');
-
-            for (int i = 0; i < texs.Length; i++)
-            {
-                var te = texs[i];
-
-                bound = font.CalcStringBounds(te, pos + new Vector2(0, i * pair.Size * scale), new Vector2(scale, scale));
-                if (scale != 1f)   //当字体的缩放倍数不为一时，相应的字体范围也要乘以缩放倍数，字体范围才准确
+                GameManager.Bounds bound;
+                var font = FontManager.Instance.GetFont(pair.Size);
+                if (font == null)
                 {
-                    bound.X2 = bound.X + bound.Width * scale;
-                    bound.Y2 = bound.Y + bound.Height * scale;
+                    Init(pair.Name, pair.Size);
+                    font = FontManager.Instance.GetFont(pair.Size);
                 }
-                bounds.Add(bound);
 
+                if (font == null) return bounds;
+
+                text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+
+                var texs = text.Split('\n');
+
+                for (int i = 0; i < texs.Length; i++)
+                {
+                    var te = texs[i];
+
+                    // Use FontManager to calculate bounds
+                    var drawPos = pos + new Vector2(0, i * pair.Size * scale);
+                    var textSize = FontManager.Instance.MeasureString(te, scale);
+                    bound = new GameManager.Bounds(drawPos.X, drawPos.Y, drawPos.X + textSize.X, drawPos.Y + textSize.Y);
+                    bounds.Add(bound);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 🔥 检测GPU设备移除异常
+                if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                    ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                {
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[TextManager] CalcTextsBounds 异常: {ex.Message}");
+                FontManager.Instance.Reset(); // 🔧 自愈：发生异常时重置字体
             }
 
             return bounds;
-            //Session.Current.SpriteBatch.Draw(font.Texture, pos, null, color, 0f, Vector2.Zero, scale, Microsoft.Xna.Framework.Graphics.SpriteEffects.None, depth == null ? 0 : (float)depth);
         }
 
         /// <summary>
@@ -276,41 +401,66 @@ namespace GameManager
         /// <returns>返回经过自动换行处理过的文字</returns>
         public static string HandleAutoWrap(string text, FontPair pair, float lineWidth, float scale)
         {
-            Bounds bound;
-            string autoWrapText = null;//换行后的文字
-            if (font == null)
+            try 
             {
-                Init(pair.Name, pair.Size);
-            }
-
-            text = text.Replace("\r\n", "\n").Replace("\r", "\n");
-
-            var texs = text.Split('\n');
-
-            int currentIndex;//指向在一行文字内当前指向的处理到第几个字的索引
-            string currentLine;//当前行需判断的文字
-            for (int i = 0; i < texs.Length; i++)
-            {
-                currentLine = null;
-                var te = texs[i];
-                currentIndex = 0;
-                for (int j = 0; j < te.Length; j++)
+                GameManager.Bounds bound;
+                string autoWrapText = null;//换行后的文字
+                
+                var font = FontManager.Instance.GetFont(pair.Size);
+                if (font == null)
                 {
-
-                    currentLine = te.Substring(currentIndex, j - currentIndex + 1);//取出当前索引位置前的所有文字用于判断这些文字是否超过行宽度
-                    bound = font.CalcStringBounds(currentLine.ToString(), new Vector2(0, i * pair.Size * scale), new Vector2(scale, scale));
-
-                    if (bound.Width * scale > lineWidth)//如果当前这些文字超过行宽的
-                    {
-                        autoWrapText += (currentLine.Substring(0, currentLine.Length - 1) + '\n');//换行，并将当前行所有文字存入修改后的自动换行变量中
-                        currentIndex = j;
-                        j--;//当前的字超过行宽度，需要倒回去一个字开始继续处理
-                    }
+                    Init(pair.Name, pair.Size);
+                    font = FontManager.Instance.GetFont(pair.Size);
                 }
 
-                autoWrapText += (currentLine + '\n');//将没有超界的文字加入总文字内
+                if (font == null) return text; // 初始化失败直接返回原文本
+
+                text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+
+                var texs = text.Split('\n');
+
+                int currentIndex;//指向在一行文字内当前指向的处理到第几个字的索引
+                string currentLine;//当前行需判断的文字
+                for (int i = 0; i < texs.Length; i++)
+                {
+                    currentLine = null;
+                    var te = texs[i];
+                    currentIndex = 0;
+                    for (int j = 0; j < te.Length; j++)
+                    {
+
+                        currentLine = te.Substring(currentIndex, j - currentIndex + 1);//取出当前索引位置前的所有文字用于判断这些文字是否超过行宽度
+                        // Use FontManager to calculate bounds
+                        var drawPos = new Vector2(0, i * pair.Size * scale);
+                        // Use scale passed in
+                        var textSize = FontManager.Instance.MeasureString(currentLine, scale);
+                        bound = new GameManager.Bounds(drawPos.X, drawPos.Y, drawPos.X + textSize.X, drawPos.Y + textSize.Y);
+
+                        if (bound.Width > lineWidth)//如果当前这些文字超过行宽的
+                        {
+                            autoWrapText += (currentLine.Substring(0, currentLine.Length - 1) + '\n');//换行，并将当前行所有文字存入修改后的自动换行变量中
+                            currentIndex = j;
+                            j--;//当前的字超过行宽度，需要倒回去一个字开始继续处理
+                        }
+                    }
+
+                    autoWrapText += (currentLine + '\n');//将没有超界的文字加入总文字内
+                }
+                return autoWrapText;
             }
-            return autoWrapText;
+            catch (Exception ex)
+            {
+                // 🔥 检测GPU设备移除异常
+                if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                    ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                {
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[TextManager] HandleAutoWrap 异常: {ex.Message}");
+                FontManager.Instance.Reset(); // 🔧 自愈
+                return text;
+            }
         }
         /*
 
@@ -792,6 +942,12 @@ private static Texture2D RenderTexture2D(char c, FontFace fontFace, FontPair pai
     }
     catch (Exception ex)
     {
+        // 🔥 检测GPU设备移除异常
+        if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+            ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+        {
+            CacheManager.MarkDeviceLost(ex);
+        }
         return null;
     }
 }

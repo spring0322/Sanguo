@@ -5,7 +5,8 @@ using System.Runtime.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 根本修复：移除 [DataContract]，添加 [JsonConverter]
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class FactionList : GameObjectList
     {
         public void AddFactionWithEvent(Faction faction, bool add = true)
@@ -29,8 +30,17 @@ namespace GameObjects
 
         public void ApplyInfluences()
         {
-            foreach (Faction faction in base.GameObjects)
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Faction in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Faction faction = base.GameObjects[i] as Faction;
+                if (faction == null)
+                {
+                    throw new InvalidOperationException($"FactionList 中存在非 Faction 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
                 faction.ApplyTechniques();
             }
         }

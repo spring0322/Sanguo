@@ -12,7 +12,8 @@ namespace GameObjects
         BeAttacked,
         Cast,
         BeCasted,
-        SiegeCoordination
+        SiegeCoordination,
+        Transport
     }
 }
 

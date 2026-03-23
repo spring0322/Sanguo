@@ -1,4 +1,4 @@
-﻿using GameFreeText;
+using GameFreeText;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -42,9 +42,10 @@ namespace youcelanPlugin
             {
                 CacheManager.Draw(this.tabList.tabbuttonselectedTexture, this.Position, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.35f);
                 this.Text.Draw(Color.White, 0.3499f);
-                foreach (Column column in this.Columns)
+                
+                for (int i = 0; i < this.Columns.Count; i++)
                 {
-                    column.Draw();
+                    this.Columns[i].Draw();
                 }
             }
             else
@@ -115,13 +116,13 @@ namespace youcelanPlugin
         {
             if (this.selected)
             {
-                int x = this.tabList.RealClient.X;
+                int x = this.tabList.RealClient.X + 4; // Add 4 to prevent left arrow clipping due to Column.DisplayOffset of -4
                 this.tabList.FullLowerClient.X = x;
                 this.tabList.FullLowerClient.Y = this.tabList.VisibleLowerClient.Y;
-                foreach (Column column in this.Columns)
+                for (int i = 0; i < this.Columns.Count; i++)
                 {
-                    column.ReCalculate(this.listKind.ColumnsTop, ref x);
-                    column.ColumnTextList.DisplayOffset = new Point(0, yOffset);
+                    this.Columns[i].ReCalculate(this.listKind.ColumnsTop, ref x);
+                    this.Columns[i].ColumnTextList.DisplayOffset = new Point(0, yOffset);
                 }
                 this.SortTheKeyColumn();
                 this.tabList.FullLowerClient.Width = x - this.tabList.RealClient.X;
@@ -136,17 +137,17 @@ namespace youcelanPlugin
 
         internal void ResetAllTextures()
         {
-            foreach (Column column in this.Columns)
+            for (int i = 0; i < this.Columns.Count; i++)
             {
-                column.ResetAllTextures();
+                this.Columns[i].ResetAllTextures();
             }
         }
 
         internal void ResetEditableTextures()
         {
-            foreach (Column column in this.Columns)
+            for (int i = 0; i < this.Columns.Count; i++)
             {
-                column.ResetEditableTextures();
+                this.Columns[i].ResetEditableTextures();
             }
         }
 
@@ -206,7 +207,8 @@ namespace youcelanPlugin
                 if (this.selected != value)
                 {
                     this.selected = value;
-                    this.ReCalculate(this.listKind.ResetAllOtherTabs(this));
+                    this.listKind.ResetAllOtherTabs(this);
+                    this.ReCalculate(0); // 传递一个默认值
                     this.listKind.SelectedTab = this;
                 }
             }

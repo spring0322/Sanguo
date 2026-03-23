@@ -1,0 +1,376 @@
+using NUnit.Framework;
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Diagnostics;
+using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 端到端测试 - 验证完整的序列化系统工作流
+    /// Task 13.1: 使用真实的游戏存档测试完整流程
+    /// Requirements: 所有需求
+    /// </summary>
+    [TestFixture]
+    public class EndToEndTests : TestBase
+    {
+        private SerializationManager _serializationManager;
+        private string _testSaveDirectory;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            // 初始化序列化管理器
+            _serializationManager = new SerializationManager();
+            
+            // 创建测试存档目录
+            _testSaveDirectory = Path.Combine(Path.GetTempPath(), "WorldOfTheThreeKingdoms_E2E_Tests", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_testSaveDirectory);
+            
+            TestContext.WriteLine($"测试存档目录: {_testSaveDirectory}");
+        }
+
+        [TearDown]
+        public override void TearDown()
+        {
+            // 清理测试存档目录
+            try
+            {
+                if (Directory.Exists(_testSaveDirectory))
+                {
+                    Directory.Delete(_testSaveDirectory, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                TestContext.WriteLine($"清理测试目录失败: {ex.Message}");
+            }
+            
+            base.TearDown();
+        }
+
+        /// <summary>
+        /// 测试完整的保存和加载流程
+        /// Validates: Requirements 1.1, 1.2, 1.3, 2.1, 2.2
+        /// </summary>
+        [Test]
+        public async Task EndToEnd_SaveAndLoad_ShouldPreserveGameState()
+        {
+            // Arrange - 创建一个简单的游戏场景
+            var originalScenario = CreateTestGameScenario();
+            var savePath = Path.Combine(_testSaveDirectory, "test_save.sav.gz");
+            
+            TestContext.WriteLine($"原始场景: {originalScenario.Persons.Count} 个人物, {originalScenario.Factions.Count} 个势力");
+
+            // Act - 保存游戏
+            var saveStopwatch = Stopwatch.StartNew();
+            await Task.Run(() => _serializationManager.SaveGame(originalScenario, savePath));
+            saveStopwatch.Stop();
+            
+            TestContext.WriteLine($"保存耗时: {saveStopwatch.ElapsedMilliseconds}ms");
+
+            // 验证文件已创建
+            Assert.That(File.Exists(savePath), Is.True, "存档文件应该被创建");
+            Assert.That(File.Exists(savePath + ".meta"), Is.True, "元数据文件应该被创建");
+            
+            var saveFileSize = new FileInfo(savePath).Length;
+            var metaFileSize = new FileInfo(savePath + ".meta").Length;
+            TestContext.WriteLine($"存档文件大小: {saveFileSize} bytes");
+            TestContext.WriteLine($"元数据文件大小: {metaFileSize} bytes");
+            
+            // 验证元数据文件大小 < 1KB (Requirement 13.5)
+            Assert.That(metaFileSize, Is.LessThan(1024), "元数据文件应该小于1KB");
+
+            // Act - 加载游戏
+            var loadStopwatch = Stopwatch.StartNew();
+            var loadedScenario = await Task.Run(() => _serializationManager.LoadGame(savePath));
+            loadStopwatch.Stop();
+            
+            TestContext.WriteLine($"加载耗时: {loadStopwatch.ElapsedMilliseconds}ms");
+            TestContext.WriteLine($"加载场景: {loadedScenario.Persons.Count} 个人物, {loadedScenario.Factions.Count} 个势力");
+
+            // Assert - 验证游戏状态保持一致
+            Assert.That(loadedScenario, Is.Not.Null, "加载的场景不应为null");
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(originalScenario.Persons.Count), 
+                "人物数量应该一致");
+            Assert.That(loadedScenario.Factions.Count, Is.EqualTo(originalScenario.Factions.Count), 
+                "势力数量应该一致");
+            Assert.That(loadedScenario.Architectures.Count, Is.EqualTo(originalScenario.Architectures.Count), 
+                "建筑数量应该一致");
+
+            // 验证对象引用正确恢复
+            VerifyObjectReferences(loadedScenario);
+            
+            // 验证游戏可以继续运行
+            Assert.DoesNotThrow(() => SimulateGameContinuation(loadedScenario), 
+                "加载后游戏应该可以正常继续");
+        }
+
+        /// <summary>
+        /// 测试大型存档的性能
+        /// Validates: Requirements 3.3, 3.4, 7.1, 7.2, 7.3
+        /// </summary>
+        [Test]
+        public async Task EndToEnd_LargeScenario_ShouldMeetPerformanceRequirements()
+        {
+            // Arrange - 创建大型游戏场景 (1000+ 对象)
+            var largeScenario = CreateLargeGameScenario(personCount: 500, factionCount: 20, architectureCount: 100);
+            var savePath = Path.Combine(_testSaveDirectory, "large_save.sav.gz");
+            
+            var totalObjects = largeScenario.Persons.Count + largeScenario.Factions.Count + 
+                              largeScenario.Architectures.Count;
+            TestContext.WriteLine($"大型场景: 总共 {totalObjects} 个对象");
+
+            // Act & Assert - 保存性能测试
+            var saveStopwatch = Stopwatch.StartNew();
+            await Task.Run(() => _serializationManager.SaveGame(largeScenario, savePath));
+            saveStopwatch.Stop();
+            
+            TestContext.WriteLine($"大型场景保存耗时: {saveStopwatch.ElapsedMilliseconds}ms");
+            Assert.That(saveStopwatch.ElapsedMilliseconds, Is.LessThan(5000), 
+                "大型场景保存应该在5秒内完成");
+
+            // Act & Assert - 加载性能测试
+            var loadStopwatch = Stopwatch.StartNew();
+            var loadedScenario = await Task.Run(() => _serializationManager.LoadGame(savePath));
+            loadStopwatch.Stop();
+            
+            TestContext.WriteLine($"大型场景加载耗时: {loadStopwatch.ElapsedMilliseconds}ms");
+            Assert.That(loadStopwatch.ElapsedMilliseconds, Is.LessThan(5000), 
+                "大型场景加载应该在5秒内完成");
+
+            // 验证数据完整性
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(largeScenario.Persons.Count));
+            Assert.That(loadedScenario.Factions.Count, Is.EqualTo(largeScenario.Factions.Count));
+            Assert.That(loadedScenario.Architectures.Count, Is.EqualTo(largeScenario.Architectures.Count));
+            
+            // 验证文件压缩效果
+            var fileSize = new FileInfo(savePath).Length;
+            TestContext.WriteLine($"压缩后文件大小: {fileSize / 1024.0:F2} KB");
+        }
+
+        /// <summary>
+        /// 测试多次保存和加载的稳定性
+        /// Validates: Requirements 1.4, 2.1, 2.2
+        /// </summary>
+        [Test]
+        public async Task EndToEnd_MultipleSaveLoadCycles_ShouldMaintainStability()
+        {
+            // Arrange
+            var scenario = CreateTestGameScenario();
+            var cycles = 5;
+            
+            TestContext.WriteLine($"执行 {cycles} 次保存/加载循环");
+
+            // Act & Assert - 多次保存和加载
+            for (int i = 0; i < cycles; i++)
+            {
+                var savePath = Path.Combine(_testSaveDirectory, $"cycle_{i}.sav.gz");
+                
+                // 保存
+                await Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+                Assert.That(File.Exists(savePath), Is.True, $"循环 {i}: 存档文件应该被创建");
+                
+                // 加载
+                scenario = await Task.Run(() => _serializationManager.LoadGame(savePath));
+                Assert.That(scenario, Is.Not.Null, $"循环 {i}: 场景应该成功加载");
+                
+                // 验证数据完整性
+                Assert.That(scenario.Persons.Count, Is.GreaterThan(0), $"循环 {i}: 应该有人物数据");
+                Assert.That(scenario.Factions.Count, Is.GreaterThan(0), $"循环 {i}: 应该有势力数据");
+                
+                TestContext.WriteLine($"循环 {i + 1}/{cycles} 完成");
+            }
+            
+            // 最终验证
+            VerifyObjectReferences(scenario);
+            TestContext.WriteLine("所有循环完成，数据保持稳定");
+        }
+
+        /// <summary>
+        /// 测试并发保存和加载
+        /// Validates: Requirements 2.2, 2.3
+        /// </summary>
+        [Test]
+        public async Task EndToEnd_ConcurrentSaveLoad_ShouldHandleCorrectly()
+        {
+            // Arrange
+            var scenarios = Enumerable.Range(0, 3)
+                .Select(i => CreateTestGameScenario())
+                .ToList();
+            
+            TestContext.WriteLine($"准备并发测试 {scenarios.Count} 个场景");
+
+            // Act - 并发保存
+            var saveTasks = scenarios.Select((scenario, index) =>
+            {
+                var savePath = Path.Combine(_testSaveDirectory, $"concurrent_{index}.sav.gz");
+                return Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+            }).ToArray();
+            
+            await Task.WhenAll(saveTasks);
+            TestContext.WriteLine("并发保存完成");
+
+            // Act - 并发加载
+            var loadTasks = Enumerable.Range(0, scenarios.Count)
+                .Select(index =>
+                {
+                    var savePath = Path.Combine(_testSaveDirectory, $"concurrent_{index}.sav.gz");
+                    return Task.Run(() => _serializationManager.LoadGame(savePath));
+                }).ToArray();
+            
+            var loadedScenarios = await Task.WhenAll(loadTasks);
+            TestContext.WriteLine("并发加载完成");
+
+            // Assert - 验证所有场景都正确加载
+            Assert.That(loadedScenarios.Length, Is.EqualTo(scenarios.Count), "所有场景都应该成功加载");
+            
+            for (int i = 0; i < loadedScenarios.Length; i++)
+            {
+                Assert.That(loadedScenarios[i], Is.Not.Null, $"场景 {i} 不应为null");
+                Assert.That(loadedScenarios[i].Persons.Count, Is.EqualTo(scenarios[i].Persons.Count), 
+                    $"场景 {i} 人物数量应该一致");
+            }
+        }
+
+        #region Helper Methods
+
+        private GameScenario CreateTestGameScenario()
+        {
+            var scenario = new GameScenario();
+            
+            // 创建测试势力
+            var faction1 = new Faction { ID = 1, Name = "测试势力1" };
+            var faction2 = new Faction { ID = 2, Name = "测试势力2" };
+            scenario.Factions.Add(faction1.ID, faction1);
+            scenario.Factions.Add(faction2.ID, faction2);
+            
+            // 创建测试人物
+            for (int i = 1; i <= 10; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"测试人物{i}",
+                    BelongedFaction = i <= 5 ? faction1 : faction2
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            // 创建测试建筑
+            for (int i = 1; i <= 5; i++)
+            {
+                var architecture = new Architecture 
+                { 
+                    ID = i, 
+                    Name = $"测试城市{i}",
+                    BelongedFaction = i <= 3 ? faction1 : faction2
+                };
+                scenario.Architectures.Add(architecture.ID, architecture);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateLargeGameScenario(int personCount, int factionCount, int architectureCount)
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            for (int i = 1; i <= factionCount; i++)
+            {
+                var faction = new Faction { ID = i, Name = $"势力{i}" };
+                scenario.Factions.Add(faction.ID, faction);
+            }
+            
+            // 创建人物
+            for (int i = 1; i <= personCount; i++)
+            {
+                var factionId = (i % factionCount) + 1;
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            // 创建建筑
+            for (int i = 1; i <= architectureCount; i++)
+            {
+                var factionId = (i % factionCount) + 1;
+                var architecture = new Architecture 
+                { 
+                    ID = i, 
+                    Name = $"城市{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Architectures.Add(architecture.ID, architecture);
+            }
+            
+            return scenario;
+        }
+
+        private void VerifyObjectReferences(GameScenario scenario)
+        {
+            // 验证人物的势力引用
+            foreach (var person in scenario.Persons.Values)
+            {
+                if (person.BelongedFaction != null)
+                {
+                    Assert.That(scenario.Factions.ContainsKey(person.BelongedFaction.ID), Is.True,
+                        $"人物 {person.Name} 的势力引用应该有效");
+                }
+            }
+            
+            // 验证建筑的势力引用
+            foreach (var architecture in scenario.Architectures.Values)
+            {
+                if (architecture.BelongedFaction != null)
+                {
+                    Assert.That(scenario.Factions.ContainsKey(architecture.BelongedFaction.ID), Is.True,
+                        $"建筑 {architecture.Name} 的势力引用应该有效");
+                }
+            }
+            
+            TestContext.WriteLine("对象引用验证通过");
+        }
+
+        private void SimulateGameContinuation(GameScenario scenario)
+        {
+            // 模拟游戏继续运行的基本操作
+            
+            // 访问人物数据
+            var firstPerson = scenario.Persons.Values.FirstOrDefault();
+            if (firstPerson != null)
+            {
+                var factionName = firstPerson.BelongedFaction?.Name ?? "无";
+                TestContext.WriteLine($"第一个人物: {firstPerson.Name}, 势力: {factionName}");
+            }
+            
+            // 访问势力数据
+            var firstFaction = scenario.Factions.Values.FirstOrDefault();
+            if (firstFaction != null)
+            {
+                TestContext.WriteLine($"第一个势力: {firstFaction.Name}");
+            }
+            
+            // 访问建筑数据
+            var firstArchitecture = scenario.Architectures.Values.FirstOrDefault();
+            if (firstArchitecture != null)
+            {
+                var factionName = firstArchitecture.BelongedFaction?.Name ?? "无";
+                TestContext.WriteLine($"第一个建筑: {firstArchitecture.Name}, 势力: {factionName}");
+            }
+        }
+
+        #endregion
+    }
+}

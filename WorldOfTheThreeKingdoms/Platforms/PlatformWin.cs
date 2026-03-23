@@ -7,21 +7,18 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.IsolatedStorage;
 using System.Linq;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Windows.Forms;
+using System.Threading.Tasks;
 using System.Xml;
 using System.IO.Compression;
-using Message = System.Windows.Forms.Message;
-using NativeWindow = System.Windows.Forms.NativeWindow;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Drawing.Drawing2D;
+//using System.Drawing;
+//using System.Drawing.Imaging;
+//using System.Drawing.Drawing2D;
 using System.Management;
 using System.Net.NetworkInformation;
 using SharpCompress.Common;
@@ -55,7 +52,11 @@ namespace Platforms
 
         public new bool DisplayMetroStart = false;
 
-        public static WindowInputCapturer wic;
+        public static object wic; // WindowInputCapturer commented out
+
+        // 🔥 性能优化：文件存在性缓存（避免重复 File.Exists() 调用）
+        private static readonly Dictionary<string, bool> _fileExistsCache = [];
+        private static readonly object _fileExistsCacheLock = new object();
 
         /// <summary>
         /// 內存使用占用
@@ -101,7 +102,7 @@ namespace Platforms
         {
             get
             {
-                return Assembly.GetExecutingAssembly().Location;
+                return AppContext.BaseDirectory;
             }
         }
 
@@ -117,15 +118,25 @@ namespace Platforms
         {
             get
             {
-                return WindowInputCapturer.Enable;
+                return false; // WindowInputCapturer.Enable commented out
             }
             set
             {
-                WindowInputCapturer.Enable = value;
+                // WindowInputCapturer.Enable = value; commented out
             }
         }
 
         public new bool KeyBoardAvailable = true;
+
+        // 🔥 性能优化：清理文件存在性缓存（场景切换时调用）
+        public static void ClearFileExistsCache()
+        {
+            lock (_fileExistsCacheLock)
+            {
+                _fileExistsCache.Clear();
+                System.Diagnostics.Debug.WriteLine("[Platform] 文件存在性缓存已清理");
+            }
+        }
 
         static GraphicsDeviceManager GraphicsDeviceManager = null;
 
@@ -142,12 +153,77 @@ namespace Platforms
             GraphicsDeviceManager = new GraphicsDeviceManager(MainGame);
 
             GraphicsDeviceManager.SupportedOrientations = DisplayOrientation.LandscapeLeft | DisplayOrientation.LandscapeRight;
+            
+            // 🔥 修复：在创建时立即设置正确的初始窗口尺寸
+            // 不设置会导致 MonoGame 使用默认值 800x480，让 LoadContent 读到错误的 Viewport
+            string resolution = Setting.Current?.Resolution;
+            
+            // 首次启动或配置为空：根据屏幕分辨率自动选择合适的窗口大小
+            if (String.IsNullOrEmpty(resolution) || !resolution.Contains('*'))
+            {
+                try
+                {
+                    var displayMode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+                    int screenW = displayMode.Width;
+                    int screenH = displayMode.Height;
+                    
+                    // 预设的 16:9 分辨率列表（从大到小）
+                    string[] candidates = { "2560*1440", "1920*1080", "1600*900", "1368*768", "1280*720" };
+                    
+                    // 选择不超过屏幕 85% 的最大分辨率
+                    int maxW = (int)(screenW * 0.85);
+                    int maxH = (int)(screenH * 0.85);
+                    
+                    resolution = "1280*720"; // 保底
+                    foreach (string candidate in candidates)
+                    {
+                        string[] p = candidate.Split('*');
+                        int cw = int.Parse(p[0]);
+                        int ch = int.Parse(p[1]);
+                        if (cw <= maxW && ch <= maxH)
+                        {
+                            resolution = candidate;
+                            break;
+                        }
+                    }
+                    
+                    // 保存到配置，下次启动就不需要再检测了
+                    if (Setting.Current != null)
+                    {
+                        Setting.Current.Resolution = resolution;
+                    }
+                    System.Diagnostics.Debug.WriteLine($"[InitGraphicsDeviceManager] 首次启动自适应: 屏幕{screenW}x{screenH}, 选择窗口{resolution}");
+                }
+                catch
+                {
+                    resolution = PreferResolution;  // 异常时用默认 "1368*768"
+                }
+            }
+            
+            if (!String.IsNullOrEmpty(resolution) && resolution.Contains('*'))
+            {
+                string[] parts = resolution.Split('*');
+                if (parts.Length == 2 && int.TryParse(parts[0], out int w) && int.TryParse(parts[1], out int h) && w > 0 && h > 0)
+                {
+                    GraphicsDeviceManager.PreferredBackBufferWidth = w;
+                    GraphicsDeviceManager.PreferredBackBufferHeight = h;
+                    System.Diagnostics.Debug.WriteLine($"[InitGraphicsDeviceManager] 初始窗口尺寸: {w}x{h}");
+                }
+            }
         }
 
         public static void SetGraphicsWidthHeight(int width, int height)
         {
-            GraphicsDeviceManager.PreferredBackBufferWidth = width;  //1024;
-            GraphicsDeviceManager.PreferredBackBufferHeight = height; //680;
+            System.Diagnostics.Debug.WriteLine($"[SetGraphicsWidthHeight] 请求设置窗口尺寸: {width}x{height}");
+            
+            GraphicsDeviceManager.PreferredBackBufferWidth = width;
+            GraphicsDeviceManager.PreferredBackBufferHeight = height;
+            
+            // 🔥 关键修复：立即应用更改，确保窗口尺寸生效
+            // 之前缺少这行，导致窗口尺寸一直是默认的 800x480
+            GraphicsDeviceManager.ApplyChanges();
+            
+            System.Diagnostics.Debug.WriteLine($"[SetGraphicsWidthHeight] ApplyChanges() 完成");
         }
 
         public static void GraphicsApplyChanges()
@@ -164,16 +240,11 @@ namespace Platforms
         {
             MainGame.Window.AllowUserResizing = true;
 
-            Form xnaWindow = (Form)Control.FromHandle((MainGame.Window.Handle));
-
-            xnaWindow.MouseWheel += (sender, e) =>
-            {
-                InputManager.PinchMove = Convert.ToSingle(e.Delta) / 480;
-            };
-
-            xnaWindow.WindowState = FormWindowState.Maximized;
-
-            //Mouse.WindowHandle = xnaWindow.Handle; // Game1.Window.Handle;  // Season.m_RenderControl.FindForm().Handle
+            // Use MonoGame's built-in mouse wheel handling instead of WinForms
+            // Mouse wheel input is handled through InputManager in MonoGame
+            
+            // Note: Window maximization and mouse wheel events are handled differently in MonoGame
+            // The game window behavior is controlled through GraphicsDeviceManager
         }
 
         //public override void SetWindowBorder(bool visible)
@@ -184,12 +255,10 @@ namespace Platforms
 
         public override Vector2 GetWorkingArea()
         {
-            Form xnaWindow = (Form)Control.FromHandle((MainGame.Window.Handle));
-            //xnaWindow.ClientRectangle
-            var ScreenArea = System.Windows.Forms.Screen.GetWorkingArea(xnaWindow);
-            int mywidth = ScreenArea.Width; //屏幕宽度 
-            int myheight = ScreenArea.Height; //屏幕高度
-            return new Vector2(mywidth, myheight);
+            // Use MonoGame's GraphicsAdapter to get screen dimensions
+            var adapter = GraphicsAdapter.DefaultAdapter;
+            var displayMode = adapter.CurrentDisplayMode;
+            return new Vector2(displayMode.Width, displayMode.Height);
         }
 
         public override void SetFullScreen(bool full)
@@ -199,25 +268,11 @@ namespace Platforms
 
         public override void SetFullScreen2(bool full)
         {
-            Form xnaWindow = (Form)Control.FromHandle((MainGame.Window.Handle));
-
-            //xnaWindow.MaximizeBox = false;
-            //xnaWindow.MinimizeBox = false;
-
-            //xnaWindow.WindowState = FormWindowState.Maximized;
-
-            //修改后的全屏代码
-            //if (full)
-            //{
-            WinHelper.RestoreFullScreen(xnaWindow.Handle);//传入窗体句柄            
-
-            //this.IsFullScreen = false;
-            //}
-            //else
-            //{
-            //    WinHelper.FullScreen(xnaWindow.Handle);
-            //    //this.IsFullScreen = true;
-            //}
+            // Use MonoGame's built-in fullscreen handling instead of WinForms
+            // This method is called for custom fullscreen behavior
+            
+            // Note: MonoGame handles fullscreen through GraphicsDeviceManager.IsFullScreen
+            // Custom window manipulation should use MonoGame APIs when possible
         }
 
         /// <summary>
@@ -297,7 +352,7 @@ namespace Platforms
         {
             get
             {
-                return Application.StartupPath + "\\";
+                return AppDomain.CurrentDomain.BaseDirectory + "\\";
             }
         }
         /// <summary>
@@ -326,7 +381,22 @@ namespace Platforms
 
             lock (Platform.IoLock)
             {
-                return File.ReadAllText(res);
+                // 🔥 修复：检查文件是否存在
+                if (!File.Exists(res))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LoadText] ❌ 文件不存在: {res}");
+                    return null;
+                }
+                
+                string content = File.ReadAllText(res);
+                
+                // 🔥 修复：检查读取的内容
+                if (string.IsNullOrEmpty(content))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LoadText] ⚠️ 文件内容为空: {res}");
+                }
+                
+                return content;
             }
         }
 
@@ -562,14 +632,24 @@ namespace Platforms
             string basePath = Path.HasExtension(path) ? Path.ChangeExtension(path, null) : path;
             
             // 按优先级尝试不同格式：DDS > PNG > JPG
-            string[] extensions = { ".dds", ".png", ".jpg" };
+            string[] extensions = [".dds", ".png", ".jpg"];
             
             foreach (string ext in extensions)
             {
                 string fullPath = basePath + ext;
                 
-                // 检查文件是否存在
-                bool fileExists = isUser ? UserFileExist(fullPath) : File.Exists(fullPath);
+                // 🔥 性能优化：使用缓存检查文件是否存在（避免重复 I/O）
+                bool fileExists;
+                lock (_fileExistsCacheLock)
+                {
+                    if (!_fileExistsCache.TryGetValue(fullPath, out fileExists))
+                    {
+                        // 首次检查，执行实际 I/O 并缓存结果
+                        fileExists = isUser ? UserFileExist(fullPath) : File.Exists(fullPath);
+                        _fileExistsCache[fullPath] = fileExists;
+                    }
+                }
+                
                 if (!fileExists) continue;
                 
                 try
@@ -593,19 +673,6 @@ namespace Platforms
                         // 如果加载成功，直接返回
                         if (texture != null)
                         {
-                            //貌似在Win7下，這個算法出錯，只能預先處理好材質了再載入了
-                            //if (MainMenuScreen.Current.btnTextureAlpha.Selected &&
-                            //    texture != null && ext == ".png" && !fullPath.Contains("Cloud"))
-                            //{
-                            //    try
-                            //    {
-                            //        GameTools.PreMultiplyAlphas(texture);
-                            //    }
-                            //    catch (Exception ex)
-                            //    {
-                            //        //WebTools.TakeWarnMsg("处理透明层级失败:" + fullPath, "PreMultiplyAlphas:" + UserApplicationDataPath + fullPath, ex);
-                            //    }
-                            //}
                             return texture;
                         }
                     }
@@ -1068,10 +1135,12 @@ namespace Platforms
         /// 獲取獨立存取文件
         /// </summary>
         /// <returns></returns>
+        /*
         private IsolatedStorageFile GetIsolatedStorageFile()
         {
             return IsolatedStorageFile.GetUserStoreForApplication();
         }
+        */
 #endregion
 
         public static void Sleep(int time)
@@ -1241,17 +1310,17 @@ namespace Platforms
 
         public override void InitInputCapturer()
         {
-            wic = new WindowInputCapturer(MainGame.Window.Handle);
+            // wic = new WindowInputCapturer(MainGame.Window.Handle); commented out
         }
 
         public override List<Character> GetChars()
         {
-            return WindowInputCapturer.myCharacters;
+            return new List<Character>(); // WindowInputCapturer.myCharacters commented out
         }
 
         public override void ClearChars()
         {
-            WindowInputCapturer.myCharacters.Clear();
+            // WindowInputCapturer.myCharacters.Clear(); commented out
         }
 
         public static void ExceptionHandler(object sender, UnhandledExceptionEventArgs args)
@@ -1287,225 +1356,143 @@ namespace Platforms
         {
             picStatus = "ChoosePicture";
 
-            //初始化一个OpenFileDialog类
-            OpenFileDialog fileDialog = new OpenFileDialog();
-
-            //如果我们要为弹出的选择框中过滤文件类型，可以设置OpenFileDialog的Filter属性。比如我们只允许用户选择.xls文件，可以作如下设置：
-            //fileDialog.Filter = "*.jpeg|*.jpg|*.png|*.gif|*.bmp";
-            fileDialog.Filter = "JPG格式（*.jpg）|*.jpg|PNG格式（*.png）|*.png|GIF格式（*.gif）|*.gif|BMP格式（*.bmp）|*.bmp";
-
-            //判断用户是否正确的选择了文件
-            if (fileDialog.ShowDialog() == DialogResult.OK)
+            // Note: OpenFileDialog requires System.Windows.Forms which is not available in .NET 8
+            // This functionality would need to be replaced with a cross-platform file picker
+            // For now, we'll provide a placeholder implementation
+            
+            // TODO: Implement cross-platform file picker using:
+            // - MonoGame.Framework.DesktopGL native dialogs
+            // - Or a third-party cross-platform file dialog library
+            
+            if (action != null)
             {
-                //获取用户选择文件的后缀名
-                string extension = Path.GetExtension(fileDialog.FileName);
-                //声明允许的后缀名
-                string[] str = new string[] { ".jpeg", ".jpg", ".png", ".gif", ".bmp" };
-                if (!str.Contains(extension.ToLower()))
-                {
-                    System.Windows.Forms.MessageBox.Show("仅能上传jpg,png,gif,bmp格式的图片！");
-                }
-                else
-                {
-                    //获取用户选择的文件，并判断文件大小不能超过5000K，fileInfo.Length是以字节为单位的
-                    FileInfo fileInfo = new FileInfo(fileDialog.FileName);
-                    if (fileInfo.Length > 5000 * 1024)
-                    {
-                        System.Windows.Forms.MessageBox.Show("上传的图片不能大于5000K");
-                    }
-                    else
-                    {
-                        byte[] bytes = null;
-
-                        lock (Platform.IoLock)
-                        {
-                            bytes = File.ReadAllBytes(fileDialog.FileName);
-                        }
-
-                        var task = new PlatformTask(() => { });
-                        task.OnStartFinish += new AsyncCallback((result) =>
-                        {
-                            if (action != null)
-                            {
-                                string avatar = "";
-                                if (action.ParamArray != null && action.ParamArray.Length > 0)
-                                {
-                                    avatar = action.ParamArray[0];
-                                }
-                                action.ParamArrayResult = new string[] { avatar + extension };
-                                action.ParamArrayResultBytes = task.ParamArrayResultBytes;
-                                action.Start();
-                            }
-                        });
-
-                        ResizeImageFile(bytes, 540 - 6, 540 - 6, true, task); //270 - 6);  //, 76 * 2, 91 * 2);
-
-                        //if (!String.IsNullOrEmpty(avatar))
-                        //{
-                        //    Season.Current.SaveUserFileStatic(avatar, photoBytes);
-                        //    if (action != null)
-                        //    {
-                        //        action.Start();
-                        //    }
-                        //}
-                        //if (Session.GameUser != null)
-                        //{
-                        //    Session.GameUser.Avatar = avatar;
-                        //    if (action != null)
-                        //    {
-                        //        action.Start();
-                        //    }
-                        //}
-                        //else
-                        //{
-                        //    throw new Exception("Session.GameUser is Null!");
-                        //}
-
-                        //MemoryStream stream = new MemoryStream(photoBytes);
-                        //ChooseTexture = Texture2D.FromStream(GraphicsDevice, stream);
-                        //在这里就可以写获取到正确文件后的代码了
-                    }
-                }
+                // Return empty result for now
+                action.ParamArrayResult = new string[] { "" };
+                action.ParamArrayResultBytes = new byte[0];
+                action.Start();
             }
         }
 
-        /// <summary>
-        /// 計算分辨率
-        /// </summary>
-        /// <param name="oldSize"></param>
-        /// <param name="targetSize"></param>
-        /// <returns></returns>
-        public static Size CalculateDimensions(Size oldSize, int targetSizeWidth, int targetSizeHeight)
-        {
-            Size newSize = new Size();
-            if (targetSizeWidth == 0 && targetSizeHeight == 0)
-            {
-                newSize = oldSize;
-            }
-            else if (targetSizeWidth != 0 && targetSizeHeight != 0)
-            {
-                newSize.Width = targetSizeWidth;
-                newSize.Height = targetSizeHeight;
-            }
-            else if (targetSizeWidth == 0)
-            {
-                newSize.Width = (int)(oldSize.Width * ((float)targetSizeHeight / (float)oldSize.Height));
-                newSize.Height = targetSizeHeight;
-            }
-            else if (targetSizeHeight == 0)
-            {
-                newSize.Width = targetSizeWidth;
-                newSize.Height = (int)(oldSize.Height * ((float)targetSizeWidth / (float)oldSize.Width));
-            }
-            return newSize;
-        }
 
-        static byte[] SavePngFromBitmap(Bitmap bitmap)
-        {
-            var imageStream = new MemoryStream();
-            using (imageStream)
-            {
-                // Save bitmap in some format.
-                bitmap.Save(imageStream, ImageFormat.Png);
-                imageStream.Position = 0;
 
-                // Do something with the memory stream. For example:
-                byte[] imageBytes = imageStream.ToArray();
-                // Save bytes to the database.
-                return imageBytes;
+        static byte[] TextureToPngBytes(Texture2D tex)
+        {
+            using (var ms = new MemoryStream())
+            {
+                tex.SaveAsPng(ms, tex.Width, tex.Height);
+                return ms.ToArray();
             }
         }
 
         public override void MirrorPicture(byte[] image, PlatformTask action)
         {
-            RotateFlipType flip = RotateFlipType.RotateNoneFlipX;
-            using (MemoryStream ms = new MemoryStream(image))
+            try
             {
-                Image img = Image.FromStream(ms);
-
-                var bmp = new Bitmap(img);
-
-                using (Graphics gfx = Graphics.FromImage(bmp))
+                using (var ms = new MemoryStream(image))
                 {
-                    gfx.Clear(System.Drawing.Color.White);
-                    gfx.DrawImage(img, 0, 0, img.Width, img.Height);
+                    using (var tex = Texture2D.FromStream(Platform.GraphicsDevice, ms))
+                    {
+                        Color[] data = new Color[tex.Width * tex.Height];
+                        tex.GetData(data);
+                        Color[] newData = new Color[tex.Width * tex.Height];
+
+                        // Flip X: Reverse pixels in each row
+                        for (int y = 0; y < tex.Height; y++)
+                        {
+                            for (int x = 0; x < tex.Width; x++)
+                            {
+                                newData[y * tex.Width + (tex.Width - 1 - x)] = data[y * tex.Width + x];
+                            }
+                        }
+
+                        using (var resultTex = new Texture2D(Platform.GraphicsDevice, tex.Width, tex.Height))
+                        {
+                            resultTex.SetData(newData);
+                            var bytes = TextureToPngBytes(resultTex);
+
+                            if (action != null)
+                            {
+                                action.ParamArrayResultBytes = bytes;
+                                action.Start();
+                            }
+                        }
+                    }
                 }
-
-                bmp.RotateFlip(flip);
-
-                var bytes = SavePngFromBitmap(bmp);
-
-                if (action != null)
-                {
-                    action.ParamArrayResultBytes = bytes;
-                    action.Start();
-                }
+            }
+            catch (Exception ex)
+            {
+                 WebTools.TakeWarnMsg("MirrorPicture failed: " + ex.Message, "MirrorPicture", ex);
             }
         }
 
         public override void RotatePicture(byte[] image, int rotate, PlatformTask action)
         {
-            RotateFlipType flip = RotateFlipType.RotateNoneFlipNone;
-            if (rotate == 0)
+             try
             {
-
-            }
-            else if (rotate == 1)
-            {
-                flip = RotateFlipType.Rotate90FlipNone;
-            }
-            else if (rotate == 2)
-            {
-                flip = RotateFlipType.Rotate180FlipNone;
-            }
-            else if (rotate == 3)
-            {
-                flip = RotateFlipType.Rotate270FlipNone;
-            }
-            using (MemoryStream ms = new MemoryStream(image))
-            {
-                Image img = Image.FromStream(ms);
-
-                var bmp = new Bitmap(img);
-
-                using (Graphics gfx = Graphics.FromImage(bmp))
+                using (var ms = new MemoryStream(image))
                 {
-                    gfx.Clear(System.Drawing.Color.White);
-                    gfx.DrawImage(img, 0, 0, img.Width, img.Height);
+                    using (var tex = Texture2D.FromStream(Platform.GraphicsDevice, ms))
+                    {
+                        Color[] data = new Color[tex.Width * tex.Height];
+                        tex.GetData(data);
+                        
+                        int newW = tex.Width;
+                        int newH = tex.Height;
+                        
+                        // 1 = 90 deg, 2 = 180 deg, 3 = 270 deg (assuming clockwise to match typical GDI+ behavior if strictly mapped)
+                        // Note: GDI+'s RotateFlipType.Rotate90FlipNone is 90 clockwise.
+                        if (rotate == 1 || rotate == 3)
+                        {
+                            newW = tex.Height;
+                            newH = tex.Width;
+                        }
+                        
+                        Color[] newData = new Color[newW * newH];
+
+                        for (int y = 0; y < tex.Height; y++)
+                        {
+                            for (int x = 0; x < tex.Width; x++)
+                            {
+                                int newX = x;
+                                int newY = y;
+                                
+                                if (rotate == 1) // 90 deg CW
+                                {
+                                    newX = tex.Height - 1 - y;
+                                    newY = x;
+                                }
+                                else if (rotate == 2) // 180 deg
+                                {
+                                    newX = tex.Width - 1 - x;
+                                    newY = tex.Height - 1 - y;
+                                }
+                                else if (rotate == 3) // 270 deg CW
+                                {
+                                    newX = y;
+                                    newY = tex.Width - 1 - x;
+                                }
+                                
+                                newData[newY * newW + newX] = data[y * tex.Width + x];
+                            }
+                        }
+
+                        using (var resultTex = new Texture2D(Platform.GraphicsDevice, newW, newH))
+                        {
+                            resultTex.SetData(newData);
+                            var bytes = TextureToPngBytes(resultTex);
+
+                            if (action != null)
+                            {
+                                action.ParamArrayResultBytes = bytes;
+                                action.Start();
+                            }
+                        }
+                    }
                 }
-
-                bmp.RotateFlip(flip);
-
-                ////create an empty Bitmap image
-                //Bitmap bmp = new Bitmap(img.Width, img.Height);
-
-                ////turn the Bitmap into a Graphics object
-                //Graphics gfx = Graphics.FromImage(bmp);
-
-                ////now we set the rotation point to the center of our image
-                //gfx.TranslateTransform((float)bmp.Width / 2, (float)bmp.Height / 2);
-
-                ////now rotate the image
-                //gfx.RotateTransform(rotationAngle);
-
-                //gfx.TranslateTransform(-(float)bmp.Width / 2, -(float)bmp.Height / 2);
-
-                ////set the InterpolationMode to HighQualityBicubic so to ensure a high
-                ////quality image once it is transformed to the specified size
-                //gfx.InterpolationMode = InterpolationMode.HighQualityBicubic;
-
-                ////now draw our new image onto the graphics object
-                //gfx.DrawImage(img, new PointF(0, 0));
-
-                //dispose of our Graphics object
-                //gfx.Dispose();
-
-                var bytes = SavePngFromBitmap(bmp);
-                if (action != null)
-                {
-                    action.ParamArrayResultBytes = bytes;
-                    action.Start();
-                }
+            }
+             catch (Exception ex)
+            {
+                 WebTools.TakeWarnMsg("RotatePicture failed: " + ex.Message, "RotatePicture", ex);
             }
         }
 
@@ -1562,31 +1549,67 @@ namespace Platforms
 
             try
             {
-                using (System.Drawing.Image oldImage = System.Drawing.Image.FromStream(new MemoryStream(imageFile)))
+                using (var ms = new MemoryStream(imageFile))
                 {
-                    Size newSize;
+                    using (var tex = Texture2D.FromStream(Platform.GraphicsDevice, ms))
+                    {
+                        int newWidth = targetSizeWidth;
+                        int newHeight = targetSizeHeight;
 
-                    if (sameRatio)
-                    {
-                        float scale = GameTools.AutoSetScale(oldImage.Width, oldImage.Height, targetSizeWidth, targetSizeHeight);
-                        newSize = new Size(Convert.ToInt32(oldImage.Width * scale), Convert.ToInt32(oldImage.Height * scale));
-                    }
-                    else
-                    {
-                        newSize = new Size(Convert.ToInt32(targetSizeWidth), Convert.ToInt32(targetSizeHeight));
-                    }
-
-                    using (Bitmap newImage = new Bitmap(newSize.Width, newSize.Height, PixelFormat.Format24bppRgb))
-                    {
-                        using (Graphics canvas = Graphics.FromImage(newImage))
+                        if (sameRatio)
                         {
-                            canvas.SmoothingMode = SmoothingMode.AntiAlias;
-                            canvas.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            canvas.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                            canvas.DrawImage(oldImage, new RectangleF(new PointF(0, 0), newSize));
-                            MemoryStream m = new MemoryStream();
-                            newImage.Save(m, ImageFormat.Jpeg);
-                            pic = m.GetBuffer();
+                            float scale = GameTools.AutoSetScale(tex.Width, tex.Height, targetSizeWidth, targetSizeHeight);
+                            newWidth = Convert.ToInt32(tex.Width * scale);
+                            newHeight = Convert.ToInt32(tex.Height * scale);
+                        }
+                        
+                        if (newWidth <= 0) newWidth = 1;
+                        if (newHeight <= 0) newHeight = 1;
+
+                        Color[] data = new Color[tex.Width * tex.Height];
+                        tex.GetData(data);
+                        
+                        Color[] newData = new Color[newWidth * newHeight];
+                        
+                        // Bilinear interpolation
+                        float xRatio = ((float)(tex.Width - 1)) / newWidth;
+                        float yRatio = ((float)(tex.Height - 1)) / newHeight;
+                        
+                        for (int i = 0; i < newHeight; i++)
+                        {
+                            for (int j = 0; j < newWidth; j++)
+                            {
+                                int x = (int)(xRatio * j);
+                                int y = (int)(yRatio * i);
+                                float xDiff = (xRatio * j) - x;
+                                float yDiff = (yRatio * i) - y;
+                                
+                                int index = y * tex.Width + x;
+                                
+                                // Safe bounds check
+                                int indexA = index;
+                                int indexB = (x + 1 < tex.Width) ? index + 1 : index;
+                                int indexC = (y + 1 < tex.Height) ? index + tex.Width : index;
+                                int indexD = (y + 1 < tex.Height && x + 1 < tex.Width) ? index + tex.Width + 1 : indexC;
+
+                                Color a = data[indexA];
+                                Color b = data[indexB];
+                                Color c = data[indexC];
+                                Color d = data[indexD];
+                                
+                                byte R = (byte)((a.R * (1 - xDiff) * (1 - yDiff) + b.R * xDiff * (1 - yDiff) + c.R * (1 - xDiff) * yDiff + d.R * xDiff * yDiff));
+                                byte G = (byte)((a.G * (1 - xDiff) * (1 - yDiff) + b.G * xDiff * (1 - yDiff) + c.G * (1 - xDiff) * yDiff + d.G * xDiff * yDiff));
+                                byte B = (byte)((a.B * (1 - xDiff) * (1 - yDiff) + b.B * xDiff * (1 - yDiff) + c.B * (1 - xDiff) * yDiff + d.B * xDiff * yDiff));
+                                byte A = (byte)((a.A * (1 - xDiff) * (1 - yDiff) + b.A * xDiff * (1 - yDiff) + c.A * (1 - xDiff) * yDiff + d.A * xDiff * yDiff));
+                                
+                                newData[i * newWidth + j] = new Color(R, G, B, A);
+                            }
+                        }
+
+                        using (var resultTex = new Texture2D(Platform.GraphicsDevice, newWidth, newHeight))
+                        {
+                            resultTex.SetData(newData);
+                            pic = TextureToPngBytes(resultTex);
                         }
                     }
                 }
@@ -1601,7 +1624,6 @@ namespace Platforms
                 action.ParamArrayResultBytes = pic;
                 action.Start();
             }
-
         }
 
         public override void CropResizePicture(byte[] image, int x, int y, int width, int height, int targetSizeWidth, int targetSizeHeight, bool sameRatio, PlatformTask action)
@@ -1661,7 +1683,16 @@ namespace Platforms
         }
         public void Start()
         {
-            act.BeginInvoke(OnStartFinish, null);
+            Task.Run(() => 
+            {
+                act();
+            }).ContinueWith(t => 
+            {
+                if (OnStartFinish != null)
+                {
+                    OnStartFinish(t);
+                }
+            });
         }
     }
 
@@ -1693,6 +1724,9 @@ namespace Platforms
         public const int InputLanguageChange = 0x0051;
     }
 
+    /*
+    // WindowInputCapturer class commented out - requires System.Windows.Forms
+    // This needs to be replaced with MonoGame input handling
     public sealed class WindowInputCapturer : NativeWindow, IDisposable
     {
         //自定义字符串输出类
@@ -1808,4 +1842,5 @@ namespace Platforms
         private bool disposed;
 
     }
+    */
 }

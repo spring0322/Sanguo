@@ -13,6 +13,7 @@ namespace GameObjects
         [DataMember]
         public Point Position;
 
+        private NoFoodPosition() { }
         public NoFoodPosition(Point position, int days)
         {
             this.Position = position;

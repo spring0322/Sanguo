@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
 using GameObjects.AI;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
+#if false
     /// <summary>
     /// AI行动序列器 (Phase 4)
     /// 负责优化部队的行动顺序，实现战术协同
@@ -37,9 +39,9 @@ namespace GameObjects.AI
                 // 确保所有部队都有分配的角色
                 foreach (var troop in sortedList)
                 {
-                    if (troop != null && troop.CurrentRole == AIRole.None)
+                    if (troop != null && troop.CurrentRole == WorldOfTheThreeKingdoms.GameGlobal.TroopRole.None)
                     {
-                        troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                        troop.CurrentRole = WorldOfTheThreeKingdoms.GameGlobal.AIRoleSelector.DetermineRole(troop);
                         Console.WriteLine($"[AIActionSequencer] 为部队 {troop.ID} 自动分配角色: {GetRoleDescription(troop.CurrentRole)}");
                     }
                 }
@@ -92,23 +94,23 @@ namespace GameObjects.AI
         /// </summary>
         /// <param name="role">战术角色</param>
         /// <returns>优先级数值</returns>
-        private static int GetRolePriority(AIRole role)
+        private static int GetRolePriority(WorldOfTheThreeKingdoms.GameGlobal.TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Support:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support:
                     return 50; // 最先动：开鼓舞/加Buff，为队友提供支援
 
-                case AIRole.Mage:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Mage:
                     return 40; // 次先动：控制敌人/AOE削血，创造战术优势
 
-                case AIRole.Tank:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank:
                     return 30; // 再次：上去卡住位置，形成包围和控制
 
-                case AIRole.DPS:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS:
                     return 20; // 最后：进场收割残血/被控目标，完成击杀
 
-                case AIRole.Logistics:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Logistics:
                     return 10; // 后勤：远离战斗，执行辅助任务
 
                 default:
@@ -131,19 +133,19 @@ namespace GameObjects.AI
                 // 根据角色计算不同的能力权重
                 switch (troop.CurrentRole)
                 {
-                    case AIRole.Support:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support:
                         // 辅助看智力和统率
                         return troop.Leader.Intelligence + troop.Leader.Command;
 
-                    case AIRole.Mage:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Mage:
                         // 法师主要看智力
                         return troop.Leader.Intelligence * 2 + troop.Leader.Command;
 
-                    case AIRole.Tank:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank:
                         // 坦克看统率和武力
                         return troop.Leader.Command * 2 + troop.Leader.Strength;
 
-                    case AIRole.DPS:
+                    case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS:
                         // 输出看武力
                         return troop.Leader.Strength * 2 + troop.Leader.Command;
 
@@ -164,15 +166,15 @@ namespace GameObjects.AI
         /// </summary>
         /// <param name="role">战术角色</param>
         /// <returns>中文描述</returns>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(WorldOfTheThreeKingdoms.GameGlobal.TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank: return "肉盾";
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS: return "输出";
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Mage: return "法师";
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support: return "辅助";
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }
@@ -263,23 +265,23 @@ namespace GameObjects.AI
         /// </summary>
         /// <param name="role">战术角色</param>
         /// <returns>战术描述</returns>
-        public static string GetRoleTacticalDescription(AIRole role)
+        public static string GetRoleTacticalDescription(WorldOfTheThreeKingdoms.GameGlobal.TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Support:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support:
                     return "优先行动，提供Buff和治疗支援";
 
-                case AIRole.Mage:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Mage:
                     return "次优先行动，控制敌军和AOE削血";
 
-                case AIRole.Tank:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank:
                     return "中等优先级，卡位控制和保护友军";
 
-                case AIRole.DPS:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS:
                     return "后期行动，收割残血和被控敌军";
 
-                case AIRole.Logistics:
+                case WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Logistics:
                     return "最低优先级，执行后勤和辅助任务";
 
                 default:
@@ -299,7 +301,7 @@ namespace GameObjects.AI
                 if (troops == null || troops.Count == 0)
                     return "没有可分析的部队";
 
-                var roleCount = new Dictionary<AIRole, int>();
+                var roleCount = new Dictionary<WorldOfTheThreeKingdoms.GameGlobal.TroopRole, int>();
                 
                 // 统计各角色数量
                 foreach (var troop in troops)
@@ -322,13 +324,13 @@ namespace GameObjects.AI
 
                 // 提供战术建议
                 analysis += "\n战术建议:\n";
-                if (!roleCount.ContainsKey(AIRole.Support) || roleCount[AIRole.Support] == 0)
+                if (!roleCount.ContainsKey(WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support) || roleCount[WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support] == 0)
                     analysis += "  - 缺少辅助单位，建议增加治疗和Buff支援\n";
                 
-                if (!roleCount.ContainsKey(AIRole.Tank) || roleCount[AIRole.Tank] == 0)
+                if (!roleCount.ContainsKey(WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank) || roleCount[WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Tank] == 0)
                     analysis += "  - 缺少肉盾单位，建议增加前排保护\n";
                 
-                if (roleCount.ContainsKey(AIRole.DPS) && roleCount[AIRole.DPS] > troops.Count / 2)
+                if (roleCount.ContainsKey(WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS) && roleCount[WorldOfTheThreeKingdoms.GameGlobal.TroopRole.DPS] > troops.Count / 2)
                     analysis += "  - 输出单位过多，建议平衡队伍组合\n";
 
                 return analysis;
@@ -339,4 +341,5 @@ namespace GameObjects.AI
             }
         }
     }
+#endif
 }

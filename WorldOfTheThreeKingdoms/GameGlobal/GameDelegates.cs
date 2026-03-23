@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public class GameDelegates
     {

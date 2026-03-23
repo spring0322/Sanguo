@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.ArchitectureDetail;
 using GameObjects.Influences;
@@ -28,6 +28,12 @@ namespace ArchitectureDetail
         private bool isShowing;
         internal List<LabelText> LabelTexts = new List<LabelText>();
 
+#if DEBUG
+        // 诊断标志：仅在首次渲染时输出日志，避免每帧分配
+        private bool _backgroundTextureDiagnosed = false;
+        private bool _informationBackgroundDiagnosed = false;
+        private bool _facilityBackgroundDiagnosed = false;
+#endif
         internal Architecture ShowingArchitecture;
         /////以下添加
         ////↓开关
@@ -207,6 +213,10 @@ namespace ArchitectureDetail
         internal PlatformTexture CharacteristicShowMask;
         internal PlatformTexture CharacteristicShowBackground;
         internal Rectangle CharacteristicShowBackgroundClient;
+        // 异步加载需要的额外属性
+        internal PlatformTexture CharacteristicShowBackgroundMask;
+        internal PlatformTexture CharacteristicShowBackgroundBackground;
+        internal PlatformTexture NullCharacteristicPicture;
         internal int TheCharacteristicShowID1;
         internal int TheCharacteristicShowID2;
         internal int TheCharacteristicShowID3;
@@ -414,6 +424,9 @@ namespace ArchitectureDetail
         internal PlatformTexture PageForFacilityMask;
         internal PlatformTexture PageForFacilityBackground;
         internal Rectangle PageForFacilityBackgroundClient;
+        // 异步加载需要的额外属性
+        internal PlatformTexture PageForFacilityBackgroundMask;
+        internal PlatformTexture PageForFacilityBackgroundBackground;
         //↓按钮
         internal PlatformTexture FacilityforPage1ButtonTexture;
         internal PlatformTexture FacilityforPage2ButtonTexture;
@@ -2393,6 +2406,21 @@ namespace ArchitectureDetail
             {
                 if (Switch1 == "off")
                 {
+#if DEBUG
+                    // 仅在首次渲染时诊断，避免每帧分配
+                    if (!_backgroundTextureDiagnosed)
+                    {
+                        if (this.BackgroundTexture == null)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[ArchitectureDetail.Draw] ❌ BackgroundTexture 为 null，无法渲染主背景");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ArchitectureDetail.Draw] ✅ 主背景纹理已加载，位置: {this.BackgroundDisplayPosition}");
+                        }
+                        _backgroundTextureDiagnosed = true;
+                    }
+#endif
                     CacheManager.Draw(this.BackgroundTexture, this.BackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.2f);
                     foreach (LabelText text in this.LabelTexts)
                     {
@@ -2410,14 +2438,23 @@ namespace ArchitectureDetail
                         CacheManager.Draw(this.InformationPressedTexture, this.InformationPressedDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.018f);
                         if (InformationButton == true)
                         {
+#if DEBUG
+                            if (!_informationBackgroundDiagnosed)
+                            {
+                                if (this.InformationBackground == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[ArchitectureDetail.Draw] ❌ InformationBackground 为 null");
+                                }
+                                else
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[ArchitectureDetail.Draw] ✅ InformationBackground 已加载");
+                                }
+                                _informationBackgroundDiagnosed = true;
+                            }
+#endif
                             CacheManager.Draw(this.InformationMask1, this.InformationBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0192f);
                             CacheManager.Draw(this.InformationMask2, this.InformationBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0199f);
                             CacheManager.Draw(this.InformationBackground, this.InformationBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.02f);
-                            foreach (LabelText text in this.ArchitectureInInformationTexts)
-                            {
-                                text.Label.Draw(0.0194f);
-                                text.Text.Draw(0.0194f);
-                            }
                             if (Switch26 == "on")
                             {
                                 try
@@ -2432,6 +2469,11 @@ namespace ArchitectureDetail
                                     }
                                 }
                                 catch { }
+                            }
+                            foreach (LabelText text in this.ArchitectureInInformationTexts)
+                            {
+                                text.Label.Draw(0.0194f);
+                                text.Text.Draw(0.0194f);
                             }
                             if (Switch22 == "on")
                             {
@@ -2485,6 +2527,20 @@ namespace ArchitectureDetail
                         CacheManager.Draw(this.FacilityPressedTexture, this.FacilityPressedDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.018f);
                         if (FacilityButton == true)
                         {
+#if DEBUG
+                            if (!_facilityBackgroundDiagnosed)
+                            {
+                                if (this.FacilityBackground == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[ArchitectureDetail.Draw] ❌ FacilityBackground 为 null");
+                                }
+                                else
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[ArchitectureDetail.Draw] ✅ FacilityBackground 已加载");
+                                }
+                                _facilityBackgroundDiagnosed = true;
+                            }
+#endif
                             CacheManager.Draw(this.FacilityMask1, this.FacilityBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0192f);
                             CacheManager.Draw(this.FacilityMask2, this.FacilityBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0199f);
                             CacheManager.Draw(this.FacilityBackground, this.FacilityBackgroundDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.02f);
@@ -3419,12 +3475,16 @@ namespace ArchitectureDetail
         internal void SetArchitecture(Architecture architecture)
         {
             this.ShowingArchitecture = architecture;
+
             if (Switch1 == "off")
             {
                 foreach (LabelText text in this.LabelTexts)
                 {
                     text.Text.Text = StaticMethods.GetPropertyValue(architecture, text.PropertyName).ToString();
                 }
+                
+                // 🔥 修复：清空旧内容，避免重复显示
+                this.CharacteristicText.Clear();
                 this.CharacteristicText.AddText("特色", this.CharacteristicText.TitleColor);
                 this.CharacteristicText.AddNewLine();
                 foreach (Influence influence in this.ShowingArchitecture.Characteristics.Influences.Values)
@@ -3433,6 +3493,9 @@ namespace ArchitectureDetail
                     this.CharacteristicText.AddNewLine();
                 }
                 this.CharacteristicText.ResortTexts();
+                
+                // 🔥 修复：清空旧内容，避免重复显示
+                this.FacilityText.Clear();
                 this.FacilityText.AddText("设施", this.FacilityText.TitleColor);
                 this.FacilityText.AddNewLine();
                 if (this.ShowingArchitecture.BuildingFacility >= 0)
@@ -3482,6 +3545,9 @@ namespace ArchitectureDetail
                     }
                     if (Switch23 == "on")
                     {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureDetail.SetArchitecture] 🔍 开始加载特色ID，特色数量: {this.ShowingArchitecture.Characteristics.Count}");
+#endif
                         TheCharacteristicShowID1 = TheCharacteristicShowID(1);
                         TheCharacteristicShowID2 = TheCharacteristicShowID(2);
                         TheCharacteristicShowID3 = TheCharacteristicShowID(3);
@@ -3512,9 +3578,14 @@ namespace ArchitectureDetail
                         TheCharacteristicShowID28 = TheCharacteristicShowID(28);
                         TheCharacteristicShowID29 = TheCharacteristicShowID(29);
                         TheCharacteristicShowID30 = TheCharacteristicShowID(30);
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureDetail.SetArchitecture] ✅ 特色ID加载完成: ID1={TheCharacteristicShowID1}, ID2={TheCharacteristicShowID2}, ID3={TheCharacteristicShowID3}");
+#endif
                     }
                     if (Switch24 == "on")
                     {
+                        // 🔥 修复：清空旧内容，避免重复显示
+                        this.TheCharacteristic1Text.Clear();
                         this.TheCharacteristic1Text.AddText("特色", this.TheCharacteristic1Text.TitleColor);
                         this.TheCharacteristic1Text.AddNewLine();
                         foreach (Influence influence in this.ShowingArchitecture.Characteristics.Influences.Values)
@@ -3526,6 +3597,8 @@ namespace ArchitectureDetail
                     }
                     if (Switch25 == "on")
                     {
+                        // 🔥 修复：清空旧内容，避免重复显示
+                        this.TheFacility1Text.Clear();
                         this.TheFacility1Text.AddText("设施", this.TheFacility1Text.TitleColor);
                         this.TheFacility1Text.AddNewLine();
                         if (this.ShowingArchitecture.BuildingFacility >= 0)
@@ -3713,7 +3786,10 @@ namespace ArchitectureDetail
                         }                        
                     }
                     if (Switch47 == "on")
-                    {                                               
+                    {
+                        // 🔥 修复：清空旧内容，避免重复显示
+                        this.TheFacility3Text.Clear();
+                        
                         if (this.ShowingArchitecture.BuildingFacility >= 0)
                         {
                             FacilityKind facilityKind = Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetFacilityKind(this.ShowingArchitecture.BuildingFacility);
@@ -3868,23 +3944,23 @@ namespace ArchitectureDetail
             /////以下添加
             foreach (LabelText text in this.ArchitectureInInformationTexts)
             {
-                text.Label.DisplayOffset = this.DisplayOffset;
-                text.Text.DisplayOffset = this.DisplayOffset;
+                text.Label.DisplayOffset = new Point(this.DisplayOffset.X - 2, this.DisplayOffset.Y - 12);
+                text.Text.DisplayOffset = new Point(this.DisplayOffset.X - 2, this.DisplayOffset.Y - 18);
             }
             this.TheCharacteristic1Text.DisplayOffset = new Point(this.DisplayOffset.X + this.TheCharacteristic1Client.X, this.DisplayOffset.Y + this.TheCharacteristic1Client.Y);
             this.TheFacility1Text.DisplayOffset = new Point(this.DisplayOffset.X + this.TheFacility1Client.X, this.DisplayOffset.Y + this.TheFacility1Client.Y);
             
             foreach (LabelText text in this.ArchitectureInFacilityTexts)
             {
-                text.Label.DisplayOffset = this.DisplayOffset;
-                text.Text.DisplayOffset = this.DisplayOffset;
+                text.Label.DisplayOffset = new Point(this.DisplayOffset.X - 2, this.DisplayOffset.Y - 12);
+                text.Text.DisplayOffset = new Point(this.DisplayOffset.X - 2, this.DisplayOffset.Y - 18);
             }
             this.FacilityDescriptionText.DisplayOffset = new Point(this.DisplayOffset.X + this.FacilityDescriptionTextClient.X, this.DisplayOffset.Y + this.FacilityDescriptionTextClient.Y);
             this.TheFacility3Text.DisplayOffset = new Point(this.DisplayOffset.X + this.TheFacility3Client.X, this.DisplayOffset.Y + this.TheFacility3Client.Y);   
             /////以上添加
         }
 
-        private Rectangle BackgroundDisplayPosition
+        internal Rectangle BackgroundDisplayPosition
         {
             get
             {

@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using PluginInterface;
 using System;
@@ -19,7 +19,18 @@ namespace tupianwenziPlugin
 
         internal GameObjectAndBranchName(GameObject   p,  List<SimpleText> list, string name, IConfirmationDialog confirmationDialog, GameDelegates.VoidFunction yesFunction, GameDelegates.VoidFunction noFunction, string TryToShowString = "")
         {
-            this.person = p as Person ;
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[GameObjectAndBranchName] 传入对象类型={p?.GetType().Name}");
+            System.Diagnostics.Debug.WriteLine($"[GameObjectAndBranchName] 是否Person={p is Person}");
+            #endif
+
+            this.person = (p is Person ? (Person)p : null) ;
+
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[GameObjectAndBranchName] person.Name={this.person?.Name ?? "null"}(ID:{this.person?.ID ?? -1})");
+            System.Diagnostics.Debug.WriteLine($"[GameObjectAndBranchName] branchName={name}");
+            #endif
+
             this.texts.AddRange(list);
             this.branchName = name;
             this.iConfirmationDialog = confirmationDialog;
@@ -31,4 +42,5 @@ namespace tupianwenziPlugin
         public string TryToShowString = "";
     }
 }
+
 

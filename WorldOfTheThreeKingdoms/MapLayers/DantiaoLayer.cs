@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using System.IO;
+using System.Text.Json; // 需要 .NET 8 环境
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using WorldOfTheThreeKingdoms;
@@ -14,6 +16,78 @@ using Platforms;
 
 namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 {
+    // --- 新增：战术枚举 ---
+    public enum DuelTactic
+    {
+        Normal,     // 平衡
+        Aggressive, // 重视进攻 (攻+50%, 防-30%)
+        Defensive   // 重视防御 (攻-40%, 防+50%)
+    }
+
+    // --- 新增：配置数据结构 ---
+    public class DantiaoConfigData
+    {
+        public string DefaultStyleLeft { get; set; } = "General01A";
+        public string DefaultStyleRight { get; set; } = "General01B";
+        
+        // 🔥 C# 12: 使用集合表达式
+        public Dictionary<string, string> SpecialGenerals { get; set; } = [];
+    }
+
+    // --- 新增：配置管理器 ---
+    public static class DantiaoConfigManager
+    {
+        public static DantiaoConfigData Config;
+
+        public static void LoadConfig()
+        {
+            string path = Path.Combine("Content", "DantiaoConfig.json");
+            try
+            {
+                if (File.Exists(path))
+                {
+                    string jsonString = File.ReadAllText(path);
+                    
+                    // 🔥 2026-03-09 AOT 序列化修复：使用 GameJsonContext
+                    // Cold Path - 初始化阶段，可读性优先
+                    var options = WorldOfTheThreeKingdoms.Serialization.GameJsonContext.GetDefaultOptions();
+                    Config = JsonSerializer.Deserialize<DantiaoConfigData>(jsonString, options);
+                    
+                    // ⚠️ 数据完整性断言：配置文件必须有效
+                    // 如果反序列化失败（返回 null），说明 JSON 格式错误或类型未注册
+                    // 应该在开发期通过断言发现问题，而不是静默回退
+                    System.Diagnostics.Debug.Assert(Config != null, 
+                        "[LoadConfig] DantiaoConfigData 反序列化失败，检查 JSON 格式和类型注册");
+                    
+                    System.Diagnostics.Debug.WriteLine($"[单挑] 成功加载配置文件: {path}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[单挑] 找不到配置文件，使用默认值: {path}");
+                    Config = new DantiaoConfigData(); // 文件不存在则使用默认值
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[单挑] 加载配置文件失败: {ex.Message}");
+                Config = new DantiaoConfigData(); // 读取出错兜底
+            }
+        }
+
+        public static string GetStyle(int personId, bool isLeft)
+        {
+            if (Config == null) LoadConfig();
+
+            // 1. 优先查找专属皮肤 (ID转String)
+            if (Config.SpecialGenerals != null && Config.SpecialGenerals.ContainsKey(personId.ToString()))
+            {
+                return Config.SpecialGenerals[personId.ToString()];
+            }
+
+            // 2. 返回默认皮肤
+            return isLeft ? Config.DefaultStyleLeft : Config.DefaultStyleRight;
+        }
+    }
 
     public class General
     {
@@ -41,9 +115,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         Dictionary<string, AnimatedTexture> atGeneralStatus = new Dictionary<string, AnimatedTexture>();
 
-        string[] styles = new string[] { "General01A", "General01B" };
-
-        string[] status = new string[] { "WalkLeft", "WalkRight", "AttackLeft", "AttackRight", "Failure" };
+        // 修改：不再需要 hardcode 的 styles 数组，改为动态加载
+        string[] statusNames = new string[] { "WalkLeft", "WalkRight", "AttackLeft", "AttackRight", "Failure" };
 
         public string Direction = "";  //Up Down Left Right
 
@@ -71,6 +144,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public string SayWords = "";
 
+        // --- 新增逻辑属性 ---
+        public DuelTactic CurrentTactic { get; set; } = DuelTactic.Normal;
+        public bool IsPlayerControlled { get; set; } = false; // 是否由玩家控制
+        private float aiThinkTimer = 0f; // AI思考计时器
+
         public bool IsPaused
         {
             get
@@ -79,32 +157,134 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             }
         }
         
-        public General(Person p)
+        // 修改构造函数：增加 isLeftSide 和 isPlayer 参数
+        public General(Person p, bool isLeftSide, bool isPlayer)
         {
             Person = p;
+            IsPlayerControlled = isPlayer;
 
-            foreach (var style in styles)
+            // 1. 动态获取兵模名称
+            Style = DantiaoConfigManager.GetStyle(((GameObject)p).ID, isLeftSide);
+
+            foreach (var gen in statusNames)
             {
-                foreach (var gen in status)
+                try 
                 {
-                    var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\" + style, gen, "", true, 5)
+                    // 验证TextureRecs中是否存在该配置
+                    string textureKey = @"Content\Textures\Resources\Dantiao\" + Style + "#" + gen;
+                    if (Session.TextureRecs != null && Session.TextureRecs.ContainsKey(textureKey))
                     {
-                        Depth = DantiaoLayer.depth - 0.035f
-                    };
+                        // 动态加载选定的 Style
+                        var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\" + Style, gen, "", true, 5)
+                        {
+                            Depth = DantiaoLayer.depth - 0.035f
+                        };
 
-                    atGeneralStatus.Add(style + "-" + gen, genStatus);
+                        atGeneralStatus.Add(Style + "-" + gen, genStatus);
+                        System.Diagnostics.Debug.WriteLine($"[单挑] 成功加载纹理: {textureKey}");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[单挑警告] TextureRecs中缺失配置: {textureKey}");
+                        
+                        // 尝试使用默认配置
+                        if (Style != "General01A")
+                        {
+                            string fallbackKey = @"Content\Textures\Resources\Dantiao\General01A#" + gen;
+                            if (Session.TextureRecs != null && Session.TextureRecs.ContainsKey(fallbackKey))
+                            {
+                                var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\General01A", gen, "", true, 5)
+                                {
+                                    Depth = DantiaoLayer.depth - 0.035f
+                                };
+                                atGeneralStatus.Add(Style + "-" + gen, genStatus);
+                                System.Diagnostics.Debug.WriteLine($"[单挑] 使用默认纹理: {fallbackKey}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 容错处理：如果文件缺失，记录错误但不中断
+                    System.Diagnostics.Debug.WriteLine($"[单挑错误] 加载纹理失败 {Style}-{gen}: {ex.Message}");
                 }
             }
+            
+            // ⚠️ 数据完整性断言：必须至少加载一些纹理
+            // 如果纹理全部加载失败，说明资源文件缺失或配置错误
+            System.Diagnostics.Debug.Assert(atGeneralStatus.Count > 0, 
+                $"[单挑] 武将 {Person.Name} 没有加载任何纹理，检查 TextureRecs 配置和资源文件");
+            
+            if (atGeneralStatus.Count == 0)
+            {
+                // 🔥 根本性修复：如果纹理加载失败，抛出异常阻止单挑启动
+                // 不应该让程序在没有纹理的情况下继续运行
+                throw new InvalidOperationException(
+                    $"[单挑] 武将 {Person.Name} (Style: {Style}) 纹理加载失败，无法启动单挑。" +
+                    $"请检查：1) TextureRecs 是否包含单挑纹理配置 2) 资源文件是否存在");
+            }
+        }
 
+        // --- 新增：获取攻击修正 ---
+        public float GetAttackModifier()
+        {
+            switch (CurrentTactic)
+            {
+                case DuelTactic.Aggressive: return 1.5f;
+                case DuelTactic.Defensive: return 0.6f;
+                default: return 1.0f;
+            }
+        }
+
+        // --- 新增：获取防御修正 ---
+        public float GetDefenseModifier()
+        {
+            switch (CurrentTactic)
+            {
+                case DuelTactic.Aggressive: return 1.3f; // 破绽大，受伤多
+                case DuelTactic.Defensive: return 0.5f;  // 受伤减半
+                default: return 1.0f;
+            }
+        }
+
+        // --- 新增：简单的 AI 思考逻辑 ---
+        public void UpdateAI(float gameTime)
+        {
+            if (IsPlayerControlled) return;
+
+            aiThinkTimer += gameTime;
+            // 每 2.5 秒思考一次
+            if (aiThinkTimer > 2.5f)
+            {
+                aiThinkTimer = 0f;
+                
+                // 简单的状态机
+                if (Life < 30)
+                {
+                    // 血少时 70% 概率龟缩防御
+                    CurrentTactic = (new Random().Next(0, 10) < 7) ? DuelTactic.Defensive : DuelTactic.Normal;
+                }
+                else
+                {
+                    // 随机切换
+                    int rand = new Random().Next(0, 10);
+                    if (rand < 3) CurrentTactic = DuelTactic.Defensive;
+                    else if (rand < 6) CurrentTactic = DuelTactic.Aggressive;
+                    else CurrentTactic = DuelTactic.Normal;
+                }
+            }
         }
 
         public void ChangeStatus(string style, string status)
         {
-            Style = style;
-
+            // 注意：虽然传入了 style 参数，但在本修改版中，我们主要依赖内部的 Style 属性
+            // 但为了兼容旧调用，我们更新 Status
             Status = status;
 
-            atCurrent = atGeneralStatus[Style + "-" + Status];
+            if (atGeneralStatus.ContainsKey(Style + "-" + Status))
+            {
+                atCurrent = atGeneralStatus[Style + "-" + Status];
+            }
         }
 
         public void ChangeWalkToAttack()
@@ -140,16 +320,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public void Pause()
         {
             Direction = "";
-            atCurrent.Paused = true;
+            if (atCurrent != null) atCurrent.Paused = true;
         }
 
         public void Start()
         {
             StartPos = LandPosition;
             ActionTime = 0f;
-            atCurrent.Paused = false;
-
-            atCurrent.ChangeFrame(Convert.ToInt32(5 * (Speed + SpeedExt + SpeedPlus) / Speed));
+            if (atCurrent != null)
+            {
+                atCurrent.Paused = false;
+                atCurrent.ChangeFrame(Convert.ToInt32(5 * (Speed + SpeedExt + SpeedPlus) / Speed));
+            }
         }
 
         public void ChangePosition(Vector2 landPos)
@@ -159,6 +341,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public void Update(float gameTime, Vector2 screenPos)
         {
+            // 每一帧更新 AI
+            UpdateAI(gameTime);
+
             if (atCurrent == null)
             {
 
@@ -293,7 +478,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             {
                 atCurrent.DrawFrame(null);
             }
+            
+            // --- 新增：绘制头顶战术状态 ---
+            string statusText = "";
+            Color statusColor = Color.White;
+            
+            switch (CurrentTactic)
+            {
+                case DuelTactic.Aggressive: statusText = "攻"; statusColor = Color.Red; break;
+                case DuelTactic.Defensive: statusText = "守"; statusColor = Color.Blue; break;
+                // Normal 不显示
+            }
 
+            if (!string.IsNullOrEmpty(statusText))
+            {
+                CacheManager.DrawString(null, statusText, Position + new Vector2(50, -30), statusColor, 0f, Vector2.Zero, 1.2f, SpriteEffects.None, DantiaoLayer.depth - 0.05f);
+            }
         }
 
     }
@@ -346,6 +546,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         ButtonTexture btnStory, btnPagePre, btnPageNext, btnSpeed, btnSpeedUp, btnSpeedDown;
 
+        // --- 新增：指令按钮 ---
+        ButtonTexture btnAtk, btnDef, btnNrm;
+
         General genLeft, genRight;
 
         int moveDistance = 0;
@@ -361,9 +564,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         bool ViewExit = false;
 
         public TroopDamage damage = null;
+        
+        // --- 新增：演示模式开关 ---
+        public bool IsDemoMode = false;
 
-        public DantiaoLayer(Person left, Person right)
+        // 修改构造函数，增加 demoMode 默认参数
+        public DantiaoLayer(Person left, Person right, bool demoMode = false)
         {
+            IsDemoMode = demoMode;
+
             //scale = new Vector2(Convert.ToSingle(Session.ResolutionX) / 800f, Convert.ToSingle(Session.ResolutionY) / 480f);
 
             basePos = new Vector2((Session.ResolutionX - 1000) / 2, (Session.ResolutionY - 620) / 2);
@@ -433,34 +642,68 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     btnSpeedUp.Enable = false;
                 }
             };
+            
+            // --- 初始化指令按钮 (仅在非演示模式下显示) ---
+            Vector2 cmdPos = basePos + new Vector2(350, 550);
+            
+            // 🔥 2026-03-09 修复：添加异常处理，避免按钮纹理缺失导致崩溃
+            try
+            {
+                // 临时使用 "Page" 按钮资源代替，你可以替换为 Content\Textures\Resources\Dantiao\Attack 等
+                // 修复：使用通用的 Button 纹理，避免 KeyNotFound 或 IndexOutOfRange 导致的崩溃
+                // Button 纹理大小为 100x42 (每帧)，Scale 0.5f 后为 50x21，间隔 60px 刚好合适
+                btnAtk = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos) { Visible = !IsDemoMode, Scale = 0.5f }; 
+                btnAtk.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Aggressive; };
 
-            genLeft = new General(left)
+                btnNrm = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(60, 0)) { Visible = !IsDemoMode, Scale = 0.5f };
+                btnNrm.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Normal; };
+
+                btnDef = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(120, 0)) { Visible = !IsDemoMode, Scale = 0.5f };
+                btnDef.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Defensive; };
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[单挑警告] 指令按钮纹理加载失败: {ex.Message}，将禁用玩家控制");
+                // 如果按钮纹理加载失败，强制进入演示模式
+                IsDemoMode = true;
+                btnAtk = null;
+                btnNrm = null;
+                btnDef = null;
+            }
+
+            // --- 加载武将 ---
+            DantiaoConfigManager.LoadConfig();
+
+            // genLeft: 左侧位置 (true), 如果是 DemoMode 则为 AI (isPlayer=false)，否则为玩家 (isPlayer=true)
+            genLeft = new General(left, true, !IsDemoMode)
             {
                 Force = left.ChallengeStrength,
                 Life = 100,
                 Skill = 100
             };
 
-            genLeft.ChangeStatus("General01A", "WalkRight");
+            genLeft.ChangeStatus(genLeft.Style, "WalkRight");
 
             genLeft.ChangePosition(basePos + new Vector2(500-100, 250));
 
             genLeft.Pause();
 
-            genRight = new General(right)
+            // genRight: 右侧位置 (false), 永远是 AI (isPlayer=false)
+            genRight = new General(right, false, false)
             {
                 Force = right.ChallengeStrength,
                 Life = 100,
                 Skill = 100
             };
 
-            genRight.ChangeStatus("General01B", "WalkLeft");
+            genRight.ChangeStatus(genRight.Style, "WalkLeft");
 
             genRight.ChangePosition(basePos + new Vector2(2200-1000+500-80, 250));
 
             genRight.Pause();
 
-            Session.PlayMusic("Battle");
+            AudioManager.Instance?.PlayCombatMusic();
+            System.Diagnostics.Debug.WriteLine($"[单挑] DantiaoLayer 初始化完成: {left.Name} vs {right.Name}");
         }
 
         public void Start()
@@ -912,17 +1155,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                 damage.ChallengeStarted = false;
 
                                 damage.ChallengeResult = Result;
-                                damage.ChallengeSourcePerson = DantiaoLayer.Persons[0]; //maxStrengthPerson;
-                                damage.ChallengeDestinationPerson = DantiaoLayer.Persons[1];
-                                //destination;
-                                //if (returnValue >= -4 && returnValue <= 10 && returnValue != 0)
-                                //{
-                                //    flag = returnValue;
-                                //}
-                                //else   //返回值出错时避免跳出
-                                //{
-                                //    flag = (GameObject.Chance(chance) ? 1 : 2);
-                                //}
+                                // 🔥 安全修复：避免IndexOutOfRangeException
+                                if (DantiaoLayer.Persons != null && DantiaoLayer.Persons.Count >= 2)
+                                {
+                                    damage.ChallengeSourcePerson = DantiaoLayer.Persons[0]; //maxStrengthPerson;
+                                    damage.ChallengeDestinationPerson = DantiaoLayer.Persons[1];
+                                }
+                                else
+                                {
+                                    damage.ChallengeSourcePerson = null;
+                                    damage.ChallengeDestinationPerson = null;
+                                }
 
                                 Session.MainGame.mainGameScreen.EnableUpdate = true;
                             }
@@ -935,6 +1178,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                     float elapsedTime2 = elapsedTime < 1f ? elapsedTime : 1f;
 
+                    // --- 更新按钮 ---
                     btnStory.Update();
 
                     if (btnStory.Selected)
@@ -949,6 +1193,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     btnSpeedUp.Update();
 
                     btnSpeedDown.Update();
+                    
+                    // 更新指令按钮（非演示模式）
+                    if (!IsDemoMode)
+                    {
+                        btnAtk.Update();
+                        btnDef.Update();
+                        btnNrm.Update();
+                    }
 
                     landRec.Height = 620 - 10 - Convert.ToInt32(landPos.Y);
 
@@ -971,7 +1223,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     }
                     else
                     {
-                        var time = float.Parse("0." + totalTime.ToString().Split(new string[] { "." }, StringSplitOptions.None)[0]);
+                        // 🔥 技术性修复：避免IndexOutOfRangeException
+                        var timeParts = totalTime.ToString().Split(new string[] { "." }, StringSplitOptions.None);
+                        var timeString = timeParts.Length > 0 ? timeParts[0] : "0";
+                        var time = float.Parse("0." + timeString);
 
                         if (time <= 0.5f)
                         {
@@ -998,10 +1253,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 fightTime -= (rush ? 0.3f : 0.8f);
 
                 Platform.Current.PlayEffect(@"Content\Sound\Dantiao\NormalAttack");
+                
+                // --- 修改后的伤害计算 (带战术修正) ---
+                
+                // 1. 基础伤害 (随机部分)
+                float rawDmgLeft = Convert.ToSingle(new Random().Next(0, genLeft.Force / 5) * 8) / 10f;
+                float rawDmgRight = Convert.ToSingle(new Random().Next(0, genRight.Force / 5) * 8) / 10f;
+                
+                // 2. 最终伤害 = 基础 * 攻击者战术修正 * 防御者战术修正
+                float finalDmgLeft = rawDmgLeft * genLeft.GetAttackModifier() * genRight.GetDefenseModifier();
+                float finalDmgRight = rawDmgRight * genRight.GetAttackModifier() * genLeft.GetDefenseModifier();
 
-                genLeft.Life -= Convert.ToSingle(new Random().Next(0, genRight.Force / 5) * 8) / 10f;
-
-                genRight.Life -= Convert.ToSingle(new Random().Next(0, genLeft.Force / 5) * 8) / 10f;
+                genRight.Life -= finalDmgLeft;
+                genLeft.Life -= finalDmgRight;
 
                 if (genLeft.Life <= 0 || genRight.Life <= 0)
                 {
@@ -1123,6 +1387,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 btnSpeedDown.Draw();
 
                 btnSpeedUp.Draw();
+                
+                // 绘制指令按钮（非演示模式）
+                if (!IsDemoMode)
+                {
+                    btnAtk.Draw();
+                    btnNrm.Draw();
+                    btnDef.Draw();
+
+                    // 绘制按钮文字
+                    Vector2 cmdTextBase = basePos + new Vector2(350, 550);
+                    CacheManager.DrawString(null, "攻", cmdTextBase + new Vector2(15, 2), Color.Red, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
+                    CacheManager.DrawString(null, "普", cmdTextBase + new Vector2(60 + 15, 2), Color.Black, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
+                    CacheManager.DrawString(null, "守", cmdTextBase + new Vector2(120 + 15, 2), Color.Blue, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
+                }
+                else
+                {
+                    // 演示模式提示
+                    CacheManager.DrawString(null, "演示模式 - AI托管中", basePos + new Vector2(400, 550), Color.Yellow * Alpha, 0f, Vector2.Zero, scale.X, SpriteEffects.None, depth - 0.045f);
+                }
 
                 if (basePos.X - 128 + 30 <= genLeft.Position.X && genLeft.Position.X < basePos.X + 1000 - 70)
                 {

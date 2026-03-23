@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -25,6 +25,7 @@ namespace ContextMenuPlugin
         public PlatformTexture HasChildTexture;
         public IHelp HelpPlugin;
         private bool isShowing;
+        private MenuKind dynamicMenu; // Field for dynamic menus used by editor
         public const int ItemMoveMargin = 10;
         public ContextMenuKind Kind;
         public int left;
@@ -221,6 +222,13 @@ namespace ContextMenuPlugin
                             Session.MainGame.mainGameScreen.ReturnMainMenu();
                         }
 
+                        else if (itemByPosition.SelectedAction != null)
+                        {
+                            Session.MainGame.mainGameScreen.PlayNormalSound(this.ClickSoundFile);
+                            itemByPosition.SelectedAction();
+                            this.IsShowing = false;
+                            this.Result = ContextMenuResult.None;
+                        }
                         else
                         {
                             Session.MainGame.mainGameScreen.PlayNormalSound(this.ClickSoundFile);
@@ -405,6 +413,46 @@ namespace ContextMenuPlugin
                 }
                 return Rectangle.Empty;
             }
+        }
+
+        public void ClearFunctions()
+        {
+            if (this.dynamicMenu == null)
+            {
+                this.dynamicMenu = new MenuKind(this);
+                this.dynamicMenu.Name = "DynamicEditorMenu";
+                this.dynamicMenu.DisplayName = "编辑器菜单";
+                this.dynamicMenu.ItemWidth = 140;
+                this.dynamicMenu.ItemHeight = 24;
+            }
+            this.dynamicMenu.MenuItems.Clear();
+        }
+
+        public void AddMenu(string displayName, Action action)
+        {
+            if (this.dynamicMenu == null)
+            {
+                this.ClearFunctions();
+            }
+            MenuItem item = new MenuItem(this.dynamicMenu, this);
+            item.DisplayName = displayName;
+            item.SelectedAction = action;
+            item.Visible = true;
+            item.Enabled = true;
+            this.dynamicMenu.MenuItems.Add(item);
+        }
+
+        public void Show()
+        {
+            if (this.dynamicMenu == null) return;
+            
+            this.left = InputManager.PoX;
+            this.top = InputManager.PoY;
+            this.ViewportSize = new Point(Session.MainGame.mainGameScreen.viewportSize.X, Session.MainGame.mainGameScreen.viewportSize.Y);
+            
+            this.menuToDisplay = this.dynamicMenu;
+            this.menuToDisplay.Prepare();
+            this.IsShowing = true;
         }
     }
 }

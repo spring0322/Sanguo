@@ -1,0 +1,336 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json.Serialization;
+using GameObjects.TroopDetail.EventEffect;
+using GameObjects.ArchitectureDetail.EventEffect;
+using WorldOfTheThreeKingdoms.Serialization;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 分析 EventEffectKindTable 相关类型的注册状态
+    /// 实现需求 2.1, 2.2, 2.3：检查现有的类型注册、识别缺失的依赖类型、验证多态类型注册
+    /// </summary>
+    public class EventEffectKindRegistrationAnalyzer
+    {
+        private readonly HashSet<Type> _registeredTypes;
+        private readonly List<string> _analysisResults;
+
+        public EventEffectKindRegistrationAnalyzer()
+        {
+            _registeredTypes = new HashSet<Type>();
+            _analysisResults = new List<string>();
+            ExtractRegisteredTypes();
+        }
+
+        /// <summary>
+        /// 从 GameJsonContext 中提取所有已注册的类型
+        /// </summary>
+        private void ExtractRegisteredTypes()
+        {
+            var contextType = typeof(GameJsonContext);
+            var attributes = contextType.GetCustomAttributes<JsonSerializableAttribute>();
+            
+            foreach (var attr in attributes)
+            {
+                // 直接从构造函数参数获取类型
+                var constructorArgs = attr.GetType().GetConstructors()[0].GetParameters();
+                if (constructorArgs.Length > 0 && constructorArgs[0].ParameterType == typeof(Type))
+                {
+                    // 通过反射获取私有字段
+                    var typeField = attr.GetType().GetField("_type", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (typeField != null)
+                    {
+                        var type = (Type)typeField.GetValue(attr);
+                        if (type != null)
+                        {
+                            _registeredTypes.Add(type);
+                        }
+                    }
+                    else
+                    {
+                        // 尝试通过属性获取
+                        var properties = attr.GetType().GetProperties();
+                        foreach (var prop in properties)
+                        {
+                            if (prop.PropertyType == typeof(Type) && prop.Name.Contains("Type"))
+                            {
+                                var type = (Type)prop.GetValue(attr);
+                                if (type != null)
+                                {
+                                    _registeredTypes.Add(type);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            _analysisResults.Add($"从 GameJsonContext 中提取到 {_registeredTypes.Count} 个已注册类型");
+            
+            // 如果提取失败，尝试手动检查一些关键类型
+            if (_registeredTypes.Count == 0)
+            {
+                _analysisResults.Add("警告：无法从 JsonSerializableAttribute 中提取类型信息");
+                _analysisResults.Add("这可能是由于 .NET 版本或反射限制导致的");
+                
+                // 手动检查一些已知应该存在的类型
+                var knownTypes = new[]
+                {
+                    typeof(GameObjects.TroopDetail.EventEffect.EventEffectKindTable),
+                    typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable),
+                    typeof(GameObjects.TroopDetail.EventEffect.EventEffectKind),
+                    typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKind)
+                };
+                
+                _analysisResults.Add("手动检查已知关键类型的注册状态...");
+                foreach (var knownType in knownTypes)
+                {
+                    // 检查是否有对应的 JsonSerializableAttribute
+                    var hasAttribute = attributes.Any(a => 
+                    {
+                        try
+                        {
+                            var typeField = a.GetType().GetField("_type", BindingFlags.NonPublic | BindingFlags.Instance);
+                            if (typeField != null)
+                            {
+                                var attrType = (Type)typeField.GetValue(a);
+                                return attrType == knownType;
+                            }
+                        }
+                        catch { }
+                        return false;
+                    });
+                    
+                    if (hasAttribute)
+                    {
+                        _registeredTypes.Add(knownType);
+                    }
+                }
+                
+                _analysisResults.Add($"手动检查后找到 {_registeredTypes.Count} 个已注册的关键类型");
+            }
+        }
+
+        /// <summary>
+        /// 分析 EventEffectKindTable 相关类型的注册状态
+        /// </summary>
+        public RegistrationAnalysisResult AnalyzeEventEffectKindTableRegistrations()
+        {
+            var result = new RegistrationAnalysisResult();
+            
+            // 分析 TroopDetail.EventEffect 命名空间
+            AnalyzeTroopDetailEventEffectTypes(result);
+            
+            // 分析 ArchitectureDetail.EventEffect 命名空间
+            AnalyzeArchitectureDetailEventEffectTypes(result);
+            
+            // 分析字典类型注册
+            AnalyzeDictionaryTypeRegistrations(result);
+            
+            // 检查命名空间冲突
+            CheckNamespaceConflicts(result);
+            
+            result.AnalysisLog = _analysisResults.ToList();
+            return result;
+        }
+
+        private void AnalyzeTroopDetailEventEffectTypes(RegistrationAnalysisResult result)
+        {
+            _analysisResults.Add("=== 分析 TroopDetail.EventEffect 类型 ===");
+            
+            // 检查基础类型
+            var troopEventEffectKindType = typeof(GameObjects.TroopDetail.EventEffect.EventEffectKind);
+            var troopEventEffectKindTableType = typeof(GameObjects.TroopDetail.EventEffect.EventEffectKindTable);
+            
+            CheckTypeRegistration(troopEventEffectKindType, result);
+            CheckTypeRegistration(troopEventEffectKindTableType, result);
+            
+            // 检查字典类型
+            var troopDictionaryType = typeof(Dictionary<int, GameObjects.TroopDetail.EventEffect.EventEffectKind>);
+            CheckTypeRegistration(troopDictionaryType, result);
+            
+            // 查找所有 TroopDetail EventEffectKind 派生类
+            var troopDerivedTypes = FindEventEffectKindDerivedTypes("GameObjects.TroopDetail.EventEffect");
+            _analysisResults.Add($"发现 {troopDerivedTypes.Count} 个 TroopDetail EventEffectKind 派生类");
+            
+            foreach (var derivedType in troopDerivedTypes)
+            {
+                CheckTypeRegistration(derivedType, result);
+            }
+        }
+
+        private void AnalyzeArchitectureDetailEventEffectTypes(RegistrationAnalysisResult result)
+        {
+            _analysisResults.Add("=== 分析 ArchitectureDetail.EventEffect 类型 ===");
+            
+            // 检查基础类型
+            var archEventEffectKindType = typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKind);
+            var archEventEffectKindTableType = typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable);
+            
+            CheckTypeRegistration(archEventEffectKindType, result);
+            CheckTypeRegistration(archEventEffectKindTableType, result);
+            
+            // 检查字典类型
+            var archDictionaryType = typeof(Dictionary<int, GameObjects.ArchitectureDetail.EventEffect.EventEffectKind>);
+            CheckTypeRegistration(archDictionaryType, result);
+            
+            // 查找所有 ArchitectureDetail EventEffectKind 派生类
+            var archDerivedTypes = FindEventEffectKindDerivedTypes("GameObjects.ArchitectureDetail.EventEffect");
+            _analysisResults.Add($"发现 {archDerivedTypes.Count} 个 ArchitectureDetail EventEffectKind 派生类");
+            
+            foreach (var derivedType in archDerivedTypes)
+            {
+                CheckTypeRegistration(derivedType, result);
+            }
+        }
+
+        private void AnalyzeDictionaryTypeRegistrations(RegistrationAnalysisResult result)
+        {
+            _analysisResults.Add("=== 分析字典类型注册 ===");
+            
+            var dictionaryTypes = new[]
+            {
+                typeof(Dictionary<int, GameObjects.TroopDetail.EventEffect.EventEffectKind>),
+                typeof(Dictionary<int, GameObjects.TroopDetail.EventEffect.EventEffect>),
+                typeof(Dictionary<int, GameObjects.ArchitectureDetail.EventEffect.EventEffectKind>),
+                typeof(Dictionary<int, GameObjects.ArchitectureDetail.EventEffect.EventEffect>)
+            };
+            
+            foreach (var dictType in dictionaryTypes)
+            {
+                CheckTypeRegistration(dictType, result);
+            }
+        }
+
+        private void CheckNamespaceConflicts(RegistrationAnalysisResult result)
+        {
+            _analysisResults.Add("=== 检查命名空间冲突 ===");
+            
+            // 检查是否存在同名但不同命名空间的类型
+            var typeGroups = _registeredTypes
+                .Where(t => t.Name.Contains("EventEffect"))
+                .GroupBy(t => t.Name)
+                .Where(g => g.Count() > 1);
+            
+            foreach (var group in typeGroups)
+            {
+                var conflictingTypes = group.ToList();
+                if (conflictingTypes.Count > 1)
+                {
+                    result.NamespaceConflicts.Add(new NamespaceConflict
+                    {
+                        TypeName = group.Key,
+                        ConflictingNamespaces = conflictingTypes.Select(t => t.Namespace).ToList(),
+                        Severity = ConflictSeverity.High,
+                        RecommendedResolution = $"使用完全限定名称区分 {group.Key} 类型"
+                    });
+                    
+                    _analysisResults.Add($"发现命名空间冲突: {group.Key}");
+                    foreach (var type in conflictingTypes)
+                    {
+                        _analysisResults.Add($"  - {type.FullName}");
+                    }
+                }
+            }
+        }
+
+        private void CheckTypeRegistration(Type type, RegistrationAnalysisResult result)
+        {
+            if (_registeredTypes.Contains(type))
+            {
+                result.RegisteredTypes.Add(type);
+                _analysisResults.Add($"✓ 已注册: {type.FullName}");
+            }
+            else
+            {
+                result.MissingTypes.Add(type);
+                _analysisResults.Add($"✗ 缺失: {type.FullName}");
+            }
+        }
+
+        private List<Type> FindEventEffectKindDerivedTypes(string namespaceName)
+        {
+            var derivedTypes = new List<Type>();
+            
+            try
+            {
+                var assembly = Assembly.GetAssembly(typeof(GameObjects.GameObject));
+                if (assembly != null)
+                {
+                    var types = assembly.GetTypes()
+                        .Where(t => t.Namespace == namespaceName && 
+                                   t.Name.Contains("EventEffect") && 
+                                   !t.IsAbstract && 
+                                   t.BaseType?.Name == "EventEffectKind")
+                        .ToList();
+                    
+                    derivedTypes.AddRange(types);
+                }
+            }
+            catch (Exception ex)
+            {
+                _analysisResults.Add($"查找派生类型时出错: {ex.Message}");
+            }
+            
+            return derivedTypes;
+        }
+
+        /// <summary>
+        /// 生成修复建议
+        /// </summary>
+        public List<string> GenerateFixRecommendations(RegistrationAnalysisResult result)
+        {
+            var recommendations = new List<string>();
+            
+            recommendations.Add("=== EventEffectKindTable 修复建议 ===");
+            
+            if (result.MissingTypes.Any())
+            {
+                recommendations.Add($"需要添加 {result.MissingTypes.Count} 个缺失的类型注册:");
+                
+                foreach (var missingType in result.MissingTypes.OrderBy(t => t.FullName))
+                {
+                    recommendations.Add($"[JsonSerializable(typeof({missingType.FullName}))]");
+                }
+            }
+            
+            if (result.NamespaceConflicts.Any())
+            {
+                recommendations.Add("需要解决以下命名空间冲突:");
+                foreach (var conflict in result.NamespaceConflicts)
+                {
+                    recommendations.Add($"- {conflict.TypeName}: {conflict.ConflictingNamespaces.Count} 个冲突命名空间");
+                    foreach (var ns in conflict.ConflictingNamespaces)
+                    {
+                        recommendations.Add($"  * {ns}");
+                    }
+                }
+            }
+            
+            recommendations.Add("建议的修复步骤:");
+            recommendations.Add("1. 在 GameJsonContext.cs 中添加缺失的 [JsonSerializable] 属性");
+            recommendations.Add("2. 确保所有 EventEffectKind 派生类都已注册");
+            recommendations.Add("3. 验证字典类型注册的完整性");
+            recommendations.Add("4. 测试修复后的反序列化功能");
+            
+            return recommendations;
+        }
+    }
+
+    /// <summary>
+    /// 注册分析结果
+    /// </summary>
+    public class RegistrationAnalysisResult
+    {
+        public List<Type> RegisteredTypes { get; set; } = new List<Type>();
+        public List<Type> MissingTypes { get; set; } = new List<Type>();
+        public List<NamespaceConflict> NamespaceConflicts { get; set; } = new List<NamespaceConflict>();
+        public List<string> AnalysisLog { get; set; } = new List<string>();
+    }
+}

@@ -1,5 +1,5 @@
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -121,12 +121,19 @@ namespace MapViewSelectorPlugin
         {
             if (!StaticMethods.PointInRectangle(position, this.TitleDisplayPosition))
             {
-                if (this.ReturnToListButtonSelected)
+                // 直接检查点击位置，不仅依赖于 MouseMove 的选中状态
+                bool clickedReturnButton = StaticMethods.PointInRectangle(position, this.ReturnToListButtonText.DisplayPosition);
+                bool clickedOKButton = StaticMethods.PointInRectangle(position, this.OKButtonText.DisplayPosition);
+                bool clickedCancelButton = StaticMethods.PointInRectangle(position, this.CancelButtonText.DisplayPosition);
+                
+                if (this.ReturnToListButtonSelected || clickedReturnButton)
                 {
+                    System.Diagnostics.Debug.WriteLine("[MapViewSelector] 返回列表按钮被点击");
                     this.IsShowing = false;
                 }
-                else if (this.OKButtonSelected)
+                else if (this.OKButtonSelected || clickedOKButton)
                 {
+                    System.Diagnostics.Debug.WriteLine("[MapViewSelector] 确定按钮被点击");
                     this.IsShowing = false;
                     if (this.OKFunction != null)
                     {
@@ -136,8 +143,9 @@ namespace MapViewSelectorPlugin
                     this.iGameFrame.OK();
 
                 }
-                else if (this.CancelButtonSelected)
+                else if (this.CancelButtonSelected || clickedCancelButton)
                 {
+                    System.Diagnostics.Debug.WriteLine("[MapViewSelector] 取消按钮被点击");
                     this.IsShowing = false;
                     this.iGameFrame.Cancel();
                 }
@@ -150,11 +158,13 @@ namespace MapViewSelectorPlugin
                         if ((architectureByPosition != null) && this.SelectingGameObjectList.HasGameObject(architectureByPosition.ID))
                         {
                             architectureByPosition.Selected = !architectureByPosition.Selected;
+                            System.Diagnostics.Debug.WriteLine($"[MapViewSelector] 建筑 {architectureByPosition.Name} 选中状态: {architectureByPosition.Selected}");
                             if (!this.MultiSelecting && architectureByPosition.Selected)
                             {
                                 this.SelectingGameObjectList.SetOtherUnSelected(architectureByPosition);
                                 if (Setting.Current.GlobalVariables.SingleSelectionOneClick)
                                 {
+                                    System.Diagnostics.Debug.WriteLine("[MapViewSelector] SingleSelectionOneClick 触发自动确定");
                                     this.iTabList.RefreshEditable();
                                     this.IsShowing = false;
                                     this.iGameFrame.OK();
@@ -170,6 +180,7 @@ namespace MapViewSelectorPlugin
             ///////////////////////////////////////////////////////////////////
             this.dragging = false;
         }
+
 
         private void screen_OnMouseMove(Point position, bool leftDown)
         {

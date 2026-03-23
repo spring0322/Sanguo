@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using GameObjects;
+using GameManager;
 using GameObjects.Influences;
+using GameObjects.PersonDetail;
+using Microsoft.Xna.Framework;
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     /// <summary>
     /// 智能AI管理器 - 管理所有智能部队的高级AI行为
@@ -57,7 +60,7 @@ namespace GameGlobal
         /// <summary>
         /// 执行所有AI部队的回合
         /// </summary>
-        public void ExecuteAITurns(Scenario scenario)
+        public void ExecuteAITurns(GameScenario scenario)
         {
             var startTime = DateTime.Now;
             
@@ -122,22 +125,33 @@ namespace GameGlobal
             // 将部队分组以避免冲突
             var groups = GroupTroopsForParallelExecution(actionOrder);
             
-            foreach (var group in groups)
+            // 🔥 技术性修复：设置 IsWorking = true，抑制背景线程触发画面更新引起的 VertexBuffer 崩溃
+            bool originalIsWorking = global::GameManager.Session.Current.IsWorking;
+            global::GameManager.Session.Current.IsWorking = true;
+            
+            try
             {
-                Parallel.ForEach(group, troop =>
+                foreach (var group in groups)
                 {
-                    try
+                    Parallel.ForEach(group, troop =>
                     {
-                        var personality = _troopPersonalities[troop.ID];
-                        ApplyPersonalityModifiers(troop, personality);
-                        
-                        troop.ExecuteSmartTurn();
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[SmartAIManager] {troop.Name} 并行执行失败: {ex.Message}");
-                    }
-                });
+                        try
+                        {
+                            var personality = _troopPersonalities[troop.ID];
+                            ApplyPersonalityModifiers(troop, personality);
+                            
+                            troop.ExecuteSmartTurn();
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[SmartAIManager] {troop.Name} 并行执行失败: {ex.Message}");
+                        }
+                    });
+                }
+            }
+            finally
+            {
+                global::GameManager.Session.Current.IsWorking = originalIsWorking;
             }
         }
 
@@ -384,7 +398,7 @@ namespace GameGlobal
                 AIDifficulty.Easy => 0.7f,
                 AIDifficulty.Normal => 1.0f,
                 AIDifficulty.Hard => 1.3f,
-                AIDifficulty.Expert => 1.5f,
+                AIDifficulty.Nightmare => 1.5f,
                 _ => 1.0f
             };
 
@@ -408,7 +422,7 @@ namespace GameGlobal
             _strategicTargets = new Dictionary<int, Point>();
         }
 
-        public void UpdateGlobalSituation(Scenario scenario, IEnumerable<SmartTroop> troops)
+        public void UpdateGlobalSituation(GameScenario scenario, IEnumerable<SmartTroop> troops)
         {
             // 更新势力分组
             UpdateFactionGroups(troops);
@@ -446,7 +460,7 @@ namespace GameGlobal
             }
         }
 
-        private void IdentifyStrategicTargets(Scenario scenario, IEnumerable<SmartTroop> troops)
+        private void IdentifyStrategicTargets(GameScenario scenario, IEnumerable<SmartTroop> troops)
         {
             // 识别重要的战略目标
             // 例如：敌方英雄、重要建筑、关键地形等
@@ -546,23 +560,12 @@ namespace GameGlobal
                     EnableCoordination = false;
                     break;
                 case AIDifficulty.Hard:
-                case AIDifficulty.Expert:
+                case AIDifficulty.Nightmare:
                     EnableAdvancedTactics = true;
                     EnableCoordination = true;
                     break;
             }
         }
-    }
-
-    /// <summary>
-    /// AI难度枚举
-    /// </summary>
-    public enum AIDifficulty
-    {
-        Easy,
-        Normal,
-        Hard,
-        Expert
     }
 
     /// <summary>

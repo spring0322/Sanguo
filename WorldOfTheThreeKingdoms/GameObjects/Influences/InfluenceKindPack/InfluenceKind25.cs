@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 
@@ -8,6 +8,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind25 : InfluenceKind
     {
+        [DataMember]
         private int multiple = 1;
 
         public override void ApplyInfluenceKind(Person person)

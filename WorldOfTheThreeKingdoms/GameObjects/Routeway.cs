@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects.MapDetail;
 using Microsoft.Xna.Framework;
 using System;
@@ -6,13 +6,14 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Text;
+using System.Text.Json.Serialization;
 using GameManager;
-
 
 namespace GameObjects
 {
     [DataContract]
-    public class Routeway : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持右键菜单访问
+    public partial class Routeway : GameObject, System.Text.Json.Serialization.IJsonOnDeserialized
     {
         [DataMember]
         private bool avoidWater;
@@ -42,8 +43,49 @@ namespace GameObjects
 
         public Dictionary<Point, RoutePoint> RouteArea = new Dictionary<Point, RoutePoint>();
 
+        // 不直接序列化LinkedList，而是序列化为数组
         [DataMember]
+        private RoutePoint[] _routePointsArray;
+
+        // 运行时使用的LinkedList，不序列化
         public LinkedList<RoutePoint> RoutePoints = new LinkedList<RoutePoint>();
+
+        // 序列化前的回调：将LinkedList转换为数组
+        [OnSerializing]
+        private void OnSerializing(StreamingContext context)
+        {
+            if (RoutePoints != null)
+            {
+                _routePointsArray = new RoutePoint[RoutePoints.Count];
+                int index = 0;
+                foreach (var point in RoutePoints)
+                {
+                    _routePointsArray[index++] = point;
+                }
+            }
+        }
+
+        // 反序列化后的回调：将数组转换回LinkedList
+        [OnDeserialized]
+        private void OnDeserialized(StreamingContext context) => RebuildRoutePoints();
+
+        /// <summary>
+        /// IJsonOnDeserialized 接口实现 —— STJ AOT 模式下的反序列化回调。
+        /// [OnDeserialized] 特性仅被 DataContractSerializer 识别，STJ AOT 不调用它。
+        /// </summary>
+        void System.Text.Json.Serialization.IJsonOnDeserialized.OnDeserialized() => RebuildRoutePoints();
+
+        private void RebuildRoutePoints()
+        {
+            RoutePoints = new LinkedList<RoutePoint>();
+            if (_routePointsArray != null)
+            {
+                foreach (var point in _routePointsArray)
+                {
+                    RoutePoints.AddLast(point);
+                }
+            }
+        }
 
         private bool showArea;
         
@@ -66,13 +108,28 @@ namespace GameObjects
 
         private void AddRoutePointArea(RoutePoint routePoint)
         {
-            GameArea area = GameArea.GetViewArea(routePoint.Position, this.Radius, true, this.BelongedFaction);
+            // 🔥 修复：使用 GetRangeArea 而不是 GetViewArea
+            // 日期：2026-03-22
+            // 原因：粮道补给范围使用"半径"语义，不需要考虑战争迷雾
+            GameArea area = GameArea.GetRangeArea(routePoint.Position, this.Radius, true);
             foreach (Point point in area.Area)
             {
                 if (!Session.Current.Scenario.PositionOutOfRange(point) && !this.RouteArea.ContainsKey(point))
                 {
                     this.RouteArea.Add(point, routePoint);
-                    Session.Current.Scenario.MapTileData[point.X, point.Y].AddSupplyingRoutePoint(routePoint);
+                    
+                    // 🔥 修复 NullReferenceException：添加安全检查
+                    if (Session.Current?.Scenario?.MapTileData != null)
+                    {
+                        try
+                        {
+                            Session.Current.Scenario.MapTileData[point.X, point.Y].AddSupplyingRoutePoint(routePoint);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[Routeway.AddSupplyingRoutePoint] 访问异常: {ex.Message}");
+                        }
+                    }
                 }
             }
         }
@@ -210,7 +267,7 @@ namespace GameObjects
             }
 
             if (this.EndArchitecture != null && 
-                this.StartArchitecture.BelongedSection.AIDetail.AutoRun && this.BelongedFaction == this.EndArchitecture.BelongedFaction)
+                this.StartArchitecture.BelongedSection != null && this.StartArchitecture.BelongedSection.AIDetail.AutoRun && this.BelongedFaction == this.EndArchitecture.BelongedFaction)
             {
                 this.Close();
                 return;
@@ -874,7 +931,7 @@ namespace GameObjects
                                 {
                                     return true;
                                 }
-                                if ((((legion.Kind == LegionKind.Offensive) && (this.Building || this.IsActive)) && (this.DestinationArchitecture == legion.WillArchitecture)) && this.IsEnough(this.LastPoint.ConsumptionRate, minTroopFoodCost * 30))
+                                if (legion.IsOffensive() && (this.Building || this.IsActive) && (this.DestinationArchitecture == legion.WillArchitecture) && this.IsEnough(this.LastPoint.ConsumptionRate, minTroopFoodCost * 30))
                                 {
                                     return true;
                                 }
@@ -909,6 +966,7 @@ namespace GameObjects
             }
         }
 
+        [JsonIgnore]
         public LinkedListNode<RoutePoint> LastActiveNode
         {
             get

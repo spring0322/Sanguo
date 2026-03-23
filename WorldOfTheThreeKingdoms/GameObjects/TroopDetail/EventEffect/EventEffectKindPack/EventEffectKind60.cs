@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GameObjects.TroopDetail.EventEffect;

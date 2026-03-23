@@ -10,7 +10,10 @@ using GameManager;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 AOT 序列化修复：移除 [DataContract]，添加 [JsonConverter]
+    // 问题：[DataContract] 与 System.Text.Json 源生成器冲突，导致反序列化为 GameObjectList
+    // 解决：使用 GameObjectListConverter 处理序列化
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class YearTable : GameObjectList
     {
         [DataMember]
@@ -88,17 +91,17 @@ namespace GameObjects
             if (occupied.BelongedFaction != null)
             {
                 this.addTableEntry(date, composeFactionList(occupier.BelongedFaction, occupied.BelongedFaction),
-                    String.Format(yearTableStrings["occupy"], occupier.BelongedFaction.Name, occupier.DisplayName, occupied.BelongedFaction.Name,
+                    String.Format(yearTableStrings["occupy"], occupier.BelongedFaction?.Name ?? "", occupier.DisplayName, occupied.BelongedFaction?.Name ?? "",
                         occupied.Name), true);
-                this.addPersonInGameBiography(occupier.Leader, date, String.Format(yearTableStrings["occupy_p"], occupier.BelongedFaction.Name,
-                    occupier.DisplayName, occupied.BelongedFaction.Name, occupied.Name));
+                this.addPersonInGameBiography(occupier.Leader, date, String.Format(yearTableStrings["occupy_p"], occupier.BelongedFaction?.Name ?? "",
+                    occupier.DisplayName, occupied.BelongedFaction?.Name ?? "", occupied.Name));
             }
             else
             {
                 this.addTableEntry(date, composeFactionList(occupier.BelongedFaction, occupied.BelongedFaction),
-                    String.Format(yearTableStrings["occupyEmpty"], occupier.BelongedFaction.Name, occupier.DisplayName,
+                    String.Format(yearTableStrings["occupyEmpty"], occupier.BelongedFaction?.Name ?? "", occupier.DisplayName,
                         occupied.Name), true);
-                this.addPersonInGameBiography(occupier.Leader, date, String.Format(yearTableStrings["occupyEmpty_p"], occupier.BelongedFaction.Name,
+                this.addPersonInGameBiography(occupier.Leader, date, String.Format(yearTableStrings["occupyEmpty_p"], occupier.BelongedFaction?.Name ?? "",
                     occupier.DisplayName, occupied.Name));
             }
         }
@@ -130,9 +133,9 @@ namespace GameObjects
         public void addChangeFactionEntry(GameDate date, Faction oldFaction, Faction newFaction)
         {
             this.addTableEntry(date, composeFactionList(oldFaction, newFaction),
-                String.Format(yearTableStrings["changeFaction"], newFaction.Name, oldFaction.Name, oldFaction.Leader.Name), true);
+                String.Format(yearTableStrings["changeFaction"], newFaction.Name, oldFaction.Name, oldFaction.Leader?.Name ?? ""), true);
             this.addPersonInGameBiography(newFaction.Leader, date,
-                String.Format(yearTableStrings["changeFaction_p"], newFaction.Name, oldFaction.Name, oldFaction.Leader.Name));
+                String.Format(yearTableStrings["changeFaction_p"], newFaction.Name, oldFaction.Name, oldFaction.Leader?.Name ?? ""));
         }
 
         public void addFactionDestroyedEntry(GameDate date, Faction f)
@@ -168,17 +171,17 @@ namespace GameObjects
         public void addSelfBecomeEmperorEntry(GameDate date, Faction f)
         {
             this.addTableEntry(date, composeFactionList(f),
-                String.Format(yearTableStrings["selfBecomeEmperor"], f.Name, f.Leader.Name), true);
+                String.Format(yearTableStrings["selfBecomeEmperor"], f.Name, f.Leader?.Name ?? ""), true);
             this.addPersonInGameBiography(f.Leader, date,
-                String.Format(yearTableStrings["selfBecomeEmperor_p"], f.Name, f.Leader.Name));
+                String.Format(yearTableStrings["selfBecomeEmperor_p"], f.Name, f.Leader?.Name ?? ""));
         }
 
         public void addBecomeEmperorLegallyEntry(GameDate date, Person oldEmperor, Faction f)
         {
             this.addTableEntry(date, composeFactionList(f),
-                String.Format(yearTableStrings["becomeEmperorLegally"], oldEmperor.Name, f.Name, f.Leader.Name), true);
+                String.Format(yearTableStrings["becomeEmperorLegally"], oldEmperor?.Name ?? "", f.Name, f.Leader?.Name ?? ""), true);
             this.addPersonInGameBiography(f.Leader, date,
-                String.Format(yearTableStrings["becomeEmperorLegally_p"], oldEmperor.Name, f.Name, f.Leader.Name));
+                String.Format(yearTableStrings["becomeEmperorLegally_p"], oldEmperor?.Name ?? "", f.Name, f.Leader?.Name ?? ""));
         }
 
         public void addExecuteEntry(GameDate date, Person executor, Person executed, Faction oldFaction)
@@ -207,21 +210,21 @@ namespace GameObjects
         {
             String killedFactionName = killed.BelongedFaction == null ? "" : killed.BelongedFaction.Name;
             this.addTableEntry(date, composeFactionList(killer.BelongedFaction, killed.BelongedFaction),
-                String.Format(yearTableStrings["assassinate"], killedFactionName, killed.Name, killed.BelongedArchitecture.Name, killedFactionName, killer.Name, killed.Age), true);
+                String.Format(yearTableStrings["assassinate"], killedFactionName, killed.Name, killed.BelongedArchitecture?.Name ?? "", killedFactionName, killer.Name, killed.Age), true);
             this.addPersonInGameBiography(killer, date,
-                String.Format(yearTableStrings["assassinate_p"], killedFactionName, killed.Name, killed.BelongedArchitecture.Name, killedFactionName, killer.Name, killed.Age));
+                String.Format(yearTableStrings["assassinate_p"], killedFactionName, killed.Name, killed.BelongedArchitecture?.Name ?? "", killedFactionName, killer.Name, killed.Age));
             this.addPersonInGameBiography(killed, date,
-                String.Format(yearTableStrings["assassinate_q"], killedFactionName, killed.Name, killed.BelongedArchitecture.Name, killedFactionName, killer.Name, killed.Age));
+                String.Format(yearTableStrings["assassinate_q"], killedFactionName, killed.Name, killed.BelongedArchitecture?.Name ?? "", killedFactionName, killer.Name, killed.Age));
         }
 
         public void addReverseAssassinateEntry(GameDate date, Person killer, Person killed)
         {
             this.addTableEntry(date, composeFactionList(killer.BelongedFaction, killed.BelongedFaction),
-                String.Format(yearTableStrings["reverse_assassinate"], killed.BelongedFaction.Name, killed.Name, killed.BelongedArchitecture.Name, killer.BelongedFaction.Name, killer.Name, killed.Age), true);
+                String.Format(yearTableStrings["reverse_assassinate"], killed.BelongedFaction?.Name ?? "", killed.Name, killed.BelongedArchitecture?.Name ?? "", killer.BelongedFaction?.Name ?? "", killer.Name, killed.Age), true);
             this.addPersonInGameBiography(killer, date,
-                String.Format(yearTableStrings["reverse_assassinate_p"], killed.BelongedFaction.Name, killed.Name, killed.BelongedArchitecture.Name, killer.BelongedFaction.Name, killer.Name, killed.Age));
+                String.Format(yearTableStrings["reverse_assassinate_p"], killed.BelongedFaction?.Name ?? "", killed.Name, killed.BelongedArchitecture?.Name ?? "", killer.BelongedFaction?.Name ?? "", killer.Name, killed.Age));
             this.addPersonInGameBiography(killed, date,
-                String.Format(yearTableStrings["reverse_assassinate_q"], killed.BelongedFaction.Name, killed.Name, killed.BelongedArchitecture.Name, killer.BelongedFaction.Name, killer.Name, killed.Age));
+                String.Format(yearTableStrings["reverse_assassinate_q"], killed.BelongedFaction?.Name ?? "", killed.Name, killed.BelongedArchitecture?.Name ?? "", killer.BelongedFaction?.Name ?? "", killer.Name, killed.Age));
         }
 
         public void addChildrenBornEntry(GameDate date, Person factionLeader, Person feizi, Person born)
@@ -259,9 +262,9 @@ namespace GameObjects
         public void addGameEndWithUniteEntry(GameDate date, Faction f)
         {
             this.addTableEntry(date, composeFactionList(f),
-                String.Format(yearTableStrings["gameEndWithUnite"], f.Name, f.Leader.Name), true);
+                String.Format(yearTableStrings["gameEndWithUnite"], f.Name, f.Leader?.Name ?? ""), true);
             this.addPersonInGameBiography(f.Leader, date,
-                String.Format(yearTableStrings["gameEndWithUnite_p"], f.Name, f.Leader.Name));
+                String.Format(yearTableStrings["gameEndWithUnite_p"], f.Name, f.Leader?.Name ?? ""));
         }
 
         public void addAdvanceGuanjueEntry(GameDate date, Faction f, guanjuezhongleilei guanjue)
@@ -374,27 +377,27 @@ namespace GameObjects
         public void addBecomePrincessEntry(GameDate date, Person p, Person leader)
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format(yearTableStrings["becomePrincess"], p.Name, p.BelongedArchitecture.Name, leader.Name), false);
+                String.Format(yearTableStrings["becomePrincess"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["becomePrincess_p"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["becomePrincess_p"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
             this.addPersonInGameBiography(leader, date,
-                String.Format(yearTableStrings["becomePrincess_q"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["becomePrincess_q"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
         }
 
         public void addReleaseFromPrincessEntry(GameDate date, Person p, Person leader)
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format(yearTableStrings["releaseFromPrincess"], p.Name, p.BelongedArchitecture.Name, leader.Name), false);
+                String.Format(yearTableStrings["releaseFromPrincess"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["releaseFromPrincess_p"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["releaseFromPrincess_p"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
             this.addPersonInGameBiography(leader, date,
-                String.Format(yearTableStrings["releaseFromPrincess_q"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["releaseFromPrincess_q"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
         }
 
         public void addSelectPrinceEntry(GameDate date, Person p, Person leader)//立储
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format(yearTableStrings["selectPrince"], p.Name, p.BelongedArchitecture.Name, leader.Name), false);
+                String.Format(yearTableStrings["selectPrince"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
                 String.Format(yearTableStrings["selectPrince_p"], p.Name, leader.Name));
             this.addPersonInGameBiography(leader, date,
@@ -404,64 +407,69 @@ namespace GameObjects
         public void addAppointMayorEntry(GameDate date, Person p, Person leader)//太守
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format(yearTableStrings["appointMayor"], p.Name, p.BelongedArchitecture.Name, leader.Name), false);
+                String.Format(yearTableStrings["appointMayor"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["appointMayor_p"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["appointMayor_p"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
             //this.addPersonInGameBiography(leader, date,
-            // String.Format(yearTableStrings["appointMayor_q"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+            // String.Format(yearTableStrings["appointMayor_q"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
         }
 
         public void addAppointAdvisorEntry(GameDate date, Person p, Person leader)//军师
         {
-            this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format("{0}被{2}任命为军师", p.Name, p.BelongedFaction.Name, leader.Name), false);
+            if (p == null || leader == null) return;
+            
+            Faction pFaction = p.BelongedFaction;
+            string factionName = pFaction != null ? pFaction.Name : "未知势力";
+
+            this.addTableEntry(date, composeFactionList(pFaction),
+                String.Format("{0}被{2}任命为军师", p.Name, factionName, leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format("{0}被{2}任命为{1}的军师", p.Name, p.BelongedFaction.Name, leader.Name));
+                String.Format("{0}被{2}任命为{1}的军师", p.Name, factionName, leader.Name));
         }
 
         public void addRemoveAdvisorEntry(GameDate date, Person p, Person leader)//罢免军师
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format("{0}被{2}罢免军师职务", p.Name, p.BelongedFaction.Name, leader.Name), false);
+                String.Format("{0}被{2}罢免军师职务", p.Name, p.BelongedFaction?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format("{0}被{2}罢免{1}的军师职务", p.Name, p.BelongedFaction.Name, leader.Name));
+                String.Format("{0}被{2}罢免{1}的军师职务", p.Name, p.BelongedFaction?.Name ?? "", leader.Name));
         }
 
         public void addZhaoXianEntry(GameDate date, Person p, Person leader)
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction),
-                String.Format(yearTableStrings["zhaoXian"], p.Name, p.BelongedArchitecture.Name, leader.Name), false);
+                String.Format(yearTableStrings["zhaoXian"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["zhaoXian_p"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+                String.Format(yearTableStrings["zhaoXian_p"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
             // this.addPersonInGameBiography(leader, date,
-            // String.Format(yearTableStrings["dengYong_q"], p.Name, p.BelongedArchitecture.Name, leader.Name));
+            // String.Format(yearTableStrings["dengYong_q"], p.Name, p.BelongedArchitecture?.Name ?? "", leader.Name));
         }
 
 
         public void addOutOfPrincessEntry(GameDate date, Person p, Faction capturer)
         {
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["outOfPrincess_p"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer.Leader.Name));
+                String.Format(yearTableStrings["outOfPrincess_p"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer?.Name ?? "贼军", capturer?.Leader?.Name ?? ""));
         }
 
         public void addOutOfPrincessByLeaderDeathEntry(GameDate date, Person p, Faction capturer)
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction, capturer),
-                String.Format(yearTableStrings["outOfPrincessByLeaderDeath"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer.Leader.Name), false);
+                String.Format(yearTableStrings["outOfPrincessByLeaderDeath"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer?.Name ?? "贼军", capturer?.Leader?.Name ?? ""), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["outOfPrincessByLeaderDeath_p"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer.Leader.Name));
+                String.Format(yearTableStrings["outOfPrincessByLeaderDeath_p"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer?.Name ?? "贼军", capturer?.Leader?.Name ?? ""));
         }
 
         public void addChangeFactionPrincessEntry(GameDate date, Person p, Faction capturer)
         {
             this.addTableEntry(date, composeFactionList(p.BelongedFaction, capturer),
-                String.Format(yearTableStrings["changeFactionPrincess"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer == null ? "贼军" : capturer.Leader.Name), false);
+                String.Format(yearTableStrings["changeFactionPrincess"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer?.Name ?? "贼军", capturer?.Leader?.Name ?? ""), false);
             this.addPersonInGameBiography(p, date,
-                String.Format(yearTableStrings["changeFactionPrincess_p"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer == null ? "贼军" : capturer.Leader.Name));
+                String.Format(yearTableStrings["changeFactionPrincess_p"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer?.Name ?? "贼军", capturer?.Leader?.Name ?? ""));
             if (capturer != null)
             {
                 this.addPersonInGameBiography(capturer.Leader, date,
-                    String.Format(yearTableStrings["changeFactionPrincess_q"], p.Name, p.BelongedArchitecture.Name, capturer == null ? "贼军" : capturer.Name, capturer == null ? "贼军" : capturer.Leader.Name));
+                    String.Format(yearTableStrings["changeFactionPrincess_q"], p.Name, p.BelongedArchitecture?.Name ?? "", capturer.Name, capturer.Leader?.Name ?? ""));
             }
         }
 

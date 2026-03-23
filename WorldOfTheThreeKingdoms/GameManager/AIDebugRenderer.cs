@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using WorldOfTheThreeKingdoms.GameManager;
 
 namespace GameManager
@@ -198,5 +198,43 @@ namespace GameManager
         /// 检查是否已初始化
         /// </summary>
         public static bool IsInitialized => _isInitialized;
+
+        /// <summary>
+        /// 绘制调试日志
+        /// </summary>
+        public static void DrawLogs(SpriteBatch spriteBatch, Vector2 position, Color color)
+        {
+            if (spriteBatch == null) return;
+
+            try
+            {
+                var logs = AIDebugger.GetLogs();
+                if (logs == null || logs.Count == 0) return;
+                
+                Vector2 currentPos = position;
+                float lineHeight = 20f; // 默认行高
+                
+                // 尝试使用Session.Current.Font计算行高
+                if (Session.Current?.Font != null)
+                {
+                    try
+                    {
+                        lineHeight = Session.Current.Font.MeasureString("A").Y;
+                    }
+                    catch { lineHeight = 20f; }
+                }
+
+                foreach (var log in logs)
+                {
+                    // 使用CacheManager绘制文本（与游戏其他部分一致）
+                    CacheManager.DrawString(Session.Current.Font, log, currentPos, color, 0f, Vector2.Zero, 0.6f, Microsoft.Xna.Framework.Graphics.SpriteEffects.None, 0.01f);
+                    currentPos.Y += lineHeight * 0.6f;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIDebugRenderer] DrawLogs 错误: {ex.Message}");
+            }
+        }
     }
 }

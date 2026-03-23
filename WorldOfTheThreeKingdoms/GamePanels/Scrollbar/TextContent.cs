@@ -7,6 +7,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using FontStashSharp;
 using GameManager;
+using Bounds = GameManager.Bounds;
 namespace GamePanels.Scrollbar
 {
     class TextContent : IFrameContent
@@ -44,7 +45,15 @@ namespace GamePanels.Scrollbar
             bounds = CacheManager.CalculateTextBounds(Session.Current.Font, Text, OffsetPos, Scale);
             Width = 0;
             bounds.ForEach(b => Width = Width > b.Width ? Width : b.Width);
-            Height = bounds[bounds.Count - 1].Y2 - bounds[0].Y;
+            // 🔥 技术性修复：避免IndexOutOfRangeException
+            if (bounds.Count > 0)
+            {
+                Height = bounds[bounds.Count - 1].Y2 - bounds[0].Y;
+            }
+            else
+            {
+                Height = 0; // 默认高度
+            }
         }
 
         /// <summary>

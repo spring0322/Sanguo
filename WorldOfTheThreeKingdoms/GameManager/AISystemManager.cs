@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using GameObjects;
+using global::GameGlobal;
+using global::GameManager;
 
-namespace GameManager
+namespace WorldOfTheThreeKingdoms.GameManager
 {
     /// <summary>
     /// AI系统管理器 - 统一管理和协调所有AI子系统
@@ -47,8 +49,7 @@ namespace GameManager
                 System.Diagnostics.Debug.WriteLine("[AISystemManager] 开始初始化AI系统...");
 
                 // 初始化战略地图
-                _strategicMap = new StrategicMap();
-                _strategicMap.Initialize(mapWidth, mapHeight);
+                _strategicMap = new StrategicMap(mapWidth, mapHeight);
 
                 // 初始化决策管理器
                 _decisionManager = new AIDecisionManager();
@@ -172,7 +173,15 @@ namespace GameManager
                 if (_diplomacySystem != null)
                 {
                     // 初始化外交关系（如果还没有初始化）
-                    var allFactions = Session.Current.Scenario.Factions.GetList();
+                    var allFactions = new List<Faction>();
+                    foreach (var obj in Session.Current.Scenario.Factions.GetList())
+                    {
+                        if (obj is Faction f)
+                        {
+                            allFactions.Add(f);
+                        }
+                    }
+                    
                     if (allFactions.Count > 0)
                     {
                         _diplomacySystem.InitializeDiplomacy(allFactions);
@@ -201,7 +210,7 @@ namespace GameManager
                     _learningSystem.CleanupOldData();
 
                     // 分析玩家行为（如果是玩家势力）
-                    if (faction.IsPlayer)
+                    if (faction.Controlling)
                     {
                         var playerPattern = _learningSystem.AnalyzePlayerBehavior(faction);
                         System.Diagnostics.Debug.WriteLine($"[AILearning] 玩家行为模式: {playerPattern}");
@@ -242,9 +251,14 @@ namespace GameManager
             {
                 if (faction.Troops == null) return;
 
-                var troops = faction.Troops.GetList()
-                    .Where(t => t.Status == TroopStatus.一般 && t.Leader != null)
-                    .ToList();
+                var troops = new List<Troop>();
+                foreach (var obj in faction.Troops.GetList())
+                {
+                    if (obj is Troop t && t.Status == TroopStatus.一般 && t.Leader != null)
+                    {
+                        troops.Add(t);
+                    }
+                }
 
                 foreach (var troop in troops)
                 {
@@ -329,15 +343,31 @@ namespace GameManager
                 }
 
                 // 3. 势力中心
-                if (troop.BelongedFaction?.ArchitectureList != null)
+                if (troop.BelongedFaction?.Architectures != null)
                 {
-                    var factionArchs = troop.BelongedFaction.ArchitectureList.GetList();
+                    var factionArchs = troop.BelongedFaction.Architectures.GetList();
                     if (factionArchs.Count > 0)
                     {
-                        var centerArch = factionArchs.OrderBy(a => 
-                            Session.Current.Scenario.GetSimpleDistance(troop.Position, a.Position)
-                        ).First();
-                        return centerArch.Position;
+                        Architecture centerArch = null;
+                        float minDistance = float.MaxValue;
+                        
+                        foreach (var obj in factionArchs)
+                        {
+                            if (obj is Architecture arch)
+                            {
+                                float distance = Session.Current.Scenario.GetSimpleDistance(troop.Position, arch.Position);
+                                if (distance < minDistance)
+                                {
+                                    minDistance = distance;
+                                    centerArch = arch;
+                                }
+                            }
+                        }
+                        
+                        if (centerArch != null)
+                        {
+                            return centerArch.Position;
+                        }
                     }
                 }
 
@@ -361,16 +391,33 @@ namespace GameManager
                 if (troop?.BelongedFaction == null) return null;
 
                 var allArchitectures = Session.Current.Scenario.Architectures.GetList();
-                var enemyArchitectures = allArchitectures
-                    .Where(a => a.BelongedFaction != null && 
-                               !troop.BelongedFaction.IsFriendly(a.BelongedFaction))
-                    .ToList();
+                var enemyArchitectures = new List<Architecture>();
+                
+                foreach (var obj in allArchitectures)
+                {
+                    if (obj is Architecture a && a.BelongedFaction != null && 
+                        !troop.BelongedFaction.IsFriendly(a.BelongedFaction))
+                    {
+                        enemyArchitectures.Add(a);
+                    }
+                }
 
                 if (enemyArchitectures.Count == 0) return null;
 
-                return enemyArchitectures.OrderBy(a => 
-                    Session.Current.Scenario.GetSimpleDistance(troop.Position, a.Position)
-                ).First();
+                Architecture nearest = null;
+                float minDistance = float.MaxValue;
+                
+                foreach (var arch in enemyArchitectures)
+                {
+                    float distance = Session.Current.Scenario.GetSimpleDistance(troop.Position, arch.Position);
+                    if (distance < minDistance)
+                    {
+                        minDistance = distance;
+                        nearest = arch;
+                    }
+                }
+                
+                return nearest;
             }
             catch (Exception ex)
             {
@@ -537,6 +584,7 @@ namespace GameManager
                 _strategicMap?.Clear();
                 _decisionManager?.ClearBehaviorCache();
                 _tacticalCoordinator?.ClearAllGroups();
+                WorldOfTheThreeKingdoms.GameManager.AICoordinatedAttackSystem.Instance.Update(); // Cleanup expired coordinations
                 
                 System.Diagnostics.Debug.WriteLine("[AISystemManager] AI系统已重置");
             }

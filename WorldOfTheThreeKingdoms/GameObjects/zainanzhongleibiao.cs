@@ -45,6 +45,9 @@ namespace GameObjects
 
         public void LoadFromString(zainanzhongleibiao suoyouzainanzhonglei, string zainanzhongleiIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(zainanzhongleiIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = zainanzhongleiIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             zainanzhongleilei kind = null;

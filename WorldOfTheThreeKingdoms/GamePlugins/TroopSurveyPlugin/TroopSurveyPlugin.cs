@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -55,6 +55,11 @@ namespace TroopSurveyPlugin
             XmlNode node = nextSibling.ChildNodes.Item(0);
             this.troopSurvey.BackgroundTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopSurvey\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.troopSurvey.BackgroundSize = new Microsoft.Xna.Framework.Point(int.Parse(node.Attributes.GetNamedItem("Width").Value), int.Parse(node.Attributes.GetNamedItem("Height").Value));
+            
+            // 初始化主将头像位置 - 横向UI布局(240x121)，头像为正方形1:1比例
+            // 头像在左侧，70x70正方形，右下移动避免压住左上角
+            this.troopSurvey.LeaderPortraitPosition = new Microsoft.Xna.Framework.Rectangle(10, 10, 80, 80);
+            
             node = nextSibling.ChildNodes.Item(1);
             this.troopSurvey.FactionTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopSurvey\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.troopSurvey.FactionPosition = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -63,54 +68,54 @@ namespace TroopSurveyPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.NameText = new FreeText(font, color);
             this.troopSurvey.NameText.Position = rectangle;
-            this.troopSurvey.NameText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.NameText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(3);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.KindText = new FreeText(font, color);
             this.troopSurvey.KindText.Position = rectangle;
-            this.troopSurvey.KindText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.KindText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(4);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.FactionText = new FreeText(font, color);
             this.troopSurvey.FactionText.Position = rectangle;
-            this.troopSurvey.FactionText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.FactionText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(5);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.CombatTitleText = new FreeText(font, color);
             this.troopSurvey.CombatTitleText.Position = rectangle;
-            this.troopSurvey.CombatTitleText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.CombatTitleText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(6);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.ArmyText = new FreeText(font, color);
             this.troopSurvey.ArmyText.Position = rectangle;
-            this.troopSurvey.ArmyText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.ArmyText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(7);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.MoraleText = new FreeText(font, color);
             this.troopSurvey.MoraleText.Position = rectangle;
-            this.troopSurvey.MoraleText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.MoraleText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(8);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.CombativityText = new FreeText(font, color);
             this.troopSurvey.CombativityText.Position = rectangle;
-            this.troopSurvey.CombativityText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.CombativityText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(9);
             rectangle = StaticMethods.LoadRectangleFromXMLNode(node);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopSurvey.StatusText = new FreeText(font, color);
             this.troopSurvey.StatusText.Position = rectangle;
-            this.troopSurvey.StatusText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopSurvey.StatusText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
         }
 
         public void SetFaction(object faction)
         {
-            this.troopSurvey.ViewingFaction = faction as Faction;
+            this.troopSurvey.ViewingFaction = (faction is Faction ? (Faction)faction : null);
             if (this.troopSurvey.ViewingFaction != null)
             {
                 InformationLevel knownAreaData = this.troopSurvey.ViewingFaction.GetKnownAreaData(this.troopSurvey.TroopToSurvey.Position);
@@ -134,7 +139,7 @@ namespace TroopSurveyPlugin
         public void SetTroop(object troop)
         {
             this.enableUpdate = this.troopSurvey.TroopToSurvey != troop;
-            this.troopSurvey.TroopToSurvey = troop as Troop;
+            this.troopSurvey.TroopToSurvey = (troop is Troop ? (Troop)troop : null);
         }
 
         public void Update(GameTime gameTime)
@@ -198,4 +203,5 @@ namespace TroopSurveyPlugin
         }
     }
 }
+
 

@@ -76,8 +76,16 @@ namespace GameObjects
                 dict.Add(item, item);
                 if (dict.Count > bound)
                 {
-                    removed = dict.Keys.Last();
-                    dict.Remove(removed);
+                    // 🔥 安全修复：避免InvalidOperationException
+                    if (dict.Keys.Count > 0)
+                    {
+                        removed = dict.Keys.Last();
+                        dict.Remove(removed);
+                    }
+                    else
+                    {
+                        removed = default(T);
+                    }
                 }
                 else
                 {
@@ -86,7 +94,9 @@ namespace GameObjects
             }
             else
             {
-                removed = item;
+                // 🔥 修复：如果item已存在，不应该返回item本身让调用方销毁
+                // 应该返回null，表示没有部队被淘汰
+                removed = default(T);
             }
         }
 

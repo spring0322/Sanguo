@@ -231,6 +231,20 @@ namespace WorldOfTheThreeKingdoms.Helpers
                 System.Diagnostics.Debug.WriteLine($"[DDSLoader] DDS加载失败: {filePath}");
                 System.Diagnostics.Debug.WriteLine($"[DDSLoader] 异常信息: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[DDSLoader] 异常堆栈: {ex.StackTrace}");
+                
+                // 🔥 检测GPU设备丢失错误
+                bool isGpuError = ex.GetType().FullName.Contains("SharpDX") ||
+                                  ex.Message.Contains("DEVICE_REMOVED") ||
+                                  ex.Message.Contains("0x887A") ||
+                                  ex.Message.Contains("D3D11") ||
+                                  ex.Message.Contains("DXGI_ERROR");
+                
+                if (isGpuError)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DDSLoader] 检测到GPU设备错误，标记设备丢失");
+                    global::GameManager.CacheManager.MarkDeviceLost(ex);
+                }
+                
                 return null;
             }
         }

@@ -1,4 +1,4 @@
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -98,18 +98,19 @@ namespace GameObjects.Animations
         {
             get
             {
-                if (this.texture == null)
+                // 🔥 关键修复：检查纹理是否已被释放
+                // 日期：2026-03-13
+                // 问题：战法动画纹理被 CacheManager.Clear 释放后，this.texture 仍持有已释放的引用
+                // 原因：延迟加载只检查 null，不检查 IsDisposed
+                // 解决：如果纹理已释放，重新加载
+                // 🔥 ANTI-BAND-AID：不添加空检查，让 GetTempTexture 返回 null 时崩溃
+                // 如果崩溃，说明 TextureFileName 错误或纹理文件缺失，需要追溯数据源
+                if (this.texture == null || this.texture.Texture.IsDisposed)
                 {
-                    //try
-                    //{
                     this.texture = CacheManager.GetTempTexture(this.TextureFileName);
+                    // 🔥 直接访问，不检查 null
                     this.texture.Width = this.TextureWidth;
                     this.texture.Height = this.TextureHeight;
-                    //}
-                    //catch (OutOfMemoryException)
-                    //{
-                    //    this.texture = new Texture2D(1, 1);
-                    //}
                 }
                 return this.texture;
             }

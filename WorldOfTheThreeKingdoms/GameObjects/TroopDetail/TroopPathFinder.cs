@@ -51,17 +51,23 @@ namespace GameObjects.TroopDetail
             {
                 this.troop.ClearSecondTierPath();
             }
+            
+            // 🔥 2026-03-12 新增：设置调试用部队名称
+            #if DEBUG
+            this.firstTierPathFinder.DebugTroopName = this.troop.DisplayName;
+            #endif
+            
             if (this.firstTierPathFinder.GetPath(start, end, kind))
             {
-                this.troop.FirstTierPath = new List<Point>();
-                this.firstTierPathFinder.SetPath(this.troop.FirstTierPath);
+                // 🔥 修复：重用现有列表，而不是创建新列表
+                // this.troop.FirstTierPath = new List<Point>();  // ❌ 旧代码
+                this.troop.FirstTierPathInternal.Clear();  // ✅ 新代码
+                this.firstTierPathFinder.SetPath(this.troop.FirstTierPathInternal);
                 return true;
             }
-            else
-            {
-                this.troop.Destination = this.troop.Position;
-                return false;
-            }
+            
+            this.troop.Destination = this.troop.Position;
+            return false;
         }
 
         private List<Point> BuildFirstTierSimulatePath(Point start, Point end, MilitaryKind kind)
@@ -240,7 +246,8 @@ namespace GameObjects.TroopDetail
                 {
                     if (this.CurrentDestination == this.End)
                     {
-                        this.troop.FirstTierPath = new List<Point>();
+                        // 🔥 修复：重用现有列表
+                        this.troop.FirstTierPathInternal.Clear();
                         return true;
                     }
                     return this.BuildFirstTierPath(start, this.CurrentDestination, kind);
@@ -293,7 +300,8 @@ namespace GameObjects.TroopDetail
             {
                 if (this.secondTierPathFinder.GetPath(point, point2, kind))
                 {
-                    this.troop.SecondTierPath = new List<Point>();
+                    // 🔥 修复：重用现有列表
+                    this.troop.SecondTierPath.Clear();
                     this.secondTierPathFinder.SetPath(this.troop.SecondTierPath);
                     this.troop.BelongedFaction.AddSecondTierKnownPath(this.troop.SecondTierPath);
                     return true;
@@ -326,7 +334,8 @@ namespace GameObjects.TroopDetail
             {
                 if (this.thirdTierPathFinder.GetPath(point, point2, kind))
                 {
-                    this.troop.ThirdTierPath = new List<Point>();
+                    // 🔥 修复：重用现有列表
+                    this.troop.ThirdTierPath.Clear();
                     this.thirdTierPathFinder.SetPath(this.troop.ThirdTierPath);
                     this.troop.BelongedFaction.AddThirdTierKnownPath(this.troop.ThirdTierPath);
                     return true;
@@ -358,10 +367,17 @@ namespace GameObjects.TroopDetail
             {
                 return false;
             }
-            if (this.End == this.troop.Destination)
-            {
-                this.troop.Destination = position;
-            }
+            
+            // 🔥 根本修复：移除自动调整目标的逻辑，避免反复修改 Destination
+            // 日期：2026-03-12
+            // 问题：每次搜索都修改 Destination，导致路径被清空，触发无限寻路循环
+            // 根因：movableAreaSearcher_OnCompare 在可移动区域搜索时被反复调用
+            //       原逻辑 `if (this.End == this.troop.Destination)` 在搜索过程中一直为真
+            //       导致每个可达点都触发 Destination 修改，清空路径，重新寻路
+            // 解决：移除这个自动调整逻辑，让调用方负责设置正确的目标
+            //       如果目标不可达，应该在寻路前就检查并调整，而不是在搜索过程中修改
+            // 注意：CurrentDestination 仍需设置，用于内部搜索状态跟踪
+            
             this.CurrentDestination = position;
             return true;
         }

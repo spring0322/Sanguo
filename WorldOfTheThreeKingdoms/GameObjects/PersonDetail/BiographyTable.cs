@@ -29,7 +29,14 @@ namespace GameObjects.PersonDetail
         public Biography GetBiography(int biographyID)
         {
             Biography biography = null;
-            this.Biographys.TryGetValue(biographyID, out biography);
+            var exists = this.Biographys.TryGetValue(biographyID, out biography);
+            
+            // 🔥 调试：记录查找失败的情况
+            if (!exists && biographyID < 5)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetBiography] ID={biographyID} 不存在于字典中，字典总数={this.Biographys.Count}");
+            }
+            
             return biography;
         }
 

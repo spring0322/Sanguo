@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -90,6 +90,19 @@ namespace MarshalSectionDialogPlugin
             this.marshalSectionDialog.ArchitectureListButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
             this.marshalSectionDialog.ArchitectureListButtonPosition = StaticMethods.LoadRectangleFromXMLNode(node);
             this.marshalSectionDialog.ArchitectureListButtonDisplayTexture = this.marshalSectionDialog.ArchitectureListButtonTexture;
+            
+            // 初始化部队列表按钮（复用城池列表按钮的纹理，位置在其右侧）
+            this.marshalSectionDialog.TroopListButtonTexture = this.marshalSectionDialog.ArchitectureListButtonTexture;
+            this.marshalSectionDialog.TroopListButtonSelectedTexture = this.marshalSectionDialog.ArchitectureListButtonSelectedTexture;
+            var archButtonPos = this.marshalSectionDialog.ArchitectureListButtonPosition;
+            this.marshalSectionDialog.TroopListButtonPosition = new Rectangle(
+                archButtonPos.X + archButtonPos.Width + 5, 
+                archButtonPos.Y, 
+                archButtonPos.Width, 
+                archButtonPos.Height
+            );
+            this.marshalSectionDialog.TroopListButtonDisplayTexture = this.marshalSectionDialog.TroopListButtonTexture;
+            
             node = nextSibling.ChildNodes.Item(5);
             this.marshalSectionDialog.AIDetailButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
             this.marshalSectionDialog.AIDetailButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -101,11 +114,62 @@ namespace MarshalSectionDialogPlugin
             this.marshalSectionDialog.OrientationButtonDisabledTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("Disabled").Value);
             this.marshalSectionDialog.OrientationButtonPosition = StaticMethods.LoadRectangleFromXMLNode(node);
             this.marshalSectionDialog.OrientationButtonDisplayTexture = this.marshalSectionDialog.OrientationButtonDisabledTexture;
+            
+            // 加载军团长按钮 (如果存在)
+            if (nextSibling.ChildNodes.Count > 7)
+            {
+                node = nextSibling.ChildNodes.Item(7);
+                this.marshalSectionDialog.SectionLeaderButtonTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
+                this.marshalSectionDialog.SectionLeaderButtonSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\MarshalSectionDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
+                this.marshalSectionDialog.SectionLeaderButtonPosition = StaticMethods.LoadRectangleFromXMLNode(node);
+            }
+            else
+            {
+                // 回退: 使用委任目标按钮位置，向下偏移
+                this.marshalSectionDialog.SectionLeaderButtonTexture = this.marshalSectionDialog.AIDetailButtonTexture;
+                this.marshalSectionDialog.SectionLeaderButtonSelectedTexture = this.marshalSectionDialog.AIDetailButtonSelectedTexture;
+                var pos = this.marshalSectionDialog.OrientationButtonPosition;
+                this.marshalSectionDialog.SectionLeaderButtonPosition = new Rectangle(pos.X + pos.Width + 5, pos.Y, pos.Width, pos.Height);
+            }
+            this.marshalSectionDialog.SectionLeaderButtonDisplayTexture = this.marshalSectionDialog.SectionLeaderButtonTexture;
+            
+            // 初始化军团长按钮文字为“选择都督”
+            if (this.marshalSectionDialog.LabelTexts.Count > 0)
+            {
+                var baseLabel = this.marshalSectionDialog.LabelTexts[2].Label; // 尝试使用“委任模式”标签的字体
+                this.marshalSectionDialog.SectionLeaderButtonText = new FreeText(baseLabel.Builder, Color.White);
+                this.marshalSectionDialog.SectionLeaderButtonText.Align = TextAlign.Middle;
+                this.marshalSectionDialog.SectionLeaderButtonText.Text = "选择都督";
+                this.marshalSectionDialog.SectionLeaderButtonText.Position = this.marshalSectionDialog.SectionLeaderButtonPosition;
+            }
+
+            // 初始化都督显示 (对齐第一列，与确定按钮同高，名称紫色，上下对齐)
+            if (this.marshalSectionDialog.LabelTexts.Count > 0)
+            {
+                var refLabel = this.marshalSectionDialog.LabelTexts[0].Label;
+                var okPos = this.marshalSectionDialog.OKButtonPosition;
+                
+                // 纵向居中于确定按钮，确保两者 Y 坐标一致以实现上下对齐
+                int vOffset = okPos.Y + (okPos.Height - 35) / 2;
+
+                // 都督标签 (红色)
+                this.marshalSectionDialog.ViceroyLabel = new FreeText(new Font(refLabel.Builder.Name, refLabel.Builder.Size * 1.6f, refLabel.Builder.Style), Color.Red);
+                this.marshalSectionDialog.ViceroyLabel.Align = TextAlign.Left;
+                this.marshalSectionDialog.ViceroyLabel.Text = "都督";
+                this.marshalSectionDialog.ViceroyLabel.Position = new Rectangle(refLabel.Position.X, vOffset, 80, 40);
+
+                // 都督姓名 (紫色, 上下对齐使用相同 vOffset)
+                this.marshalSectionDialog.ViceroyName = new FreeText(new Font(refLabel.Builder.Name, refLabel.Builder.Size * 1.4f, refLabel.Builder.Style), Color.MediumPurple);
+                this.marshalSectionDialog.ViceroyName.Align = TextAlign.Left;
+                this.marshalSectionDialog.ViceroyName.Text = "----";
+                this.marshalSectionDialog.ViceroyName.Position = new Rectangle(refLabel.Position.X + 60, vOffset, 300, 40);
+            }
+
         }
 
         public void SetFaction(object faction)
         {
-            this.marshalSectionDialog.SetFaction(faction as Faction);
+            this.marshalSectionDialog.SetFaction((faction is Faction ? (Faction)faction : null));
         }
 
         public void SetGameFrame(IGameFrame iGameFrame)
@@ -195,4 +259,5 @@ namespace MarshalSectionDialogPlugin
         }
     }
 }
+
 

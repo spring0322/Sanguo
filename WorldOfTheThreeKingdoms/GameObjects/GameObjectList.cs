@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -11,22 +11,13 @@ using System.Runtime.Serialization;
 using GameObjects.TroopDetail;
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
+using System.Text.Json.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
-    [KnownType(typeof(AttackDefaultKindList))]
-    [KnownType(typeof(AttackTargetKindList))]
-    [KnownType(typeof(CastDefaultKindList))]
-    [KnownType(typeof(CastTargetKindList))]
-    [KnownType(typeof(InformationKindList))]
-    [KnownType(typeof(PersonGeneratorTypeList))]
-    [KnownType(typeof(TrainPolicyList))]
-    [KnownType(typeof(TreasureCreationSettingList))]
-
-    public class GameObjectList : IEnumerable
+public class GameObjectList : IEnumerable<GameObject>
     {
-        private List<GameObject> gameObjects = new List<GameObject>();
+        private List<GameObject> gameObjects = [];
         [DataMember]
         public bool IsNumber;
         [DataMember]
@@ -37,6 +28,7 @@ namespace GameObjects
         private bool immutable = false;
 
         [DataMember]
+        [JsonInclude]
         public List<GameObject> GameObjects
         {
             get
@@ -54,7 +46,7 @@ namespace GameObjects
             immutable = true;
         }
 
-        public void Add(GameObject t)
+        public virtual void Add(GameObject t)
         {
             if (immutable)
                 throw new Exception("Trying to add things to an immutable list");
@@ -85,22 +77,61 @@ namespace GameObjects
 
         public List<int> GenerateRandomIndexList()
         {
-            int num;
-            List<int> list = new List<int>();
-            for (num = 0; num < this.Count; num++)
+            List<int> list = [];
+
+            // 🔥 FIX: 添加空列表检查
+            if (this.Count <= 0)
             {
-                list.Add(num);
+                return list; // 返回空列表
             }
-            for (num = 0; num < this.Count; num++)
+
+            try
             {
-                int num2 = num + GameObject.Random(this.Count - num);
-                int num3 = list[num];
-                list[num] = list[num2];
-                list[num2] = num3;
+                // 生成索引列表
+                for (int num = 0; num < this.Count; num++)
+                {
+                    list.Add(num);
+                }
+
+                // Fisher-Yates 洗牌算法
+                for (int num = 0; num < this.Count; num++)
+                {
+                    int remainingCount = this.Count - num;
+                    if (remainingCount <= 0) break; // 安全检查
+
+                    int num2 = num + GameObject.Random(remainingCount);
+
+                    // 🔥 FIX: 添加边界检查
+                    if (num2 >= 0 && num2 < list.Count && num >= 0 && num < list.Count)
+                    {
+                        int num3 = list[num];
+                        list[num] = list[num2];
+                        list[num2] = num3;
+                    }
+                }
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GenerateRandomIndexList] 异常: {ex.Message}, Count: {this.Count}");
+
+                // 发生异常时，返回简单的顺序索引列表
+                list.Clear();
+                for (int i = 0; i < this.Count; i++)
+                {
+                    list.Add(i);
+                }
+            }
+
             return list;
         }
 
+        // 🔥 新增：实现 IEnumerable<GameObject> 的泛型版本
+        IEnumerator<GameObject> IEnumerable<GameObject>.GetEnumerator()
+        {
+            return this.gameObjects.GetEnumerator();
+        }
+
+        // 保留原有的非泛型版本以保持向后兼容
         public IEnumerator GetEnumerator()
         {
             return this.GetRealEnumerator();
@@ -108,7 +139,11 @@ namespace GameObjects
 
         public int GetFreeGameObjectID()
         {
-            for (int i = this.Count; i >= 0; i--)
+            // 🔥 修复：从 0 开始向上找第一个未使用的 ID
+            // 日期：2026-02-12
+            // 问题：原逻辑从 Count 倒数到 0，导致空列表时返回 0
+            // 结果：所有新对象 ID 都是 0，造成冲突
+            for (int i = 0; i <= this.Count; i++)
             {
                 if (!this.HasGameObject(i))
                 {
@@ -243,10 +278,55 @@ namespace GameObjects
         public GameObjectList GetRandomList()
         {
             GameObjectList list = new GameObjectList();
-            foreach (int num in this.GenerateRandomIndexList())
+
+            // 🔥 FIX: 添加边界检查，防止 ArgumentOutOfRangeException
+            if (this.gameObjects.Count == 0)
             {
-                list.Add(this.gameObjects[num]);
+                return list; // 返回空列表
             }
+
+            try
+            {
+                foreach (int num in this.GenerateRandomIndexList())
+                {
+                    // 🔥 FIX: 添加边界检查，防止索引超出范围
+                    if (num >= 0 && num < this.gameObjects.Count)
+                    {
+                        list.Add(this.gameObjects[num]);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GetRandomList] 警告：索引 {num} 超出范围 (Count: {this.gameObjects.Count})");
+                    }
+                }
+            }
+            catch (ArgumentOutOfRangeException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetRandomList] ArgumentOutOfRangeException: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[GetRandomList] 当前列表大小: {this.gameObjects.Count}");
+
+                // 发生异常时，返回当前可用的所有对象（不随机化）
+                foreach (GameObject obj in this.gameObjects)
+                {
+                    if (obj != null)
+                    {
+                        list.Add(obj);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetRandomList] 未知异常: {ex.Message}");
+                // 发生其他异常时，也返回当前可用的所有对象
+                foreach (GameObject obj in this.gameObjects)
+                {
+                    if (obj != null)
+                    {
+                        list.Add(obj);
+                    }
+                }
+            }
+
             return list;
         }
 
@@ -327,7 +407,8 @@ namespace GameObjects
 
         public List<string> LoadFromString(GameObjectList list, string dataString)
         {
-            List<string> errorMsg = new List<string>();
+            List<string> errorMsg = [];
+            if (string.IsNullOrEmpty(dataString)) return errorMsg;
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.Clear();
@@ -383,7 +464,16 @@ namespace GameObjects
             StringBuilder builder = new StringBuilder();
             foreach (GameObject obj2 in this.gameObjects)
             {
-                builder.Append(obj2.ID.ToString() + " ");
+                // 🔥 根本修复：ID >= 0 都是合法的，只有 ID < 0 才是无效
+                // ID=0 是完全合法的游戏对象ID，不应该被跳过
+                if (obj2.ID >= 0)
+                {
+                    builder.Append(obj2.ID.ToString() + " ");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameObjectList.SaveToString] ⚠️ 警告：跳过无效ID的对象 - ID={obj2.ID}, Type={obj2.GetType().Name}");
+                }
             }
             return builder.ToString();
         }
@@ -437,10 +527,22 @@ namespace GameObjects
         {
             get
             {
+                // 🔥 FIX: 添加边界检查，防止ArgumentOutOfRangeException
+                if (index < 0 || index >= this.gameObjects.Count)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameObjectList] 索引越界: index={index}, Count={this.gameObjects.Count}");
+                    throw new ArgumentOutOfRangeException(nameof(index), $"Index {index} is out of range. Collection has {this.gameObjects.Count} items.");
+                }
                 return this.gameObjects[index];
             }
             set
             {
+                // 🔥 FIX: 添加边界检查，防止ArgumentOutOfRangeException
+                if (index < 0 || index >= this.gameObjects.Count)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GameObjectList] 设置索引越界: index={index}, Count={this.gameObjects.Count}");
+                    throw new ArgumentOutOfRangeException(nameof(index), $"Index {index} is out of range. Collection has {this.gameObjects.Count} items.");
+                }
                 this.gameObjects[index] = value;
             }
         }
@@ -599,5 +701,6 @@ namespace GameObjects
         */
         //end 
     }
+
 }
 

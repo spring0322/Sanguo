@@ -1,0 +1,476 @@
+using NUnit.Framework;
+using System;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Implementations;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+using TestResult = WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models.TestResult;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 回归测试 - 确保修复不会破坏现有功能
+    /// 需求 5.3, 5.4: 确保修复不破坏现有功能、测试向后兼容性、验证所有EventEffectKind变体
+    /// </summary>
+    [TestFixture]
+    public class RegressionTests : TestBase
+    {
+        private RootCauseAnalyzer _rootCauseAnalyzer;
+        private TypeRegistrationValidator _typeRegistrationValidator;
+        private DeserializationTester _deserializationTester;
+        private FixImplementationEngine _fixImplementationEngine;
+        private JsonSerializerOptions _gameJsonOptions;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            _rootCauseAnalyzer = new RootCauseAnalyzer();
+            _typeRegistrationValidator = new TypeRegistrationValidator();
+            _deserializationTester = new DeserializationTester();
+            _fixImplementationEngine = new FixImplementationEngine(
+                _rootCauseAnalyzer,
+                _typeRegistrationValidator,
+                _deserializationTester,
+                new FallbackHandler());
+            
+            _gameJsonOptions = new JsonSerializerOptions
+            {
+                TypeInfoResolver = GameJsonContext.Default,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            };
+        }
+
+        /// <summary>
+        /// 测试修复不会破坏现有的GameJsonContext功能 - 需求 5.3
+        /// </summary>
+        [Test]
+        public void ExistingGameJsonContext_AfterFix_ShouldMaintainFunctionality()
+        {
+            // Arrange - 测试现有的GameJsonContext功能，使用简单类型
+            var testStrings = new[]
+            {
+                "Test1",
+                "Test2",
+                "Test3"
+            };
+
+            var testNumbers = new[]
+            {
+                1, 2, 3, 100, 200
+            };
+
+            // Act & Assert - 验证基本序列化功能仍然工作
+            foreach (var testStr in testStrings)
+            {
+                var json = JsonSerializer.Serialize(testStr, _gameJsonOptions);
+                Assert.That(json, Is.Not.Null.And.Not.Empty, 
+                    $"字符串 {testStr} 应该能够序列化");
+
+                // 验证JSON格式正确
+                Assert.That(() => JsonDocument.Parse(json), Throws.Nothing, 
+                    "生成的JSON应该是有效格式");
+            }
+
+            foreach (var testNum in testNumbers)
+            {
+                var json = JsonSerializer.Serialize(testNum, _gameJsonOptions);
+                Assert.That(json, Is.Not.Null.And.Not.Empty, 
+                    $"数字 {testNum} 应该能够序列化");
+
+                // 验证JSON格式正确
+                Assert.That(() => JsonDocument.Parse(json), Throws.Nothing, 
+                    "生成的JSON应该是有效格式");
+            }
+
+            // 验证GameJsonContext的基本配置没有被破坏
+            Assert.That(_gameJsonOptions.TypeInfoResolver, Is.Not.Null, 
+                "TypeInfoResolver应该仍然配置正确");
+            Assert.That(_gameJsonOptions.TypeInfoResolver, Is.EqualTo(GameJsonContext.Default), 
+                "应该使用正确的GameJsonContext");
+        }
+
+        /// <summary>
+        /// 测试向后兼容性 - 旧版本的JSON数据应该仍能正确处理 - 需求 5.4
+        /// </summary>
+        [Test]
+        public async Task BackwardCompatibility_LegacyJsonData_ShouldStillWork()
+        {
+            // Arrange - 模拟旧版本的JSON数据格式
+            var legacyFormats = new[]
+            {
+                // 旧版本可能的EventEffectKindTable格式
+                @"{""EventEffectKinds"":{""0"":{""ID"":0,""Name"":""旧格式测试""}}}",
+                
+                // 可能的简化格式
+                @"{""EventEffectKinds"":{""1"":{""ID"":1}}}",
+                
+                // 可能的扩展格式
+                @"{""EventEffectKinds"":{""2"":{""ID"":2,""Name"":""扩展格式"",""Description"":""额外字段""}}}",
+                
+                // 空数据格式
+                @"{""EventEffectKinds"":{}}",
+                
+                // 最小格式
+                @"{}"
+            };
+
+            // Act & Assert - 测试每种旧格式
+            foreach (var legacyJson in legacyFormats)
+            {
+                var result = await _deserializationTester.TestEventEffectKindTableDeserialization(legacyJson);
+                
+                Assert.That(result, Is.Not.Null, 
+                    $"旧格式JSON应该被处理: {legacyJson.Substring(0, Math.Min(50, legacyJson.Length))}...");
+                
+                // 即使反序列化失败，也应该有适当的错误处理
+                if (!result.IsSuccessful)
+                {
+                    Assert.That(result.Errors, Is.Not.Null.And.Not.Empty, 
+                        "失败时应该提供详细的错误信息");
+                    TestContext.WriteLine($"旧格式处理结果: {result.DetailedReport}");
+                }
+                else
+                {
+                    Assert.That(result.Metrics, Is.Not.Null, 
+                        "成功时应该返回反序列化指标");
+                    TestContext.WriteLine($"旧格式成功处理: {legacyJson.Substring(0, Math.Min(30, legacyJson.Length))}...");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 测试所有EventEffectKind变体的处理 - 需求 5.4
+        /// </summary>
+        [Test]
+        public async Task AllEventEffectKindVariants_ShouldBeHandledCorrectly()
+        {
+            // Arrange - 准备所有已知的EventEffectKind变体
+            var eventEffectKindVariants = new Dictionary<string, string>
+            {
+                ["TroopDetail.EventEffect"] = CreateTroopEventEffectKindJson(),
+                ["ArchitectureDetail.EventEffect"] = CreateArchitectureEventEffectKindJson(),
+                ["Mixed"] = CreateMixedEventEffectKindJson(),
+                ["Complex"] = CreateComplexEventEffectKindJson(),
+                ["Minimal"] = CreateMinimalEventEffectKindJson()
+            };
+
+            var results = new Dictionary<string, TestResult>();
+
+            // Act - 测试每个变体
+            foreach (var variant in eventEffectKindVariants)
+            {
+                var result = await _deserializationTester.TestEventEffectKindTableDeserialization(variant.Value);
+                results[variant.Key] = result;
+                
+                TestContext.WriteLine($"变体 {variant.Key}: {(result.IsSuccessful ? "成功" : "失败")}");
+                if (!result.IsSuccessful && result.DetailedReport != null)
+                {
+                    TestContext.WriteLine($"  错误: {result.DetailedReport}");
+                }
+            }
+
+            // Assert - 验证所有变体都被适当处理
+            Assert.That(results.Count, Is.EqualTo(eventEffectKindVariants.Count), 
+                "所有变体都应该被测试");
+
+            foreach (var result in results)
+            {
+                Assert.That(result.Value, Is.Not.Null, 
+                    $"变体 {result.Key} 应该返回测试结果");
+                
+                // 验证错误处理的完整性
+                if (!result.Value.IsSuccessful)
+                {
+                    Assert.That(result.Value.Errors, Is.Not.Null.And.Not.Empty, 
+                        $"变体 {result.Key} 失败时应该提供错误详情");
+                }
+            }
+
+            // 统计成功率
+            var successCount = results.Values.Count(r => r.IsSuccessful);
+            var successRate = successCount / (double)results.Count;
+            
+            TestContext.WriteLine($"EventEffectKind变体测试统计:");
+            TestContext.WriteLine($"  总数: {results.Count}");
+            TestContext.WriteLine($"  成功: {successCount}");
+            TestContext.WriteLine($"  成功率: {successRate:P}");
+            
+            // 至少应该有一些变体能够成功处理
+            Assert.That(successCount, Is.GreaterThan(0), 
+                "至少应该有一些EventEffectKind变体能够成功处理");
+        }
+
+        /// <summary>
+        /// 测试修复后的类型注册不会影响其他类型 - 需求 5.3
+        /// </summary>
+        [Test]
+        public void TypeRegistrationFix_ShouldNotAffectOtherTypes()
+        {
+            // Arrange - 获取一些非EventEffectKind相关的类型
+            var otherTypes = new[]
+            {
+                typeof(string),
+                typeof(int),
+                typeof(Dictionary<string, object>),
+                typeof(List<string>),
+                typeof(object)
+            };
+
+            // Act & Assert - 验证其他类型的验证仍然正常工作
+            foreach (var type in otherTypes)
+            {
+                var validationResult = _typeRegistrationValidator.ValidateDependentTypes(type);
+                
+                Assert.That(validationResult, Is.Not.Null, 
+                    $"类型 {type.Name} 的验证应该正常工作");
+                Assert.That(validationResult.Errors, Is.Not.Null, 
+                    $"类型 {type.Name} 应该返回错误列表（即使为空）");
+                Assert.That(validationResult.Warnings, Is.Not.Null, 
+                    $"类型 {type.Name} 应该返回警告列表（即使为空）");
+                
+                TestContext.WriteLine($"类型 {type.Name}: {validationResult.Errors.Count} 错误, {validationResult.Warnings.Count} 警告");
+            }
+        }
+
+        /// <summary>
+        /// 测试修复引擎不会产生破坏性更改 - 需求 5.3
+        /// </summary>
+        [Test]
+        public async Task FixEngine_ShouldNotProduceBreakingChanges()
+        {
+            // Arrange - 创建一个模拟的诊断结果
+            var mockDiagnosticResult = new DiagnosticResult
+            {
+                IsSuccessful = false,
+                Issues = new List<DiagnosticIssue>
+                {
+                    new DiagnosticIssue
+                    {
+                        Severity = IssueSeverity.Error,
+                        Category = IssueCategory.TypeRegistration,
+                        Description = "测试问题",
+                        DetailedAnalysis = "测试分析",
+                        RecommendedActions = new List<string> { "测试修复" }
+                    }
+                }
+            };
+
+            // Act - 生成修复计划
+            var fixPlan = await _fixImplementationEngine.GenerateFixPlan(mockDiagnosticResult);
+
+            // Assert - 验证修复计划的安全性
+            Assert.That(fixPlan, Is.Not.Null, "应该生成修复计划");
+            Assert.That(fixPlan.Steps, Is.Not.Null, "修复计划应该包含步骤");
+            
+            // 验证修复计划不包含危险操作
+            var dangerousOperations = new[] { "删除", "移除", "清除", "重置" };
+            foreach (var step in fixPlan.Steps)
+            {
+                var stepDescription = step.Description?.ToLower() ?? "";
+                var stepName = step.Name?.ToLower() ?? "";
+                
+                foreach (var dangerous in dangerousOperations)
+                {
+                    Assert.That(stepDescription, Does.Not.Contain(dangerous), 
+                        $"修复步骤不应包含危险操作: {dangerous}");
+                    Assert.That(stepName, Does.Not.Contain(dangerous), 
+                        $"修复步骤名称不应包含危险操作: {dangerous}");
+                }
+            }
+
+            // 验证影响评估
+            Assert.That(fixPlan.EstimatedImpact, Is.Not.Null, "应该包含影响评估");
+            Assert.That(fixPlan.EstimatedImpact.CompatibilityImpact, Is.Not.EqualTo(ImpactLevel.High), 
+                "兼容性影响不应该是高级别");
+            
+            TestContext.WriteLine($"修复计划包含 {fixPlan.Steps.Count} 个步骤");
+            TestContext.WriteLine($"兼容性影响级别: {fixPlan.EstimatedImpact.CompatibilityImpact}");
+        }
+
+        /// <summary>
+        /// 测试现有错误处理机制仍然有效 - 需求 5.3
+        /// </summary>
+        [Test]
+        public async Task ExistingErrorHandling_ShouldRemainEffective()
+        {
+            // Arrange - 准备各种错误场景
+            var errorScenarios = new Dictionary<string, (string data, Type expectedExceptionType)>
+            {
+                ["InvalidJson"] = ("{invalid json", typeof(JsonException)),
+                ["NullData"] = (null, typeof(ArgumentNullException)),
+                ["EmptyString"] = ("", typeof(JsonException)),
+                ["MalformedStructure"] = ("{\"EventEffectKinds\":{\"invalid\":}", typeof(JsonException))
+            };
+
+            // Act & Assert - 测试每种错误场景
+            foreach (var scenario in errorScenarios)
+            {
+                TestContext.WriteLine($"测试错误场景: {scenario.Key}");
+                
+                try
+                {
+                    var result = await _deserializationTester.TestEventEffectKindTableDeserialization(scenario.Value.data);
+                    
+                    // 应该返回结果而不是抛出异常
+                    Assert.That(result, Is.Not.Null, 
+                        $"错误场景 {scenario.Key} 应该返回结果而不是抛出异常");
+                    
+                    if (!result.IsSuccessful)
+                    {
+                        Assert.That(result.Errors, Is.Not.Null.And.Not.Empty, 
+                            $"错误场景 {scenario.Key} 应该提供错误详情");
+                        TestContext.WriteLine($"  错误详情: {result.DetailedReport}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 如果抛出异常，应该是预期的类型
+                    Assert.That(ex.GetType(), Is.EqualTo(scenario.Value.expectedExceptionType).Or.AssignableFrom(scenario.Value.expectedExceptionType), 
+                        $"错误场景 {scenario.Key} 抛出了意外的异常类型: {ex.GetType().Name}");
+                    TestContext.WriteLine($"  抛出预期异常: {ex.GetType().Name}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 测试性能回归 - 确保修复不会显著影响性能 - 需求 5.3
+        /// </summary>
+        [Test]
+        public async Task PerformanceRegression_ShouldNotDegrade()
+        {
+            // Arrange
+            var testData = CreateStandardEventEffectKindJson();
+            var iterations = 20;
+            var executionTimes = new List<long>();
+
+            // Act - 执行多次性能测试
+            for (int i = 0; i < iterations; i++)
+            {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                
+                // 执行核心操作
+                var analysisResult = await _rootCauseAnalyzer.ValidateTypeRegistrationChain(typeof(object));
+                var validationResult = _typeRegistrationValidator.ValidateEventEffectKindTableRegistration();
+                var deserializationResult = await _deserializationTester.TestEventEffectKindTableDeserialization(testData);
+                
+                stopwatch.Stop();
+                executionTimes.Add(stopwatch.ElapsedMilliseconds);
+            }
+
+            // Assert - 验证性能指标
+            var averageTime = executionTimes.Average();
+            var maxTime = executionTimes.Max();
+            var minTime = executionTimes.Min();
+            var standardDeviation = CalculateStandardDeviation(executionTimes);
+
+            TestContext.WriteLine($"性能回归测试结果:");
+            TestContext.WriteLine($"  平均时间: {averageTime:F2}ms");
+            TestContext.WriteLine($"  最大时间: {maxTime}ms");
+            TestContext.WriteLine($"  最小时间: {minTime}ms");
+            TestContext.WriteLine($"  标准差: {standardDeviation:F2}ms");
+
+            // 性能要求 - 这些阈值应该根据实际需求调整
+            Assert.That(averageTime, Is.LessThan(2000), 
+                $"平均执行时间不应超过2秒，实际: {averageTime:F2}ms");
+            Assert.That(maxTime, Is.LessThan(5000), 
+                $"最大执行时间不应超过5秒，实际: {maxTime}ms");
+            Assert.That(standardDeviation, Is.LessThan(1000), 
+                $"性能应该稳定，标准差不应超过1秒，实际: {standardDeviation:F2}ms");
+        }
+
+        #region Helper Methods
+
+        private string CreateTroopEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { ""ID"": 0, ""Name"": ""混乱"" },
+                    ""10"": { ""ID"": 10, ""Name"": ""士气上升"" },
+                    ""20"": { ""ID"": 20, ""Name"": ""战意上升"" }
+                }
+            }";
+        }
+
+        private string CreateArchitectureEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { ""ID"": 0, ""Name"": ""武力上升"" },
+                    ""20"": { ""ID"": 20, ""Name"": ""智力上升"" },
+                    ""30"": { ""ID"": 30, ""Name"": ""政治上升"" }
+                }
+            }";
+        }
+
+        private string CreateMixedEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { ""ID"": 0, ""Name"": ""混合效果1"" },
+                    ""5"": { ""ID"": 5, ""Name"": ""混合效果2"" },
+                    ""10"": { ""ID"": 10, ""Name"": ""混合效果3"" },
+                    ""15"": { ""ID"": 15, ""Name"": ""混合效果4"" }
+                }
+            }";
+        }
+
+        private string CreateComplexEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { 
+                        ""ID"": 0, 
+                        ""Name"": ""复杂效果"",
+                        ""Description"": ""这是一个复杂的效果描述"",
+                        ""Value"": 100,
+                        ""IsActive"": true
+                    },
+                    ""1"": { 
+                        ""ID"": 1, 
+                        ""Name"": ""另一个复杂效果"",
+                        ""Description"": ""另一个描述"",
+                        ""Value"": 200,
+                        ""IsActive"": false
+                    }
+                }
+            }";
+        }
+
+        private string CreateMinimalEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { ""ID"": 0 }
+                }
+            }";
+        }
+
+        private string CreateStandardEventEffectKindJson()
+        {
+            return @"{
+                ""EventEffectKinds"": {
+                    ""0"": { ""ID"": 0, ""Name"": ""标准效果1"" },
+                    ""1"": { ""ID"": 1, ""Name"": ""标准效果2"" },
+                    ""2"": { ""ID"": 2, ""Name"": ""标准效果3"" }
+                }
+            }";
+        }
+
+        private double CalculateStandardDeviation(List<long> values)
+        {
+            if (values.Count <= 1) return 0;
+            
+            var average = values.Average();
+            var sumOfSquares = values.Sum(x => Math.Pow(x - average, 2));
+            return Math.Sqrt(sumOfSquares / (values.Count - 1));
+        }
+
+        #endregion
+    }
+}

@@ -1,0 +1,110 @@
+using NUnit.Framework;
+using System;
+using System.Linq;
+using System.Text.Json.Serialization;
+using WorldOfTheThreeKingdoms.Serialization;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 验证 GameJsonContext 中的类型注册
+    /// </summary>
+    [TestFixture]
+    public class GameJsonContextVerificationTest
+    {
+        [Test]
+        public void VerifyEventEffectKindTableRegistrations()
+        {
+            // 检查 GameJsonContext 类上的 JsonSerializableAttribute
+            var contextType = typeof(GameJsonContext);
+            var attributes = contextType.GetCustomAttributes(typeof(JsonSerializableAttribute), false)
+                .Cast<JsonSerializableAttribute>();
+            
+            Console.WriteLine($"GameJsonContext 上找到 {attributes.Count()} 个 JsonSerializableAttribute");
+            
+            // 查找 EventEffectKindTable 相关的注册
+            var eventEffectKindTableRegistrations = attributes.Where(attr =>
+            {
+                try
+                {
+                    // 尝试通过反射获取类型
+                    var typeField = attr.GetType().GetField("_type", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (typeField != null)
+                    {
+                        var type = (Type)typeField.GetValue(attr);
+                        return type != null && type.Name.Contains("EventEffectKindTable");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"反射获取类型时出错: {ex.Message}");
+                }
+                return false;
+            }).ToList();
+            
+            Console.WriteLine($"找到 {eventEffectKindTableRegistrations.Count} 个 EventEffectKindTable 注册");
+            
+            foreach (var attr in eventEffectKindTableRegistrations)
+            {
+                try
+                {
+                    var typeField = attr.GetType().GetField("_type", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (typeField != null)
+                    {
+                        var type = (Type)typeField.GetValue(attr);
+                        Console.WriteLine($"注册的类型: {type.FullName}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"获取类型详情时出错: {ex.Message}");
+                }
+            }
+            
+            // 检查 GameJsonContext.Default 是否可用
+            var defaultContext = GameJsonContext.Default;
+            Assert.IsNotNull(defaultContext, "GameJsonContext.Default 不应为空");
+            Console.WriteLine("GameJsonContext.Default 可用");
+            
+            // 尝试获取 TypeInfo
+            try
+            {
+                var troopTableTypeInfo = defaultContext.GetTypeInfo(typeof(GameObjects.TroopDetail.EventEffect.EventEffectKindTable));
+                Console.WriteLine($"TroopDetail EventEffectKindTable TypeInfo: {troopTableTypeInfo != null}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"获取 TroopDetail EventEffectKindTable TypeInfo 失败: {ex.Message}");
+            }
+            
+            try
+            {
+                var archTableTypeInfo = defaultContext.GetTypeInfo(typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable));
+                Console.WriteLine($"ArchitectureDetail EventEffectKindTable TypeInfo: {archTableTypeInfo != null}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"获取 ArchitectureDetail EventEffectKindTable TypeInfo 失败: {ex.Message}");
+            }
+        }
+        
+        [Test]
+        public void TestDirectTypeRegistration()
+        {
+            // 直接测试类型是否存在
+            var troopTableType = typeof(GameObjects.TroopDetail.EventEffect.EventEffectKindTable);
+            var archTableType = typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable);
+            
+            Console.WriteLine($"TroopDetail EventEffectKindTable 类型: {troopTableType.FullName}");
+            Console.WriteLine($"ArchitectureDetail EventEffectKindTable 类型: {archTableType.FullName}");
+            
+            // 检查类型是否相同（可能存在命名空间问题）
+            Console.WriteLine($"类型名称相同: {troopTableType.Name == archTableType.Name}");
+            Console.WriteLine($"命名空间不同: {troopTableType.Namespace != archTableType.Namespace}");
+            
+            Assert.IsNotNull(troopTableType);
+            Assert.IsNotNull(archTableType);
+            Assert.AreNotEqual(troopTableType, archTableType, "两个 EventEffectKindTable 类型应该不同");
+        }
+    }
+}

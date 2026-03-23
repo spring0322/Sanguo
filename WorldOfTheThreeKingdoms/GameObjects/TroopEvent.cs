@@ -10,7 +10,7 @@ using System.Runtime.Serialization;
 namespace GameObjects
 {
     [DataContract]
-    public class TroopEvent : GameObject
+    public partial class TroopEvent : GameObject
     {
         [DataMember]
         public int AfterEventHappened = -1;
@@ -26,6 +26,7 @@ namespace GameObjects
         public ConditionTable Conditions = new ConditionTable();
 
         //[DataMember]
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<PersonDialog> Dialogs = new List<PersonDialog>();
 
         [DataMember]
@@ -34,11 +35,13 @@ namespace GameObjects
         [DataMember]
         public string EffectAreasString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<TroopEffectArea> EffectAreas = new List<TroopEffectArea>();
 
         [DataMember]
         public string EffectPersonsString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<TroopEffectPerson> EffectPersons = new List<TroopEffectPerson>();
 
         private int happenChance;
@@ -52,11 +55,13 @@ namespace GameObjects
         [DataMember]
         public string SelfEffectsString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<GameObjects.TroopDetail.EventEffect.EventEffect> SelfEffects = new List<GameObjects.TroopDetail.EventEffect.EventEffect>();
 
         [DataMember]
         public string TargetPersonsString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<PersonRelation> TargetPersons = new List<PersonRelation>();
 
         [DataMember]
@@ -90,9 +95,19 @@ namespace GameObjects
 
         public void ApplyEventDialogs(Troop troop)
         {
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[TroopEvent.ApplyEventDialogs] TroopEvent ID={this.ID}, Name={this.Name}, Troop={troop.DisplayName}, OnApplyTroopEvent订阅数={(this.OnApplyTroopEvent?.GetInvocationList().Length ?? 0)}");
+            #endif
+            
             if (this.OnApplyTroopEvent != null)
             {
                 this.OnApplyTroopEvent(this, troop);
+            }
+            else
+            {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[TroopEvent.ApplyEventDialogs] ⚠️ OnApplyTroopEvent 为 null！事件未订阅！");
+                #endif
             }
         }
 

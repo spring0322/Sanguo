@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 using System.Runtime.InteropServices;
 
@@ -10,11 +10,11 @@ namespace GameObjects
     public struct UndoneWorkItem
     {
         public UndoneWorkKind Kind;
-        public Enum SubKind;
+        public int SubKind;
         public UndoneWorkItem(UndoneWorkKind kind, Enum subKind)
         {
             this.Kind = kind;
-            this.SubKind = subKind;
+            this.SubKind = Convert.ToInt32(subKind);
         }
 
         public override string ToString()

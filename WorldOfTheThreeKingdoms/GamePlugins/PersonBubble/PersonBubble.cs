@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -184,6 +184,11 @@ namespace PersonBubble
                 DateTime now = DateTime.Now;
                 List<int> list = new List<int>();
                 List<PositionCount> positionCounts = new List<PositionCount>();
+                // 🔥 根本修复：使用对象快照而非索引快照
+                // 日期：2026-03-19
+                // 原因：索引快照容易出错，可读性差
+                // 解决方案：收集需要删除的对象，再统一删除
+                List<Bubble> toRemove = [];
                 for (num = 0; num < this.Bubbles.Count; num++)
                 {
                     if (this.Bubbles[num].DrawingStarted)
@@ -191,7 +196,7 @@ namespace PersonBubble
                         TimeSpan span = (TimeSpan) (now - this.Bubbles[num].StartingTime);
                         if (span.TotalMilliseconds >= this.Bubbles[num].LastingTime)
                         {
-                            list.Add(num);
+                            toRemove.Add(this.Bubbles[num]);
                         }
                         else
                         {
@@ -217,9 +222,11 @@ namespace PersonBubble
                         }
                     }
                 }
-                for (num = list.Count - 1; num >= 0; num--)
+                
+                // 🔥 关键：统一删除过期的气泡
+                foreach (Bubble bubble in toRemove)
                 {
-                    this.Bubbles.RemoveAt(list[num]);
+                    this.Bubbles.Remove(bubble);
                 }
             }
         }

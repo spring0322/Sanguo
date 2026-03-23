@@ -1,4 +1,4 @@
-﻿namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     /// <summary>
     /// 人物肖像尺寸

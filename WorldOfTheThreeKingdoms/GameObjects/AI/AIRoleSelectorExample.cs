@@ -1,6 +1,7 @@
 using System;
 using GameObjects;
 using GameObjects.AI;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
@@ -22,7 +23,7 @@ namespace GameObjects.AI
             }
 
             // 获取AI推荐的角色
-            AIRole recommendedRole = AIRoleSelector.GetBestRole(troop);
+            TroopRole recommendedRole = AIRoleSelector.DetermineRole(troop);
 
             // 输出分析结果
             Console.WriteLine($"=== 部队角色分析 ===");
@@ -51,21 +52,21 @@ namespace GameObjects.AI
         /// </summary>
         /// <param name="role">AI角色</param>
         /// <returns>角色描述</returns>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank:
+                case TroopRole.Tank:
                     return "肉盾 - 适合前排承受伤害，卡位控制";
-                case AIRole.DPS:
+                case TroopRole.DPS:
                     return "输出 - 适合物理攻击，造成大量伤害";
-                case AIRole.Mage:
+                case TroopRole.Mage:
                     return "法师 - 适合使用策略，控制战场";
-                case AIRole.Support:
+                case TroopRole.Support:
                     return "辅助 - 适合治疗和增益，支援队友";
-                case AIRole.Logistics:
+                case TroopRole.Logistics:
                     return "后勤 - 适合运输和建造，非战斗单位";
-                case AIRole.None:
+                case TroopRole.None:
                 default:
                     return "未定义 - 无法确定合适角色";
             }
@@ -89,15 +90,15 @@ namespace GameObjects.AI
 
             foreach (Troop troop in troops)
             {
-                AIRole role = AIRoleSelector.GetBestRole(troop);
+                TroopRole role = AIRoleSelector.DetermineRole(troop);
                 
                 switch (role)
                 {
-                    case AIRole.Tank: tankCount++; break;
-                    case AIRole.DPS: dpsCount++; break;
-                    case AIRole.Mage: mageCount++; break;
-                    case AIRole.Support: supportCount++; break;
-                    case AIRole.Logistics: logisticsCount++; break;
+                    case TroopRole.Tank: tankCount++; break;
+                    case TroopRole.DPS: dpsCount++; break;
+                    case TroopRole.Mage: mageCount++; break;
+                    case TroopRole.Support: supportCount++; break;
+                    case TroopRole.Logistics: logisticsCount++; break;
                     default: noneCount++; break;
                 }
             }

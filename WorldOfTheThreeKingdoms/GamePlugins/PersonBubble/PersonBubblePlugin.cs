@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.PersonDetail;
 using Microsoft.Xna.Framework;
@@ -30,17 +30,17 @@ namespace PersonBubble
 
         public void AddPerson(object person, Microsoft.Xna.Framework.Point position, string branchName)
         {
-            this.personBubble.AddPerson(person as Person, position, branchName);
+            this.personBubble.AddPerson((person is Person ? (Person)person : null), position, branchName);
         }
 
         public void AddPersonText(object person, Microsoft.Xna.Framework.Point position, string text)
         {
-            this.personBubble.AddPersonText(person as Person, position, text);
+            this.personBubble.AddPersonText((person is Person ? (Person)person : null), position, text);
         }
 
         public void AddPerson(object person, Microsoft.Xna.Framework.Point position, Enum kind, string fallback)
         {
-            Person p = person as Person;
+            Person p = (person is Person ? (Person)person : null);
             if (p != null)
             {
                 TextMessageKind k = (TextMessageKind)kind;
@@ -175,4 +175,5 @@ namespace PersonBubble
         }
     }
 }
+
 

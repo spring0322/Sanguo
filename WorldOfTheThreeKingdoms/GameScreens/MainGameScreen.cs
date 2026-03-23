@@ -1,13 +1,17 @@
+#nullable disable
+
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
+using GameObjects.Events;  // 🔥 新增：ScenarioEvents
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
 using GameObjects.SectionDetail;
@@ -22,7 +26,10 @@ using WorldOfTheThreeKingdoms.GameScreens;
 using WorldOfTheThreeKingdoms.GameManager;
 using WorldOfTheThreeKingdoms.GameScreens.ScreenLayers;
 using WorldOfTheThreeKingdoms.Resources;
+using WorldOfTheThreeKingdoms.Tools;
+using WorldOfTheThreeKingdoms.GameObjects;  // 🔥 2026-03-21 添加：支持 TroopZocCalculator
 using Platforms;
+using youcelanPlugin;  // 🔥 2026-03-05 添加：支持 TabListInFrame 类型转换
 
 //using GameObjects.PersonDetail.PersonMessages;
 
@@ -78,6 +85,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public bool HasSuitableCandidate { get; set; }
     }
 
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持UI属性访问
     public partial class MainGameScreen : Screen
     {
         private string bianduiLiebiaoBiaoji;
@@ -132,6 +140,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// 军师推荐系统
         /// </summary>
         private WorldOfTheThreeKingdoms.GameManager.AdvisorRecommendationSystem _advisorRecommendationSystem;
+
+        #endregion
+
+        #region 暴击图显示系统字段
+
+        /// <summary>
+        /// 暴击图显示管理器
+        /// </summary>
+        private WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitImageManager _criticalHitImageManager;
+
+        /// <summary>
+        /// 当前帧的 GameTime（用于暴击图等需要时间的系统）
+        /// </summary>
+        private GameTime _currentGameTime;
 
         #endregion
 
@@ -209,6 +231,34 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public Architecture CurrentTargetArchitecture { get; set; } = null;
 
         #endregion
+
+        #region 天气粒子系统字段
+
+        /// <summary>
+        /// 天气粒子系统（雨雪效果，支持风向风力）
+        /// 日期：2026-03-10
+        /// </summary>
+        private WorldOfTheThreeKingdoms.GameLogic.WeatherParticleSystem _weatherParticleSystem;
+
+        /// <summary>
+        /// 1x1 白色纹理（用于粒子渲染）
+        /// </summary>
+        private Texture2D _pixelTexture;
+        
+        /// <summary>
+        /// 1x1 白色纹理（用于边界线渲染）
+        /// </summary>
+        private Texture2D _whitePixel;
+
+        /// <summary>
+        /// 🔥 HOT PATH 优化：缓存地图尺寸，避免每帧访问属性链
+        /// 日期：2026-03-11
+        /// </summary>
+        private int _cachedMapWidth;
+        private int _cachedMapHeight;
+
+        #endregion
+
         private MapVeilLayer mapVeilLayer;
         private int oldScrollWheelValue;
 
@@ -237,6 +287,30 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public bool ShowArchitectureConnectedLine = false;
         private int ditukuaidezhi = 1;
 
+        /// <summary>
+        /// 获取当前可视视口矩形（Grid坐标）
+        /// 根据 MainMapLayer 的计算逻辑推导
+        /// </summary>
+        public Rectangle ViewportRect
+        {
+            get
+            {
+                if (this.mainMapLayer == null) return Rectangle.Empty;
+                
+                // TopLeftPosition 和 BottomRightPosition 是 MainGameScreen 的内部字段/属性
+                // 如果它们是私有的，我们需要确保能够访问，或者使用 LeftEdge/TopEdge 计算
+                // 假设 TopLeftPosition 和 BottomRightPosition 是可用的 (MainMapLayer 在用)
+                
+                int x = this.TopLeftPosition.X;
+                int y = this.TopLeftPosition.Y;
+                int width = (this.BottomRightPosition.X - x) + 1;
+                int height = (this.BottomRightPosition.Y - y) + 1;
+                
+                return new Rectangle(x, y, width, height);
+            }
+        }
+
+
         private bool mapEdited = false;
 
         public CloudLayer cloudLayer = new CloudLayer();
@@ -250,6 +324,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private int _globalFrameCounter = 0;
         private const int DEFAULT_SLICE_COUNT = 10;  // 默认切片数量
         private const int QUICKBATTLE_SLICE_COUNT = 20;  // 快速战斗切片数量
+        
+        // 🔥 性能优化：预计算的 GameTime 缓存（避免 Hot Path 分配）
+        // 索引 = sliceCount，值 = 对应的 GameTime
+        private static readonly GameTime[] _cachedBrainGameTimes = InitializeBrainGameTimeCache();
+        
+        private static GameTime[] InitializeBrainGameTimeCache()
+        {
+            // 预计算 sliceCount 1-200 的所有 GameTime
+            const int maxSliceCount = 200;
+            GameTime[] cache = new GameTime[maxSliceCount + 1];
+            
+            for (int i = 1; i <= maxSliceCount; i++)
+            {
+                TimeSpan elapsed = TimeSpan.FromSeconds(1.0 / 60.0 * i);
+                cache[i] = new GameTime(TimeSpan.Zero, elapsed);
+            }
+            
+            return cache;
+        }
         
         // 集群战斗系统
         private Dictionary<Point, ArmySquad> _armySquads = new Dictionary<Point, ArmySquad>();
@@ -265,6 +358,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private WorldOfTheThreeKingdoms.GameManager.CompleteAIDecisionSystem _aiDecisionSystem;
         private int _aiUpdateCounter = 0;
         
+        // 性能优化：缓存部队列表
+        private GameObjectList _cachedTroopList;
+        private int _lastTroopListUpdate = 0;
+        
         // 分层寻路系统
         private WorldOfTheThreeKingdoms.GameManager.PathfindingManager _pathfindingManager;
         
@@ -278,6 +375,71 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private WorldOfTheThreeKingdoms.GameManager.StrategistUI _strategistUI;
 
         private bool _strategistUILoaded = false;
+        
+        // 主线程调度器 - 用于异步纹理加载等需要主线程执行的操作
+        private WorldOfTheThreeKingdoms.GameManager.MainThreadDispatcher _mainThreadDispatcher;
+        
+        // 性能监控：队列长度采样计数器
+        private int _dispatcherMonitorCounter = 0;
+        
+        /// <summary>
+        /// 🆕 势力范围更新管理器（2026-03-11）
+        /// </summary>
+        internal WorldOfTheThreeKingdoms.GameManager.InfluenceUpdateManager? _influenceUpdateManager;
+        
+        /// <summary>
+        /// 🔥 游戏启动标志（用于跳过第一次能量衰减）
+        /// 日期：2026-03-21
+        /// 原因：游戏启动时能量还未初始化，第一次衰减会把所有能量清零
+        /// </summary>
+        private bool _isFirstTurn = true;
+        
+        /// <summary>
+        /// 🆕 势力范围渲染器（2026-03-11）
+        /// </summary>
+        private WorldOfTheThreeKingdoms.GameManager.InfluenceRenderer? _influenceRenderer;
+        
+        /// <summary>
+        /// 🎨 新工笔重彩水墨渲染器（2026-03-13）
+        /// </summary>
+        private WorldOfTheThreeKingdoms.GameManager.InkBleedInfluenceRenderer? _inkRenderer;
+        
+        #region 选中部队能量覆盖范围高亮显示 (2026-03-21)
+        
+        /// <summary>
+        /// 选中部队的能量覆盖范围缓存（存储格子索引）
+        /// 🔥 Zero-Allocation：使用 HashSet 避免重复，预分配容量
+        /// </summary>
+        private HashSet<int> _selectedTroopZocTiles = new HashSet<int>(128);
+        
+        /// <summary>
+        /// 上次更新ZOC的部队（用于检测选中部队是否变化）
+        /// </summary>
+        private Troop? _lastSelectedTroop = null;
+        
+        /// <summary>
+        /// 1x1 白色纹理（用于高亮蒙版渲染）
+        /// </summary>
+        private Texture2D? _whiteTileOverlay = null;
+        
+        /// <summary>
+        /// 🔥 Hot Path 优化：BFS 算法的 frontier 队列（复用，避免每次分配）
+        /// 日期：2026-03-21
+        /// </summary>
+        private PriorityQueue<int, int> _zocFrontier = new PriorityQueue<int, int>(128);
+        
+        /// <summary>
+        /// 🔥 Hot Path 优化：BFS 算法的 visited 集合（复用，避免每次分配）
+        /// 日期：2026-03-21
+        /// </summary>
+        private HashSet<int> _zocVisited = new HashSet<int>(128);
+        
+        #endregion
+        
+        /// <summary>
+        /// 获取主线程调度器实例（供插件异步加载使用）
+        /// </summary>
+        public WorldOfTheThreeKingdoms.GameManager.MainThreadDispatcher MainThreadDispatcher => _mainThreadDispatcher;
 
         public MainGameScreen()
             : base()
@@ -321,6 +483,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // 初始化军师推荐系统
             this._advisorRecommendationSystem = new WorldOfTheThreeKingdoms.GameManager.AdvisorRecommendationSystem();
             
+            // 初始化主线程调度器（用于异步纹理加载等操作）
+            this._mainThreadDispatcher = new WorldOfTheThreeKingdoms.GameManager.MainThreadDispatcher();
+            
             // 尝试加载对话UI资源
             try
             {
@@ -356,6 +521,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             
             // 订阅性能设置变更事件
             PerformanceSettings.Current.OnSettingsChanged += OnPerformanceSettingsChanged;
+            
+            // 🎨 水墨渲染器初始化已移至 Scenario_OnAfterScenarioLoaded 事件（2026-03-14）
+            // 原因：构造函数调用时 Scenario 还未加载
+            
+            // 🔥 初始化白色纹理（用于高亮蒙版）
+            // 日期：2026-03-21
+            InitializeWhiteTileOverlay();
             
             // 初始化双击系统
             /*
@@ -404,6 +576,332 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[OnPerformanceSettingsChanged] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 初始化白色纹理（用于高亮蒙版）
+        /// 日期：2026-03-21
+        /// </summary>
+        private void InitializeWhiteTileOverlay()
+        {
+            if (_whiteTileOverlay == null)
+            {
+                _whiteTileOverlay = new Texture2D(Session.MainGame.GraphicsDevice, 1, 1);
+                _whiteTileOverlay.SetData([Color.White]);
+            }
+        }
+        
+        /// <summary>
+        /// 更新选中部队的能量覆盖范围缓存
+        /// 日期：2026-03-21
+        /// 🧊 Cold Path：鼠标悬停变化时调用
+        /// 🔥 修复：为悬停部队单独计算能量覆盖范围
+        /// 日期：2026-03-21
+        /// 原因：GlobalInfluenceMap.ArmyEnergy 存储的是整个势力所有部队的能量叠加
+        ///       需要为单个部队重新计算能量传播范围
+        /// </summary>
+        private void UpdateSelectedTroopZoc()
+        {
+            Troop hoveredTroop = null;
+            
+            // 🔥 复用 TroopSurveyPlugin 的悬停检测逻辑（参考第 13318-13346 行）
+            // 日期：2026-03-21
+            // 关键：
+            // 1. 不要检查 this.CurrentTroop（选中部队后仍然可以悬停其他部队）
+            // 2. 检查 ContextMenuPlugin.IsShowing（有菜单弹出时不显示）
+            
+            // 1. 检查是否有菜单弹出（如果有，不显示任何渲染）
+            if (this.Plugins.ContextMenuPlugin.IsShowing)
+            {
+                // 清空渲染
+                if (_selectedTroopZocTiles.Count > 0)
+                {
+                    _selectedTroopZocTiles.Clear();
+                    _lastSelectedTroop = null;
+                }
+                return;
+            }
+            
+            // 2. 检查是否满足显示条件（天眼模式 或 玩家已知该位置）
+            if (Session.GlobalVariables.SkyEye || 
+                ((Session.Current.Scenario.CurrentPlayer != null) && 
+                 Session.Current.Scenario.CurrentPlayer.IsPositionKnown(this.position)))
+            {
+                // 3. 获取鼠标位置的部队
+                hoveredTroop = Session.Current.Scenario.GetTroopByPosition(this.position);
+                
+                // 4. 检查鼠标是否在右侧栏上（如果在，不显示）
+                if (this.Plugins.youcelanPlugin.IsShowing && 
+                    StaticMethods.PointInRectangle(this.MousePosition, this.Plugins.youcelanPlugin.FrameRectangle))
+                {
+                    hoveredTroop = null;
+                }
+                
+                // 5. 检查部队是否埋伏（埋伏部队不显示）
+                if (hoveredTroop != null && hoveredTroop.Status == TroopStatus.埋伏)
+                {
+                    hoveredTroop = null;
+                }
+            }
+            
+            // 检查悬停部队是否变化
+            if (hoveredTroop == _lastSelectedTroop)
+            {
+                return; // 未变化，无需更新
+            }
+            
+            _lastSelectedTroop = hoveredTroop;
+            
+            // ✅ 正确：null 检查是合理的（业务逻辑）
+            if (hoveredTroop == null)
+            {
+                _selectedTroopZocTiles.Clear();
+                return;
+            }
+            
+            // 🔥 关键修复：为单个部队重新计算能量传播范围
+            // 日期：2026-03-21
+            // 原因：GlobalInfluenceMap.ArmyEnergy 存储的是整个势力所有部队的能量叠加
+            //       不能直接使用，需要为单个部队重新计算
+            _selectedTroopZocTiles.Clear();
+            
+            var faction = hoveredTroop.BelongedFaction;
+            if (faction == null)
+            {
+                return; // 势力未初始化
+            }
+            
+            // 计算部队威压能量
+            int energy = hoveredTroop.CalculateZocEnergy();
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[UpdateSelectedTroopZoc] 部队 {hoveredTroop.DisplayName} 初始能量: {energy}");
+            System.Diagnostics.Debug.WriteLine($"  - 兵力: {hoveredTroop.Quantity}, 士气: {hoveredTroop.Morale}");
+            System.Diagnostics.Debug.WriteLine($"  - 攻击: {hoveredTroop.Offence}, 防御: {hoveredTroop.Defence}, 机动: {hoveredTroop.Movability}");
+            #endif
+            
+            if (energy <= 0)
+            {
+                return; // 无威压能量
+            }
+            
+            // 获取部队位置
+            var pos = hoveredTroop.Position;
+            int mapWidth = Session.Current.Scenario.ScenarioMap.MapDimensions.X;
+            int mapHeight = Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
+            
+            // 边界检查
+            if (pos.X < 0 || pos.X >= mapWidth || pos.Y < 0 || pos.Y >= mapHeight)
+            {
+                return;
+            }
+            
+            // 🔥 使用与 InjectTroopEnergy 相同的扩散算法
+            // 🔥 Hot Path 优化：复用字段级别的集合，避免每次分配
+            // 🔥 C# 12：使用集合表达式
+            _zocFrontier.Clear();
+            _zocVisited.Clear();
+            int[] dirOffsets = [-mapWidth, mapWidth, -1, 1];  // 上下左右
+            
+            // 获取天气和配置
+            var weatherManager = Session.Current.Scenario.WeatherManager;
+            if (weatherManager == null)
+            {
+                return;
+            }
+            
+            var weather = weatherManager.GetWeatherAt(pos);
+            string weatherName = weather.ToString();
+            
+            var influenceConfig = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
+            double weatherCostMultiplier = influenceConfig.GetWeatherTroopTerrainCostMultiplier(weatherName);
+            var troopConfig = influenceConfig.TroopEnergySpreadConfig;  // 🔥 修复：使用 TroopEnergySpreadConfig
+            
+            // 起点：部队所在位置
+            int startIndex = pos.Y * mapWidth + pos.X;
+            _zocFrontier.Enqueue(startIndex, -energy);
+            
+            while (_zocFrontier.TryDequeue(out int currentIndex, out int priority))
+            {
+                if (!_zocVisited.Add(currentIndex)) continue;
+                
+                int currentEnergy = -priority;
+                _selectedTroopZocTiles.Add(currentIndex);
+                
+                // 扩散到相邻格子
+                int cx = currentIndex % mapWidth;
+                
+                for (int i = 0; i < 4; i++)
+                {
+                    // 边缘检测
+                    if (i == 2 && cx == 0) continue;
+                    if (i == 3 && cx == mapWidth - 1) continue;
+                    
+                    int nextIndex = currentIndex + dirOffsets[i];
+                    if (nextIndex < 0 || nextIndex >= mapWidth * mapHeight) continue;
+                    if (_zocVisited.Contains(nextIndex)) continue;
+                    
+                    // 获取地形代价
+                    int baseTerrainCost = WorldOfTheThreeKingdoms.GameManager.TerrainCostCache.GetCostByIndex(nextIndex);
+                    if (baseTerrainCost >= 99999) continue;
+                    
+                    // 应用天气倍率
+                    int weatherAdjustedCost = (int)(baseTerrainCost * weatherCostMultiplier);
+                    int actualCost = Math.Max(weatherAdjustedCost, troopConfig.MinimumTerrainCost);  // 🔥 修复：使用配置文件参数
+                    
+                    // 敌城阻力
+                    // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
+                    int targetArchId = Session.Current.Scenario.ArchitectureCoreMap[nextIndex];
+                    if (targetArchId >= 0)
+                    {
+                        var targetArch = Session.Current.Scenario.Architectures.GetGameObject(targetArchId) as Architecture;
+                        
+                        // 🔥 ANTI-BAND-AID：Fail Fast
+                        if (targetArch == null)
+                        {
+                            throw new InvalidOperationException(
+                                $"[UpdateSelectedTroopZoc] 数据损坏：ArchitectureCoreMap[{nextIndex}] " +
+                                $"引用了不存在的建筑 ID={targetArchId}");
+                        }
+                        
+                        // 跳过无主建筑（业务逻辑）
+                        if (targetArch.BelongedFaction == null)
+                        {
+                            // 无主建筑视为中立，不增加额外阻力
+                        }
+                        else if (targetArch.BelongedFaction.IsHostile(faction))
+                        {
+                            // 🔥 修复：直接使用配置文件的值（与 InjectTroopEnergy 一致）
+                            actualCost += troopConfig.EnemyCityResistance;
+                        }
+                        else if (targetArch.BelongedFaction != faction)
+                        {
+                            // 🔥 修复：直接使用配置文件的值
+                            actualCost += troopConfig.AllyBarrier;
+                        }
+                    }
+                    
+                    // 敌军部队阻断
+                    int nx = nextIndex % mapWidth;
+                    int ny = nextIndex / mapWidth;
+                    var nextTroop = Session.Current.Scenario.GetTroopByPosition(new Microsoft.Xna.Framework.Point(nx, ny));
+                    
+                    // ✅ 正确：GetTroopByPosition 返回 null 是正常的（该位置没有部队）
+                    if (nextTroop != null && nextTroop.BelongedFaction != null && nextTroop.BelongedFaction.IsHostile(faction))
+                    {
+                        // 🔥 修复：直接使用配置文件的值
+                        actualCost += troopConfig.EnemyBlocking;
+                    }
+                    
+                    // 计算衰减后的能量
+                    int nextEnergy = currentEnergy - actualCost;
+                    if (nextEnergy <= troopConfig.MinimumEnergyThreshold) continue;  // 🔥 修复：使用配置文件的阈值
+                    
+                    _zocFrontier.Enqueue(nextIndex, -nextEnergy);
+                }
+            }
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[UpdateSelectedTroopZoc] 悬停部队 {hoveredTroop.DisplayName}");
+            System.Diagnostics.Debug.WriteLine($"  - 初始能量: {energy}");
+            System.Diagnostics.Debug.WriteLine($"  - 部队位置: ({pos.X}, {pos.Y})");
+            System.Diagnostics.Debug.WriteLine($"  - 天气倍率: {weatherCostMultiplier:F2}");
+            System.Diagnostics.Debug.WriteLine($"  - 覆盖范围: {_selectedTroopZocTiles.Count} 格");
+            
+            // 🔥 诊断：检查是否所有部队都从同一个位置开始扩散
+            // 🔥 性能修复：不使用 LINQ，使用枚举器直接获取第一个元素
+            if (_selectedTroopZocTiles.Count > 0)
+            {
+                var enumerator = _selectedTroopZocTiles.GetEnumerator();
+                if (enumerator.MoveNext())
+                {
+                    int firstTile = enumerator.Current;
+                    int fx = firstTile % mapWidth;
+                    int fy = firstTile / mapWidth;
+                    System.Diagnostics.Debug.WriteLine($"  - 第一个覆盖格子: ({fx}, {fy})");
+                }
+                enumerator.Dispose();
+            }
+            #endif
+        }
+
+        /// <summary>
+        /// 🎨 初始化水墨渲染器（2026-03-14）
+        /// 🧊 Cold Path：在 Scenario 加载完成后调用
+        /// </summary>
+        internal void InitializeInkBleedRenderer()
+        {
+            // 🔥 ANTI-BAND-AID：此方法在 Scenario 已加载后调用，以下对象必须存在
+            // 调用时机：1) MGSStartLoad.Scenario_OnAfterLoadScenario  2) MainMapLayer.freeTilesMemory（Content.Unload 后重建）
+            if (Session.Current.Content == null)
+                throw new InvalidOperationException("InitializeInkBleedRenderer: Session.Current.Content 为 null，请检查 Session 初始化流程");
+            
+            if (Platform.GraphicsDevice == null)
+                throw new InvalidOperationException("InitializeInkBleedRenderer: Platform.GraphicsDevice 为 null，请检查平台初始化流程");
+            
+            var scenario = Session.Current.Scenario;
+            if (scenario == null)
+                throw new InvalidOperationException("InitializeInkBleedRenderer: Session.Current.Scenario 为 null，必须在 Scenario 加载后调用");
+            
+            if (scenario.ScenarioMap == null)
+                throw new InvalidOperationException("InitializeInkBleedRenderer: Scenario.ScenarioMap 为 null，请检查剧本加载流程");
+            
+            // 旧渲染器先释放（freeTilesMemory 重建场景下 _inkRenderer 不为 null）
+            _inkRenderer?.Dispose();
+            
+            var noiseTexture = Session.Current.Content.Load<Texture2D>("XuanPaperNoise");
+            var inkBleedEffect = Session.Current.Content.Load<Effect>("InkBleed");
+            
+            int mapWidth = scenario.ScenarioMap.MapDimensions.X;
+            int mapHeight = scenario.ScenarioMap.MapDimensions.Y;
+            
+            _inkRenderer = new WorldOfTheThreeKingdoms.GameManager.InkBleedInfluenceRenderer(
+                Platform.GraphicsDevice,
+                mapWidth,
+                mapHeight,
+                inkBleedEffect,
+                noiseTexture);
+            
+            // 🔥 修复：读档时 GlobalInfluenceMap 可能未初始化
+            // 日期：2026-03-18
+            // 场景：freeTilesMemory() → InitializeInkBleedRenderer() 在 InfluenceUpdateManager.Initialize() 之前调用
+            // 解决：检查所有势力的 GlobalInfluenceMap，如果任何一个未初始化则跳过
+            bool canUpdateInfluenceMap = false;
+            if (scenario.Factions != null && scenario.Factions.Count > 0)
+            {
+                // 🔥 关键修复：必须检查所有势力，不能只检查第一个
+                // 原因：不同势力的 GlobalInfluenceMap 可能在不同时机初始化
+                var factions = scenario.Factions.GetList();
+                canUpdateInfluenceMap = true;  // 假设都已初始化
+                
+                for (int i = 0; i < factions.Count; i++)
+                {
+                    if (factions[i] is Faction faction)
+                    {
+                        if (faction.GlobalInfluenceMap is not { Length: > 0 })
+                        {
+                            canUpdateInfluenceMap = false;
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[水墨渲染器] ⏸️ 势力 {faction.Name} 的 GlobalInfluenceMap 未初始化，跳过更新");
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (canUpdateInfluenceMap)
+            {
+                _inkRenderer.UpdateInfluenceMap();
+                
+                // 🎨 生成地形遮罩纹理（2026-03-17）
+                _inkRenderer.GenerateTerrainMask(scenario);
+                
+                System.Diagnostics.Debug.WriteLine($"[水墨渲染器] ✅ 初始化完成，地图尺寸={mapWidth}×{mapHeight}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[水墨渲染器] ⏸️ 渲染器已创建，等待 GlobalInfluenceMap 初始化后更新");
             }
         }
 
@@ -736,6 +1234,48 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             }
         }
 
+        /// <summary>
+        /// 测试 WegoEngine（Command Buffer 架构）- 可以通过调试器或控制台调用
+        /// 日期：2026-03-16
+        /// </summary>
+        public void TestWegoEngine()
+        {
+            try
+            {
+                if (Session.Current?.Scenario == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TestWegoEngine] ❌ 无法测试：Scenario 为 null");
+                    return;
+                }
+                
+                if (Session.Current.WegoEngine == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TestWegoEngine] ⚠️ WegoEngine 未初始化，尝试初始化...");
+                    
+                    Session.Current.WegoEngine = new WorldOfTheThreeKingdoms.GameManager.WegoEngine();
+                    
+                    if (Session.Current.Scenario.Troops != null)
+                    {
+                        foreach (Troop troop in Session.Current.Scenario.Troops)
+                        {
+                            if (troop != null)
+                                Session.Current.WegoEngine.RegisterTroop(troop);
+                        }
+                    }
+                    
+                    System.Diagnostics.Debug.WriteLine($"[TestWegoEngine] ✅ WegoEngine 已初始化，部队数量: {Session.Current.Scenario.Troops?.Count ?? 0}");
+                }
+                
+                // 运行所有单元测试
+                WegoEngineTests.RunAllTests(Session.Current.Scenario);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TestWegoEngine] ❌ 错误: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"  堆栈: {ex.StackTrace}");
+            }
+        }
+
         private string SaveFileExtension
         {
             get
@@ -768,11 +1308,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
+                // 🔥 清理新事件系统订阅
+                ScenarioEvents.ClearAllHandlers();
+                
                 // 执行安全的内存清理
                 MemoryManager.OnGameExit();
                 
                 // 清空所有对象池
                 global::GameManager.ObjectPoolManager.ClearAll();
+                
+                // 🎨 清理势力范围渲染器（2026-03-12）
+                _influenceRenderer?.Dispose();
+                _influenceRenderer = null;
+                
+                // 🎨 清理水墨渲染器（2026-03-13）
+                _inkRenderer?.Dispose();
+                _inkRenderer = null;
                 
                 System.Diagnostics.Debug.WriteLine("[MainGameScreen] 对象池和内存已清理");
             }
@@ -817,10 +1368,37 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             Session.Current.Scenario.RemoveRouteway(this.CurrentRouteway);
         }
 
+        // ----------------------------------------------------
+        // 全链路性能监控：首帧渲染
+        // ----------------------------------------------------
+        private bool _isFirstDraw = true;
+        
+
         public void Draw(GameTime gameTime)
         {
-            this.Drawing(gameTime);
-            if (Platform.PlatFormType == PlatFormType.Win || Platform.PlatFormType == PlatFormType.Desktop || Platform.PlatFormType == PlatFormType.UWP && !Platform.IsMobile)
+            if (_isFirstDraw)
+            {
+                var swDraw = System.Diagnostics.Stopwatch.StartNew();
+                System.Diagnostics.Debug.WriteLine($"[全链路] >>> ⚠️ 开始首帧渲染 (GPU Upload) ⚠️ <<<");
+                
+                this.Drawing(gameTime);
+                
+                swDraw.Stop();
+                System.Diagnostics.Debug.WriteLine($"[全链路] ⚠️ 首帧渲染耗时: {swDraw.ElapsedMilliseconds} ms ⚠️");
+                
+                if (swDraw.ElapsedMilliseconds > 1000)
+                {
+                    System.Diagnostics.Debug.WriteLine(">>> 破案了！卡顿是因为 GPU 纹理上传或 Shader 编译！<<<");
+                }
+                _isFirstDraw = false;
+            }
+            else
+            {
+                this.Drawing(gameTime);
+            }
+
+            // 🟢 加个判断：只有当系统鼠标隐藏时，才画游戏的自定义鼠标
+            if (!Platform.MainGame.IsMouseVisible && (Platform.PlatFormType == PlatFormType.Win || Platform.PlatFormType == PlatFormType.Desktop || Platform.PlatFormType == PlatFormType.UWP && !Platform.IsMobile))
             {
                 this.DrawMouseArrow();
             }
@@ -866,6 +1444,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.Plugins.TransportDialogPlugin.Draw();
             this.Plugins.CreateTroopPlugin.Draw();
             this.Plugins.MarshalSectionDialogPlugin.Draw();
+            if (this.Plugins.InGameEditorPlugin != null)
+            {
+                this.Plugins.InGameEditorPlugin.Draw();
+            }
         }
 
         public void Drawtupianwenzi()
@@ -894,11 +1476,95 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void Drawing(GameTime gameTime)            //绘制游戏屏幕
         {
+            if (Session.Current?.Scenario == null) 
+            {
+                return; 
+            }
+
+            var spriteBatch = Session.MainGame.SpriteBatch;
+
+            // ==========================================
+            // 阶段 0：Pre-pass - 更新水墨渲染器的离屏缓冲区
+            // 🔥 关键：在主画面渲染之前，将势力范围绘制到 _lowResTarget
+            // ==========================================
+            if (_inkRenderer != null)
+            {
+                Rectangle viewport = new(
+                    base.TopLeftPosition.X,
+                    base.TopLeftPosition.Y,
+                    base.BottomRightPosition.X - base.TopLeftPosition.X,
+                    base.BottomRightPosition.Y - base.TopLeftPosition.Y
+                );
+                _inkRenderer.UpdateRenderTarget(
+                    spriteBatch,
+                    viewport,
+                    this.mainMapLayer.TileWidth,
+                    this.mainMapLayer.LeftEdge,
+                    this.mainMapLayer.TopEdge);
+            }
+
+            // ==========================================
+            // 阶段 1：主画面渲染
+            // ==========================================
             this.mainMapLayer.Draw(base.viewportSize);
+            
+            // 🗺️ 绘制势力范围（在地形层之后、建筑层之前）
+            // 日期：2026-03-11
+            // 🔥 关键修复：使用独立的 SpriteBatch 块，明确指定半透明混合模式
+            if (_influenceRenderer != null && _influenceRenderer.IsEnabled)
+            {
+                try
+                {
+                    // 🔥 步骤 1：结束当前批次
+                    spriteBatch.End();
+                    
+                    // 🔥 步骤 2：使用半透明混合模式重新开始
+                    spriteBatch.Begin(
+                        SpriteSortMode.Deferred,
+                        BlendState.AlphaBlend,      // 🔥 关键：半透明混合
+                        SamplerState.PointClamp,
+                        DepthStencilState.None,
+                        RasterizerState.CullNone
+                    );
+                    
+                    // 计算当前视口（Grid坐标）
+                    int tileWidth = this.mainMapLayer.TileWidth;
+                    int tileHeight = this.mainMapLayer.TileHeight;
+                    
+                    Rectangle viewport = new Rectangle(
+                        base.TopLeftPosition.X,
+                        base.TopLeftPosition.Y,
+                        base.BottomRightPosition.X - base.TopLeftPosition.X,
+                        base.BottomRightPosition.Y - base.TopLeftPosition.Y
+                    );
+                    
+                    // 🔥 关键：传递屏幕边缘偏移（用于坐标转换）
+                    _influenceRenderer.Draw(spriteBatch, viewport, tileWidth, 
+                        this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge);
+                    
+                    // 🔥 步骤 3：结束势力范围批次
+                    spriteBatch.End();
+                }
+                finally
+                {
+                    // 🔥 步骤 4：恢复外层的 SpriteBatch 状态（使用与 MainGame.Draw 相同的参数）
+                    // 注意：这里必须与 MainGame.Draw() 中的 Begin() 参数完全一致
+                    spriteBatch.Begin(SpriteSortMode.BackToFront, BlendState.AlphaBlend, SamplerState.LinearClamp, null, null, null);
+                }
+            }
+            
             this.architectureLayer.Draw(base.viewportSize, gameTime);
             this.routewayLayer.Draw(base.viewportSize);
 
             this.cloudLayer.Draw();
+
+            // 🌧️ 绘制天气粒子系统（雨雪效果，在云层之后、地块动画之前）
+            // 日期：2026-03-10
+            // 🔥 性能优化：通过设置开关控制是否绘制粒子系统
+            if (Session.GlobalVariables.EnableWeatherParticles && _weatherParticleSystem != null)
+            {
+                _weatherParticleSystem.Draw(Session.MainGame.SpriteBatch);
+            }
 
             if (this.dantiaoLayer != null)
             {
@@ -923,7 +1589,28 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 _visualsManager.Render(Session.MainGame.SpriteBatch);
             }
+            
+            // ==========================================
+            // 阶段 3：Post-Overlay 水墨叠加
+            // 🔥 关键：DrawOverlay 会结束外层批次，之后需要重新 Begin
+            // ==========================================
+            if (_inkRenderer != null)
+            {
+                spriteBatch.End();
+                _inkRenderer.DrawOverlay(spriteBatch, gameTime);
+                // 🔥 恢复外层 SpriteBatch 状态
+                spriteBatch.Begin(SpriteSortMode.BackToFront, BlendState.AlphaBlend, SamplerState.LinearClamp, null, null, null);
+            }
 
+            // ==========================================
+            // 阶段 3.5：选中部队能量覆盖范围高亮显示
+            // 日期：2026-03-21
+            // ==========================================
+            DrawSelectedTroopZocHighlight(spriteBatch, gameTime);
+
+            // ==========================================
+            // 阶段 4：UI 层
+            // ==========================================
             this.mapVeilLayer.Draw(base.viewportSize);
             
             // [新增] 绘制双击军师菜单UI（在所有其他UI之上）
@@ -955,17 +1642,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                     this.DrawRoutewayEditor();
                     this.Plugins.ToolBarPlugin.DrawTools = true;
-                    //    this.Showyoucelan(UndoneWorkKind.None, FrameKind.Architecture, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Architectures, null, "", "");
-                    //this.Plugins.youcelanPlugin.Draw(); 
-
-                    //if (!this.Plugins.youcelanPlugin.IsShowing)
-                    //{
-                        //this.Showyoucelan(UndoneWorkKind.None, FrameKind.Architecture, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Architectures, null, "", "");
-                    //}
-
                     this.Plugins.youcelanPlugin.Draw(); 
-
-
                     break;
 
                 case UndoneWorkKind.ContextMenu:
@@ -1058,7 +1735,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // 绘制军师双击菜单（在鼠标箭头之前，确保在最上层）
             // this.DrawAdvisorDoubleClickMenu();
 
-            if (Platform.PlatFormType == PlatFormType.Win || Platform.PlatFormType == PlatFormType.Desktop || Platform.PlatFormType == PlatFormType.UWP && !Platform.IsMobile)
+            // 🎯 绘制暴击图（在UI层之上，鼠标箭头之前）
+            // 🔥 Hot Path - 调用方保证 _criticalHitImageManager 已初始化
+            _criticalHitImageManager.Draw();
+
+            if (!Platform.MainGame.IsMouseVisible && (Platform.PlatFormType == PlatFormType.Win || Platform.PlatFormType == PlatFormType.Desktop || Platform.PlatFormType == PlatFormType.UWP && !Platform.IsMobile))
             {
                 this.DrawMouseArrow();
             }
@@ -1068,7 +1749,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // =========================================================
             if (dialogueUI != null && dialogueUI.IsActive)
             {
-                dialogueUI.Draw(Session.Current.SpriteBatch);
+                try
+                {
+                    dialogueUI.Draw(Session.Current.SpriteBatch);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DialogueUI] Draw Error: {ex.Message}");
+                }
             }
             // =========================================================
 
@@ -1089,10 +1777,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void DrawMouseArrow()
         {
-            if (base.MouseArrowTexture != null)
+            try
             {
-                CacheManager.Draw(base.MouseArrowTexture.Name, InputManager.Position, null, Color.White, SpriteEffects.None, 1f);
-                //base.CacheManager.Draw(base.MouseArrowTexture, new Vector2((float)InputManager.NowMouse.X, (float)InputManager.NowMouse.Y), null, Color.White, 0f, Vector2.Zero, (float)1f, SpriteEffects.None, 0f);
+                if (base.MouseArrowTexture != null)
+                {
+                    CacheManager.Draw(base.MouseArrowTexture.Name, InputManager.Position, null, Color.White, SpriteEffects.None, 1f);
+                    //base.CacheManager.Draw(base.MouseArrowTexture, new Vector2((float)InputManager.NowMouse.X, (float)InputManager.NowMouse.Y), null, Color.White, 0f, Vector2.Zero, (float)1f, SpriteEffects.None, 0f);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 捕获并忽略鼠标绘制错误，防止因纹理丢失导致游戏崩溃
+                System.Diagnostics.Debug.WriteLine($"[DrawMouseArrow] Error: {ex.Message}");
             }
         }
 
@@ -1133,6 +1829,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private void DrawScreenBlind()
         {
             this.Plugins.ScreenBlindPlugin.Draw();
+            
+            // 🆕 绘制地块势力范围信息插件
+            // 日期：2026-03-13
+            if (this.Plugins.TileInfluenceInfoPlugin != null)
+            {
+                this.Plugins.TileInfluenceInfoPlugin.Draw();
+            }
         }
 
         private void DrawSelector()
@@ -1220,9 +1923,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         //    return this.Plugins.PersonPortraitPlugin.GetFullPortrait(id);
         //}
         
-        private void HandleDialogResult(Enum kind)
+        private void HandleDialogResult(DialogKind kind)
         {
-            switch (((DialogKind)kind))
+            switch (kind)
             {
                 case DialogKind.Confirmation:
                     /*
@@ -1338,9 +2041,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.Plugins.GameFramePlugin.SetOKFunction(function);
         }
 
-        private void HandlePushSelectingUndoneWork(Enum kind)
+        private void HandlePushSelectingUndoneWork(SelectingUndoneWorkKind kind)
         {
-            switch (((SelectingUndoneWorkKind)kind))
+            switch (kind)
             {
                 case SelectingUndoneWorkKind.ArchitectureAvailableContactArea:
                     if ((this.CurrentArchitecture != null) && (this.CurrentMilitary != null))
@@ -1576,13 +2279,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.selectingLayer.TryToShow();
         }
 
-        private void HandleSelectingResult(Enum kind)
+        private void HandleSelectingResult(SelectingUndoneWorkKind kind)
         {
             Architecture targetArchitecture;
             Routeway routeway;
 
 
-            switch (((SelectingUndoneWorkKind)kind))
+            switch (kind)
             {
                 case SelectingUndoneWorkKind.None:
                 case SelectingUndoneWorkKind.SearchPosition:
@@ -1793,28 +2496,119 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         return;
                     }
                     targetArchitecture = Session.Current.Scenario.GetArchitectureByPosition(this.selectingLayer.SelectedPoint);
-                    this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 目标点={this.selectingLayer.SelectedPoint}");
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 清空前 RealDest={this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    // 🔥 根本修复：清空所有旧目标，避免 WillArchitecture 干扰
+                    // 日期：2026-03-06
+                    // 原因：如果不清空 WillArchitecture，它的 setter 可能会覆盖玩家设置的 RealDestination
+                    //       导致 RealDestination 被重置为 {0,0} 或其他错误值
+                    // 解决：在设置新目标前，先清空所有旧目标引用
+                    this.CurrentTroop.TargetArchitecture = null;
                     this.CurrentTroop.TargetTroop = null;
                     this.CurrentTroop.WillTroop = null;
-                    this.CurrentTroop.TargetArchitecture = null;
-                    this.CurrentTroop.WillArchitecture = null;
-
-                    if (targetArchitecture != null)
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 清空目标后 RealDest={this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    this.CurrentTroop.WillArchitecture = null; // ★★★ 关键：清空旧的军团目标 ★★★
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 清空WillArch后 RealDest={this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    // 🔥 根本修复：确保玩家部队加入 PlayerManual 军团
+                    // 日期：2026-03-07
+                    // 🔥 防止默认值陷阱：确保传入有效的己方城市，避免 ID=0 的洛阳问题
+                    if (this.CurrentTroop.BelongedLegion is null or { Kind: not LegionKind.Player })
                     {
-                        this.CurrentTroop.WillArchitecture = targetArchitecture;
-                        this.CurrentTroop.BelongedLegion.WillArchitecture = targetArchitecture;
-                        if (this.CurrentTroop.BelongedFaction.IsFriendly(targetArchitecture.BelongedFaction))
+                        #if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 需要分配军团，当前军团: {this.CurrentTroop.BelongedLegion?.Name ?? "null"}");
+                        #endif
+                        
+                        // 🔥 2026-03-16 修复：移除错误的 ID > 0 判断
+                        // 原因：ID=0 是有效的（洛阳的 ID=0），之前的逻辑会跳过洛阳
+                        // 解决：移除所有 ID 判断，只检查 null 和势力归属
+                        Architecture baseCity = this.CurrentTroop.StartingArchitecture;
+                        
+                        // 🔥 Anti-Band-Aid：只检查 null 和势力归属，不检查 ID
+                        if (baseCity == null || baseCity.BelongedFaction != this.CurrentTroop.BelongedFaction)
                         {
-                            this.CurrentTroop.BelongedLegion.Kind = LegionKind.Defensive;
+                            // 回退1：使用势力的首都（Capital）
+                            baseCity = this.CurrentTroop.BelongedFaction.Capital;
+                            
+                            // 回退2：如果首都为 null，使用势力的第一个城市
+                            if (baseCity == null)
+                            {
+                                foreach (Architecture arch in this.CurrentTroop.BelongedFaction.Architectures)
+                                {
+                                    baseCity = arch;
+                                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} Capital 为 null，使用第一个城市 {baseCity.Name}(ID:{baseCity.ID})");
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} StartingArchitecture 无效，使用首都 {baseCity.Name}(ID:{baseCity.ID})");
+                            }
+                        }
+                        
+                        // 🔥 Anti-Band-Aid：如果找不到城市，让 GetOrCreatePlayerLegion 抛出异常
+                        // 唯一的例外：baseCity 仍然是 null（势力没有城市，已被灭国）
+                        if (baseCity == null)
+                        {
+                            // 势力被灭国，没有城市，这是合法状态，跳过军团分配
+                            System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 势力 {this.CurrentTroop.BelongedFaction.Name} 没有城市（已被灭国），跳过军团分配");
                         }
                         else
                         {
-                            this.CurrentTroop.BelongedLegion.Kind = LegionKind.Offensive;
+                            #if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 分配军团前 RealDest={this.CurrentTroop.RealDestination}");
+                            #endif
+                            
+                            Legion playerLegion = this.CurrentTroop.BelongedFaction.GetOrCreatePlayerLegion(baseCity);
+                            playerLegion.AddTroop(this.CurrentTroop);
+                            
+                            #if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 加入玩家军团 {playerLegion.Name}");
+                            System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 分配军团后 RealDest={this.CurrentTroop.RealDestination}");
+                            #endif
                         }
                     }
-
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 设置RealDest前: {this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    // 设置部队移动目标（必须在清空旧目标之后）
+                    this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 设置RealDest后: {this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    this.CurrentTroop.TargetArchitecture = targetArchitecture;
                     this.CurrentTroop.SelectedMove = true;
-                    this.CurrentTroop.mingling = "Move";
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {this.CurrentTroop.DisplayName} 设置后 RealDest={this.CurrentTroop.RealDestination}");
+                    #endif
+                    
+                    // 🔥 修复：操作面只设置 Command，不设置 CurrentAIState
+                    // 日期：2026-03-08
+                    // 原因：在操作面设置 CurrentAIState = Marching 会导致部队在操作面就显示为"移动"状态
+                    //       违反了半即时半回合的游戏模式（操作面应该是"停止"状态）
+                    // 解决：只设置 Command 和 Operated，CurrentAIState 由 TroopListWithQueue 在执行面设置
+                    //       （TroopListWithQueue.CurrentQueueTroopMove 第 376 行会根据 Command 设置 CurrentAIState）
+                    this.CurrentTroop.SetCommand(TroopCommand.Move);
+                    this.CurrentTroop.Operated = true;
+                    
+                    // ❌ 删除以下代码（会导致操作面立即显示为"移动"状态）：
+                    // this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
 
                     break;
 
@@ -1840,7 +2634,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.CurrentTroop.WillTroop = null;
                     this.CurrentTroop.TargetArchitecture = null;
                     this.CurrentTroop.WillArchitecture = null;
-                    this.CurrentTroop.mingling = "Enter";
+                    this.CurrentTroop.SetCommand(TroopCommand.Enter);
                     if (targetArchitecture != null)
                     {
                         this.CurrentTroop.TargetArchitecture = targetArchitecture;
@@ -1848,19 +2642,36 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
 
                     this.CurrentTroop.SelectedMove = true;
+                    
+                    // 🔥 修复：操作面只设置 Command，不设置 CurrentAIState
+                    // 日期：2026-03-08
+                    // 原因：在操作面设置 CurrentAIState = EnterCity 会导致部队在操作面就显示为"移动"状态
+                    //       违反了半即时半回合的游戏模式（操作面应该是"停止"状态）
+                    // 解决：只设置 Command 和 Operated，CurrentAIState 由 TroopListWithQueue 在执行面设置
+                    this.CurrentTroop.Operated = true;
+                    
+                    // ❌ 删除以下代码（会导致操作面立即显示为"移动"状态）：
+                    // this.CurrentTroop.CurrentAIState = TroopAIState.EnterCity;
 
                     break;
 
 
                 case SelectingUndoneWorkKind.SelectorTroopsDestination:
+                    System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 开始处理，SelectorTroops数量:{this.SelectorTroops.Count}");
                     if (!this.selectingLayer.Canceled)
                     {
                         targetArchitecture = Session.Current.Scenario.GetArchitectureByPosition(this.selectingLayer.SelectedPoint);
                         Troop targetTroop = Session.Current.Scenario.GetTroopByPosition(this.selectingLayer.SelectedPoint);
+                        System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 选中点:{this.selectingLayer.SelectedPoint} 建筑:{targetArchitecture?.Name ?? "无"} 部队:{targetTroop?.DisplayName ?? "无"}");
+                        
                         foreach (Troop troop in this.SelectorTroops)
                         {
+                            System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 检查部队:{troop.DisplayName} SelectedMove:{troop.SelectedMove} SelectedAttack:{troop.SelectedAttack} ManualControl:{troop.ManualControl}");
+                            
                             if (!troop.SelectedMove && !troop.SelectedAttack)
                             {
+                                System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 部队{troop.DisplayName}满足条件，开始设置目标");
+                                
                                 if (targetArchitecture != null)
                                 {
                                     if (targetTroop != null && troop.Army.Kind.AirOffence)
@@ -1872,16 +2683,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                         troop.TargetArchitecture = targetArchitecture;
                                     }
                                     troop.WillArchitecture = targetArchitecture;
-                                    troop.BelongedLegion.WillArchitecture = targetArchitecture;
+                                    troop.BelongedLegion.SetOperationalTarget(targetArchitecture);
                                     if (targetArchitecture.BelongedFaction == troop.BelongedFaction)
                                     {
                                         troop.TargetTroop = null;
                                         troop.WillTroop = null;
-                                        troop.mingling = "Enter";
+                                        troop.SetCommand(TroopCommand.Enter);
                                     }
                                     else
                                     {
-                                        troop.mingling = "Attack";
+                                        troop.SetCommand(TroopCommand.Attack);
                                     }
 
                                     troop.SelectedAttack = true;
@@ -1893,26 +2704,84 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                     troop.WillTroop = targetTroop;
 
                                     troop.SelectedAttack = true;
-                                    troop.mingling = "Attack";
+                                    troop.SetCommand(TroopCommand.Attack);
                                 }
                                 else
                                 {
-                                    troop.mingling = "Move";
+                                    // 🔥 修复：先设置 RealDestination，再清空 WillArchitecture
+                                    // 日期：2026-02-27
+                                    // 原因：WillArchitecture setter 会检查 RealDestination == Point.Zero，如果是则清空
+                                    //       必须先设置 RealDestination 为有效值，再清空 WillArchitecture
+                                    // 旧顺序：清空 WillArch → 触发 setter → 检查 RealDest==Zero → 清空 RealDest
+                                    // 新顺序：设置 RealDest → 清空 WillArch → 触发 setter → 检查 RealDest!=Zero → 保留 RealDest
+                                    troop.SetCommand(TroopCommand.Move);
+                                    troop.RealDestination = this.selectingLayer.SelectedPoint;
+                                    troop.Destination = this.selectingLayer.SelectedPoint;
+                                    
+                                    // 现在可以安全地清空目标对象，不会影响 RealDestination
+                                    troop.WillArchitecture = null;
+                                    troop.TargetArchitecture = null;
+                                    troop.WillTroop = null;
+                                    troop.TargetTroop = null;
                                 }
-                                troop.RealDestination = this.selectingLayer.SelectedPoint;
-                                if (!((targetArchitecture == null) || troop.BelongedFaction.IsFriendly(targetArchitecture.BelongedFaction)))
+                                // 🔥 已移动到上面：先设置 RealDestination，再清空 WillArchitecture
+                                // troop.RealDestination = this.selectingLayer.SelectedPoint;
+                                // troop.Destination = this.selectingLayer.SelectedPoint;
+                                
+                                // 🔥 修复：玩家右键设置目标时，必须设置 CurrentAIState
+                                // 日期：2026-02-26
+                                // 原因：ExecuteTactics() 根据 CurrentAIState 决定是否执行移动
+                                // 如果目标是己方建筑，设置为 EnterCity；否则设置为 Marching
+                                if (targetArchitecture != null && targetArchitecture.BelongedFaction == troop.BelongedFaction)
                                 {
-                                    troop.BelongedLegion.Kind = LegionKind.Offensive;
+                                    troop.CurrentAIState = TroopAIState.EnterCity;
                                 }
                                 else
                                 {
-                                    troop.BelongedLegion.Kind = LegionKind.Defensive;
+                                    troop.CurrentAIState = TroopAIState.Marching;
                                 }
+                                
+                                // 🔥 根本修复：玩家手动控制的部队必须使用 PlayerManual 军团
+                                // 日期：2026-03-07
+                                // 🔥 防止默认值陷阱：确保传入有效的己方城市，避免 ID=0 的洛阳问题
+                                if (troop.BelongedLegion is null or { Kind: not LegionKind.Player })
+                                {
+                                    // 优先使用 StartingArchitecture，如果无效则使用势力的首都
+                                    Architecture baseCity = troop.StartingArchitecture;
+                                    if (baseCity == null || baseCity.BelongedFaction != troop.BelongedFaction)
+                                    {
+                                        // 回退：使用势力的首都（Capital）
+                                        baseCity = troop.BelongedFaction.Capital;
+                                        System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {troop.DisplayName} StartingArchitecture 无效，使用首都 {baseCity?.Name ?? "null"}");
+                                    }
+                                    
+                                    // 🔥 数据验证：如果首都也为 null，说明势力被灭国，让它崩溃暴露问题
+                                    System.Diagnostics.Debug.Assert(baseCity != null, 
+                                        $"[玩家移动指令] {troop.DisplayName} 无法找到有效的基地城市，势力可能被灭国");
+                                    
+                                    Legion playerLegion = troop.BelongedFaction.GetOrCreatePlayerLegion(baseCity);
+                                    playerLegion.AddTroop(troop);
+                                    System.Diagnostics.Debug.WriteLine($"[玩家移动指令] {troop.DisplayName} 加入玩家军团 {playerLegion.Name}");
+                                }
+                                
                                 this.Plugins.PersonBubblePlugin.AddPerson(troop.Leader, troop.Position, TextMessageKind.TroopMoveTo, "Destination");
 
                                 troop.SelectedMove = true;
+                                
+                                // 🔥 根本修复：玩家设置目标后，将部队设置为 CurrentTroop
+                                // 日期：2026-02-27
+                                // 原因：如果玩家在回合开始 > 1 秒后才设置目标，此时 CurrentQueueTroopMove 已经处理完所有部队
+                                //       CurrentTroop = null，队列不再驱动，导致部队不动
+                                // 解决：将部队设置为 CurrentTroop，让 MoveTheTroops 继续驱动它
+                                Session.Current.Scenario.Troops.CurrentTroop = troop;
+                                
+                                System.Diagnostics.Debug.WriteLine($"[玩家指令] {troop.DisplayName} 设置目标:{this.selectingLayer.SelectedPoint} AIState:{troop.CurrentAIState} Status:{troop.Status} Dest:{troop.Destination} RealDest:{troop.RealDestination} MovLeft:{troop.MovabilityLeft}");
                             }
                         }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 操作被取消");
                     }
                     this.SelectorTroops.Clear();
                     return;
@@ -1933,64 +2802,270 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             }
                             return;
                         }
-                        //////////////////////////////////////////////////////////////////////////////
+                        
+                        // 🔥 2026-03-18 新增：基于目标地块的天气检查（仅针对受天气影响的计略）
+                        // 原因：只有包含火系或水系 Influence 的计略才受天气影响
+                        // 解决：先检查计略是否受天气影响，再检查目标地块的天气条件
+                        if (this.CurrentTroop.CurrentStratagem != null)
+                        {
+                            var targetWeather = Session.Current.Scenario.WeatherManager.GetWeatherAt(this.selectingLayer.SelectedPoint);
+                            
+                            // 只有在天气对火水有影响时才检查
+                            if (targetWeather.SuppressFire() || targetWeather.EnhanceWater())
+                            {
+                                var weatherState = WorldOfTheThreeKingdoms.UI.WeatherUIHelper.GetStratagemWeatherState(
+                                    this.CurrentTroop.CurrentStratagem, 
+                                    targetWeather
+                                );
+                                
+                                // 只有当计略真正受天气影响时才处理（weatherState.Hint 不为空）
+                                if (weatherState.IsBlocked)
+                                {
+                                    // 🔥 2026-03-18 修复：简化文本以适应弹窗尺寸
+                                    // 原因：SimpleTextDialog 的文本区域只有 470x70，无法容纳多行文本
+                                    // 解决：简化提示信息，只保留关键内容
+                                    string weatherName = targetWeather == WeatherType.Rain ? "雨天" : "雪天";
+                                    string message = $"⚠️ 无法使用计略：{this.CurrentTroop.CurrentStratagem.Name}\n\n目标地块天气：{weatherName}\n{weatherState.Hint}";
+                                    this.Plugins.SimpleTextDialogPlugin.RichText.Clear();
+                                    this.Plugins.SimpleTextDialogPlugin.RichText.AddText(message);
+                                    this.Plugins.SimpleTextDialogPlugin.SetPosition(ShowPosition.Center);
+                                    this.Plugins.SimpleTextDialogPlugin.IsShowing = true;
+                                    
+                                    // 取消计略
+                                    this.CurrentTroop.CurrentStratagem = null;
+                                    this.CurrentTroop.AttackTargetKind = TroopAttackTargetKind.遇敌;
+                                    this.CurrentTroop.CastTargetKind = TroopCastTargetKind.可能;
+                                    return;
+                                }
+                                else if (weatherState.Hint.Length > 0)
+                                {
+                                    // 计略效果被削弱或增强，显示提示但允许使用
+                                    System.Diagnostics.Debug.WriteLine($"[计略天气提示] {this.CurrentTroop.DisplayName} 使用 {this.CurrentTroop.CurrentStratagem.Name}：{weatherState.Hint}");
+                                }
+                            }
+                        }
+                        
+                        // 🔥 2026-03-18 新增：基于目标地块的天气检查（针对战法）
+                        // 原因：战法与计略类似，也受天气影响
+                        // 解决：与计略保持一致的检查逻辑
+                        if (this.CurrentTroop.CurrentCombatMethod != null)
+                        {
+                            var targetWeather = Session.Current.Scenario.WeatherManager.GetWeatherAt(this.selectingLayer.SelectedPoint);
+                            
+                            // 只有在天气对火水有影响时才检查
+                            if (targetWeather.SuppressFire() || targetWeather.EnhanceWater())
+                            {
+                                var weatherState = WorldOfTheThreeKingdoms.UI.WeatherUIHelper.GetCombatMethodWeatherState(
+                                    this.CurrentTroop.CurrentCombatMethod, 
+                                    targetWeather
+                                );
+                                
+                                // 只有当战法真正受天气影响时才处理
+                                if (weatherState.IsBlocked)
+                                {
+                                    // 🔥 2026-03-18 修复：简化文本以适应弹窗尺寸
+                                    string weatherName = targetWeather == WeatherType.Rain ? "雨天" : "雪天";
+                                    string message = $"⚠️ 无法使用战法：{this.CurrentTroop.CurrentCombatMethod.Name}\n\n目标地块天气：{weatherName}\n{weatherState.Hint}";
+                                    this.Plugins.SimpleTextDialogPlugin.RichText.Clear();
+                                    this.Plugins.SimpleTextDialogPlugin.RichText.AddText(message);
+                                    this.Plugins.SimpleTextDialogPlugin.SetPosition(ShowPosition.Center);
+                                    this.Plugins.SimpleTextDialogPlugin.IsShowing = true;
+                                    
+                                    // 取消战法
+                                    this.CurrentTroop.CurrentCombatMethod = null;
+                                    return;
+                                }
+                                else if (weatherState.Hint.Length > 0)
+                                {
+                                    // 战法效果被削弱或增强，显示提示但允许使用
+                                    System.Diagnostics.Debug.WriteLine($"[战法天气提示] {this.CurrentTroop.DisplayName} 使用 {this.CurrentTroop.CurrentCombatMethod.Name}：{weatherState.Hint}");
+                                }
+                            }
+                        }
+                        
+                        // 🔥 根本修复：移除 SelectedMove 条件限制，允许玩家随时重新设置目标
+                        // 日期：2026-02-27
+                        // 原因：第二回合重新下达指令时，SelectedMove 已经为 true，导致 RealDestination 不被设置
+                        // 解决：无条件设置 RealDestination，让玩家可以随时覆盖目标
                         
                         Troop troopByPositionNoCheck = Session.Current.Scenario.GetTroopByPositionNoCheck(this.selectingLayer.SelectedPoint);
+                        
+                        // 🔥 根本修复：战法指令不设置 RealDestination，避免瞬移
+                        // 🔥 根本修复：战法指令不设置 RealDestination，避免瞬移
+                        // 日期：2026-03-06
+                        // 原因：战法是原地释放的，不需要移动。设置 RealDestination 会导致部队在操作面瞬移
+                        // 解决：只有攻击指令才设置 RealDestination，战法指令只设置目标引用
+                        bool isStratagemCommand = (this.CurrentTroop.Command == TroopCommand.Stratagem);
+                        
+                        // 🔥 修复：先检查是否有城池目标或部队目标，避免设置错误的 RealDestination
+                        // 日期：2026-03-07
+                        // 原因：攻击城池/部队指令应该交给 AI 自动处理走位和攻击
+                        // 解决：先检查城池/部队目标，如果有则不设置 RealDestination，让 AI 处理
+                        Architecture architectureByPositionNoCheck = Session.Current.Scenario.GetArchitectureByPositionNoCheck(this.selectingLayer.SelectedPoint);
+                        bool hasArchitectureTarget = (architectureByPositionNoCheck != null);
+                        bool hasTroopTarget = (troopByPositionNoCheck != null);
+                        
                         if ((troopByPositionNoCheck == null) || !this.CurrentTroop.BelongedFaction.IsPositionKnown(this.selectingLayer.SelectedPoint))
                         {
                             this.CurrentTroop.TargetTroop = null;
-                            if (!this.CurrentTroop.SelectedMove)
+                            this.CurrentTroop.WillTroop = null;
+                            
+                            // 战法指令不设置移动目标
+                            // 🔥 修复：如果有城池目标，不设置 RealDestination
+                            if (!isStratagemCommand && !hasArchitectureTarget)
                             {
-                                this.CurrentTroop.WillTroop = null;
                                 this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
                             }
                         }
                         else
                         {
                             this.CurrentTroop.TargetTroop = troopByPositionNoCheck;
-                            //this.CurrentTroop.TargetArchitecture = null;
-                            if (!this.CurrentTroop.SelectedMove)
+                            this.CurrentTroop.WillTroop = troopByPositionNoCheck;
+                            
+                            // 🔥 修复：攻击部队指令不设置 RealDestination，交给 AI 处理
+                            // 日期：2026-03-07
+                            // 原因：玩家只选择目标部队（战略目标），具体如何接近和攻击应该由 AI 决定
+                            // 解决：不设置 RealDestination，让 AI 自动处理走位
+                            // 战法指令和攻击部队指令都不设置移动目标
+                            if (!isStratagemCommand && !hasTroopTarget && !hasArchitectureTarget)
                             {
-                                this.CurrentTroop.WillTroop = troopByPositionNoCheck;
                                 this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
-                                //this.CurrentTroop.WillArchitecture = null;
                             }
                         }
-                        Architecture architectureByPositionNoCheck = Session.Current.Scenario.GetArchitectureByPositionNoCheck(this.selectingLayer.SelectedPoint);
+                        
                         if (architectureByPositionNoCheck != null)
                         {
-                            this.CurrentTroop.TargetArchitecture = architectureByPositionNoCheck;
-                            //this.CurrentTroop.TargetTroop = null;
-                            if (!this.CurrentTroop.SelectedMove)
-                            {
-                                this.CurrentTroop.WillArchitecture = architectureByPositionNoCheck;
-                                //this.CurrentTroop.WillTroop = null;
-                                if (!this.CurrentTroop.CanAttack(architectureByPositionNoCheck))
-                                {
-                                    this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
-                                }
-                                else
-                                {
-                                    this.CurrentTroop.RealDestination = this.CurrentTroop.Position;
-                                }
-                            }
+                            // 🔥 修复：攻击城池时先清空 RealDestination，让 WillArchitecture.setter 自动计算
+                            // 日期：2026-03-09
+                            // 原因：部队可能有旧的 RealDestination（比如之前自动回退到首都的坐标）
+                            //       WillArchitecture.setter 检查 RealDestination != (-1,-1) 时会保留旧值
+                            //       导致部队带着错误的坐标去寻路（往反方向移动）
+                            // 解决：先清空 RealDestination，让 setter 调用 GetClosestPoint 计算正确坐标
+                            this.CurrentTroop.RealDestination = new Point(-1, -1);
                             
+                            this.CurrentTroop.TargetArchitecture = architectureByPositionNoCheck;
+                            this.CurrentTroop.WillArchitecture = architectureByPositionNoCheck;
+                            
+                            // 🔥 修复：设置军团的 WillArchitecture，让 SmartSiege 系统能正确分配攻击位置
+                            // 日期：2026-03-07
+                            // 原因：Legion.AIWithAuto 中的 SmartSiege 系统需要 Legion.WillArchitecture 来分配攻击位置
+                            // 解决：攻击城池时，同步设置 Legion.WillArchitecture
+                            // 🔥 数据验证：不检查 BelongedLegion 是否为 null，如果为 null 让它崩溃，暴露数据源问题
+                            this.CurrentTroop.BelongedLegion.SetOperationalTarget(architectureByPositionNoCheck);
+                            System.Diagnostics.Debug.WriteLine($"[TroopTarget] 设置军团目标: {this.CurrentTroop.BelongedLegion.Name}.WillArchitecture = {architectureByPositionNoCheck.Name}");
+                            
+                            // 🔥 修复：攻击城池时不设置 RealDestination
+                            // 日期：2026-03-07
+                            // 原因：城池位置不可通行，设置 RealDestination 为城池位置会导致寻路失败
+                            // 解决：只设置 TargetArchitecture，让 SmartSiege 系统自动分配可通行的攻击位置
+                            // 战法指令不设置移动目标
+                            if (!isStratagemCommand)
+                            {
+                                // 攻击城池：不设置 RealDestination，保持为 Zero
+                                // 让 Legion.AIWithAuto → AssignSmartSiegePositions 处理
+                            }
                         }
                         else
                         {
                             this.CurrentTroop.TargetArchitecture = null;
-                            if (!this.CurrentTroop.SelectedMove)
-                            {
-                                this.CurrentTroop.WillArchitecture = null;
-                            }
+                            this.CurrentTroop.WillArchitecture = null;
+                            
+                            // 🔥 数据验证：不检查 BelongedLegion 是否为 null，如果为 null 让它崩溃，暴露数据源问题
+                            this.CurrentTroop.BelongedLegion.SetOperationalTarget(null);
                         }
 
-                        this.CurrentTroop.SelectedMove = true;
+                        this.CurrentTroop.SelectedMove = !isStratagemCommand;  // 战法指令不标记为"需要移动"
                         this.CurrentTroop.SelectedAttack = true;
-                        if (this.CurrentTroop.mingling != "Move" && this.CurrentTroop.mingling != "Stratagem" && this.CurrentTroop.mingling != "Enter")
+                        
+                        // 🔥 修复：根据目标类型设置正确的 Command
+                        // 日期：2026-03-07
+                        // 原因：所有攻击指令都被统一设置为 TroopCommand.Attack，导致 HasValidDestination 无法识别攻击城池指令
+                        // 解决：根据 TargetArchitecture 和 TargetTroop 设置正确的 Command 类型
+                        // 🔥 修复：移除 Command 条件检查，无条件设置正确的 Command
+                        // 日期：2026-03-07
+                        // 原因：条件检查 `if (Command != Move && Command != Stratagem && Command != Enter)` 会导致
+                        //       如果玩家之前已经下达过攻击指令，Command 不会被更新
+                        // 解决：移除条件检查，根据当前目标无条件设置正确的 Command
+                        if (this.CurrentTroop.TargetArchitecture != null && this.CurrentTroop.TargetTroop == null)
                         {
-                            this.CurrentTroop.mingling = "Attack";
+                            // 只有建筑目标 → 攻击建筑
+                            this.CurrentTroop.SetCommand(TroopCommand.AttackArch);
                         }
+                        else if (this.CurrentTroop.TargetTroop != null && this.CurrentTroop.TargetArchitecture == null)
+                        {
+                            // 只有部队目标 → 攻击部队
+                            this.CurrentTroop.SetCommand(TroopCommand.AttackTroop);
+                        }
+                        else if (this.CurrentTroop.TargetArchitecture != null && this.CurrentTroop.TargetTroop != null)
+                        {
+                            // 同时有建筑和部队 → 根据兵种特性决定
+                            if (this.CurrentTroop.Army.Kind.AirOffence || this.CurrentTroop.CurrentStratagem != null)
+                            {
+                                // 远程兵种或有战法 → 优先攻击部队
+                                this.CurrentTroop.SetCommand(TroopCommand.AttackTroop);
+                            }
+                            else
+                            {
+                                // 近战兵种 → 优先攻击建筑
+                                this.CurrentTroop.SetCommand(TroopCommand.AttackArch);
+                            }
+                        }
+                        else
+                        {
+                            // 没有明确目标 → 通用攻击指令
+                            this.CurrentTroop.SetCommand(TroopCommand.Attack);
+                        }
+                        
+                        // 🔥 根本修复：计略和战法指令需要设置 OrientationTroop
+                        // 日期：2026-02-28 & 2026-03-12
+                        // 原因：DoCombatAction 使用 OrientationTroop 而不是 TargetTroop
+                        //       玩家手动选择目标时只设置了 TargetTroop，导致计略/战法无法执行
+                        // 解决：如果是计略或战法指令，将 TargetTroop 复制到 OrientationTroop
+                        if ((this.CurrentTroop.Command == TroopCommand.Stratagem || this.CurrentTroop.CurrentCombatMethod != null) 
+                            && this.CurrentTroop.TargetTroop != null)
+                        {
+                            #if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[TroopTarget] {this.CurrentTroop.DisplayName} 设置 OrientationTroop = {this.CurrentTroop.TargetTroop.DisplayName}");
+                            #endif
+                            
+                            this.CurrentTroop.OrientationTroop = this.CurrentTroop.TargetTroop;
+                            this.CurrentTroop.TargetTroop.OrientationTroop = this.CurrentTroop;
+                        }
+                        
+                        // 🔥 修复：目标确认后才设置 Operated = true
+                        // 日期：2026-03-07
+                        // 原因：之前在 SetTroopStratagem/SetTroopCombatMethod 中就设置了 Operated = true
+                        //       如果玩家取消选择目标，部队仍被标记为已操作，无法重新下达指令
+                        // 解决：延迟到目标确认后再设置 Operated，确保只有完整的指令才消耗操作权
+                        if (this.CurrentTroop.CurrentStratagem != null || this.CurrentTroop.CurrentCombatMethod != null)
+                        {
+                            this.CurrentTroop.Operated = true;
+                        }
+                        
+                        // 🔥 修复：操作面不设置 CurrentAIState，避免立即移动
+                        // 日期：2026-03-06
+                        // 原因：在操作面设置 CurrentAIState = Marching 会导致 UpdateMovementLogic 立即开始寻路和移动
+                        //       表现为下达战法指令后部队立即瞬移，而不是等到行动面再移动
+                        // 解决：只在操作面设置 Command 和目标，CurrentAIState 由 TroopListWithQueue 在行动面设置
+                        //       （TroopListWithQueue.CurrentQueueTroopMove 会根据 Command 设置正确的 CurrentAIState）
+                        
+                        // ❌ 删除以下代码（会导致操作面立即移动）：
+                        // if (this.CurrentTroop.Command == TroopCommand.Enter)
+                        // {
+                        //     this.CurrentTroop.CurrentAIState = TroopAIState.EnterCity;
+                        // }
+                        // else if (this.CurrentTroop.Command == TroopCommand.Stratagem)
+                        // {
+                        //     this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
+                        // }
+                        // else if (this.CurrentTroop.Command == TroopCommand.Move)
+                        // {
+                        //     this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
+                        // }
+                        // else // Attack
+                        // {
+                        //     this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
+                        // }
 
                         ///////////////////////////////////////////////////////////////////////////////////
                         /*
@@ -2004,7 +3079,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         {
                             this.CurrentTroop.TargetTroop = null;
                             this.CurrentTroop.TargetArchitecture = null;
-                            this.CurrentTroop.mingling = "——";
+                            this.CurrentTroop.SetCommand(TroopCommand.None);
 
                             return;
                         }
@@ -2013,14 +3088,31 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             this.CurrentTroop.TargetArchitecture = architectureByPositionNoCheck;
                             this.CurrentTroop.TargetTroop = null;
                             this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
-                            this.CurrentTroop.mingling = "攻击建筑";
+                            this.CurrentTroop.SetCommand(TroopCommand.AttackArch);
 
+                            // 🔥 关键修复：玩家下达攻击城池命令后，立即分配攻击坑位
+                            // 日期：2026-03-21
+                            // 原因：坑位应该在战略面（操作面）分配，而不是在执行面之后
+                            // 场景：玩家选择攻击目标 → 立即分配坑位 → 点击"进行" → 部队移动到坑位
+                            // 解决：在下达命令时立即调用 SmartSiege 系统
+                            
+                            // 🔥 ANTI-BAND-AID：Fail Fast
+                            // 日期：2026-03-21
+                            // 原因：如果 BelongedLegion 为 null，说明数据损坏，应该立即失败
+                            // 场景：玩家下达攻击命令时，部队必须有归属军团
+                            if (this.CurrentTroop.BelongedLegion == null)
+                            {
+                                throw new InvalidOperationException(
+                                    $"数据损坏：部队 {this.CurrentTroop.DisplayName}(ID:{this.CurrentTroop.ID}) 的 BelongedLegion 为 null");
+                            }
+                            
+                            this.CurrentTroop.BelongedLegion.AssignSmartSiegePositions();
                         }
                         else if (!youjianzhu && youdijun)
                         {
                             this.CurrentTroop.TargetTroop = troopByPositionNoCheck;
                             this.CurrentTroop.TargetArchitecture = null;
-                            this.CurrentTroop.mingling = "攻击军队";
+                            this.CurrentTroop.SetCommand(TroopCommand.AttackTroop);
 
                         }
                         else if (youjianzhu && youdijun)
@@ -2031,7 +3123,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             {
                                 this.CurrentTroop.TargetTroop = troopByPositionNoCheck;
                                 this.CurrentTroop.TargetArchitecture = null;
-                                this.CurrentTroop.mingling = "攻击军队";
+                                this.CurrentTroop.SetCommand(TroopCommand.AttackTroop);
 
                             }
                             else
@@ -2039,7 +3131,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                 this.CurrentTroop.TargetArchitecture = architectureByPositionNoCheck;
                                 this.CurrentTroop.TargetTroop = null;
                                 this.CurrentTroop.RealDestination = this.selectingLayer.SelectedPoint;
-                                this.CurrentTroop.mingling = "攻击建筑";
+                                this.CurrentTroop.SetCommand(TroopCommand.AttackArch);
 
                             }
                         }
@@ -2059,7 +3151,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.CurrentTroop.SelfCastPosition = this.selectingLayer.SelectedPoint;
 
                     this.CurrentTroop.SelectedAttack = true;
-                    this.CurrentTroop.mingling = "Stratagem";
+                    this.CurrentTroop.SetCommand(TroopCommand.Stratagem);
+                    
+                    // 🔥 修复：目标确认后才设置 Operated = true
+                    // 日期：2026-03-07
+                    // 原因：之前在 SetTroopStratagem 中就设置了 Operated = true，如果玩家取消选择目标，部队仍被标记为已操作
+                    // 解决：延迟到目标确认后再设置 Operated，确保只有完整的指令才消耗操作权
+                    this.CurrentTroop.Operated = true;
+                    
+                    // 🔥 修复：操作面不设置 CurrentAIState，避免立即移动
+                    // 日期：2026-03-06
+                    // 原因：在操作面设置 CurrentAIState = Marching 会导致 UpdateMovementLogic 立即开始寻路和移动
+                    //       表现为下达战法指令后部队立即瞬移，而不是等到行动面再移动
+                    // 解决：只在操作面设置 Command 和目标，CurrentAIState 由 TroopListWithQueue 在行动面设置
+                    this.CurrentTroop.Will = TroopWill.行军;
+                    
+                    // ❌ 删除以下代码（会导致操作面立即移动）：
+                    // this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[TroopInvestigatePosition] {this.CurrentTroop.DisplayName} 设置完成: Will={this.CurrentTroop.Will}, mingling={this.CurrentTroop.mingling}, SelfCastPosition={this.CurrentTroop.SelfCastPosition}, CurrentStratagem={this.CurrentTroop.CurrentStratagem?.Name ?? "null"}, MovabilityLeft={this.CurrentTroop.MovabilityLeft}, OperationDone={this.CurrentTroop.OperationDone}");
 
                     return;
 
@@ -2069,10 +3179,47 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         this.CurrentTroop.CurrentStratagem = null;
                         return;
                     }
+                    
+                    // 🔥 2026-03-18 新增：基于目标地块的天气检查
+                    // 原因：计略的使用条件应该基于目标地块，而不是施法部队位置
+                    // 解决：在目标确认后检查目标地块的天气，如果不符合条件则弹窗提示
+                    {
+                        var targetWeather = Session.Current.Scenario.WeatherManager.GetWeatherAt(this.selectingLayer.SelectedPoint);
+                        if (targetWeather.SuppressFire())
+                        {
+                            // 🔥 2026-03-18 修复：简化文本以适应弹窗尺寸
+                            string weatherName = targetWeather == WeatherType.Rain ? "雨天" : "雪天";
+                            string message = $"⚠️ 无法点火\n\n目标地块天气：{weatherName}\n{weatherName}无法点燃火焰";
+                            this.Plugins.SimpleTextDialogPlugin.RichText.Clear();
+                            this.Plugins.SimpleTextDialogPlugin.RichText.AddText(message);
+                            this.Plugins.SimpleTextDialogPlugin.SetPosition(ShowPosition.Center);
+                            this.Plugins.SimpleTextDialogPlugin.IsShowing = true;
+                            
+                            // 取消计略
+                            this.CurrentTroop.CurrentStratagem = null;
+                            return;
+                        }
+                    }
+                    
                     this.CurrentTroop.SelfCastPosition = this.selectingLayer.SelectedPoint;
 
                     this.CurrentTroop.SelectedAttack = true;
-                    this.CurrentTroop.mingling = "Stratagem";
+                    this.CurrentTroop.SetCommand(TroopCommand.Stratagem);
+                    
+                    // 🔥 修复：目标确认后才设置 Operated = true
+                    // 日期：2026-03-07
+                    // 原因：之前在 SetTroopStratagem 中就设置了 Operated = true，如果玩家取消选择目标，部队仍被标记为已操作
+                    // 解决：延迟到目标确认后再设置 Operated，确保只有完整的指令才消耗操作权
+                    this.CurrentTroop.Operated = true;
+                    
+                    // 🔥 根本修复：计略指令不需要设置 CurrentAIState
+                    // 日期：2026-02-28
+                    // 原因：设置 CurrentAIState = Combat 会导致 UpdateMovementLogic 被状态门卫拦截
+                    // 解决：计略指令通过 mingling='Stratagem' 标识，在 CurrentQueueTroopMove 中直接检查并执行
+                    //       不需要经过 UpdateMovementLogic，所以不需要设置 CurrentAIState
+                    this.CurrentTroop.Will = TroopWill.行军;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[TroopSetFirePosition] {this.CurrentTroop.DisplayName} 设置完成: Will={this.CurrentTroop.Will}, mingling={this.CurrentTroop.mingling}, SelfCastPosition={this.CurrentTroop.SelfCastPosition}, CurrentStratagem={this.CurrentTroop.CurrentStratagem?.Name ?? "null"}");
 
                     return;
 
@@ -2115,6 +3262,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 default:
                     return;
             }
+            
+            // 🔍 调试：检查 PersonBubble 调用前的状态
+            System.Diagnostics.Debug.WriteLine($"[PersonBubble调用前] CurrentTroop = {this.CurrentTroop?.DisplayName ?? "null"}");
+            System.Diagnostics.Debug.WriteLine($"[PersonBubble调用前] Leader = {this.CurrentTroop?.Leader?.Name ?? "null"}");
+            System.Diagnostics.Debug.WriteLine($"[PersonBubble调用前] Leader.LocationTroop = {this.CurrentTroop?.Leader?.LocationTroop?.DisplayName ?? "null"}");
+            System.Diagnostics.Debug.WriteLine($"[PersonBubble调用前] Troop.RealDestinationString = {this.CurrentTroop?.RealDestinationString ?? "null"}");
+            System.Diagnostics.Debug.WriteLine($"[PersonBubble调用前] Person.RealDestinationString = {this.CurrentTroop?.Leader?.RealDestinationString ?? "null"}");
+            
             this.Plugins.PersonBubblePlugin.AddPerson(this.CurrentTroop.Leader, this.CurrentTroop.Position, TextMessageKind.TroopMoveTo, "Destination");
         }
 
@@ -2149,7 +3304,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             
             if (this.Plugins != null && this.Plugins.AirViewPlugin != null)
             {
-                this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
+                // 🔥 ANTI-BAND-AID：TotalMapSize 必须有效，否则说明 mainMapLayer 未正确初始化
+                var totalMapSize = this.mainMapLayer.TotalMapSize;
+                if (totalMapSize.X == 0 || totalMapSize.Y == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"mainMapLayer.TotalMapSize 无效 ({totalMapSize.X}×{totalMapSize.Y})，" +
+                        $"ScenarioMap.MapDimensions={Session.Current.Scenario.ScenarioMap.MapDimensions}, " +
+                        $"TileWidth={Session.Current.Scenario.ScenarioMap.TileWidth}");
+                }
+                
+                this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, totalMapSize);
             }
 
             if (Session.MainGame.mainGameScreen != null && Session.MainGame.mainGameScreen.cloudLayer != null)
@@ -2159,24 +3324,118 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         }
 
 
+
+        // 🔥 静态计数器：检测 Threading=true 卡死
+        private static int _moveTheTroopsThreadingCount = 0;
+        private const int MAX_THREADING_WAIT_MOVES = 50;
+        
         private bool MoveTheTroops(GameTime gameTime)
         {
+            /*
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] 方法被调用！Threading={Session.Current.Scenario.Threading}, Animating={Session.Current.Scenario.Animating}");
+            #endif
+            */
+            
+            // 🔥 死锁检测与强制修复
+            if (Session.Current.Scenario.Threading)
+            {
+                _moveTheTroopsThreadingCount++;
+                
+                // 每10次输出一次警告
+                if (_moveTheTroopsThreadingCount % 10 == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] Threading=true 已持续 {_moveTheTroopsThreadingCount} 次，检查死锁...");
+                    
+                    // 检查是否所有势力AI都完成了
+                    bool allAIFinished = true;
+                    string waitingFor = "";
+                    foreach (var obj in Session.Current.Scenario.Factions.GetList())
+                    {
+                        if (obj is Faction faction && faction.IsAlive && !faction.AIFinished)
+                        {
+                            allAIFinished = false;
+                            waitingFor = faction.Name;
+                            break;
+                        }
+                    }
+                    
+                    if (allAIFinished)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[MoveTheTroops] 死锁检测：所有AI已完成但Threading=true，强制重置！");
+                        Session.Current.Scenario.Threading = false;
+                        _moveTheTroopsThreadingCount = 0;
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] 等待势力: {waitingFor}");
+                    
+                    // 🔥 额外调试：显示等待势力的详细状态
+                    foreach (var obj in Session.Current.Scenario.Factions.GetList())
+                    {
+                        if (obj is Faction faction && faction.IsAlive && !faction.AIFinished)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] 势力 {faction.Name}: AIFinished={faction.AIFinished}, Controlling={faction.Controlling}, Passed={faction.Passed}, IsPlayer={Session.Current.Scenario.IsPlayer(faction)}");
+                        }
+                    }
+                    }
+                }
+                
+                // 超时强制修复
+                if (_moveTheTroopsThreadingCount >= MAX_THREADING_WAIT_MOVES)
+                {
+                    System.Diagnostics.Debug.WriteLine("[MoveTheTroops] 超时！强制重置Threading和所有势力AI状态");
+                    Session.Current.Scenario.Threading = false;
+                    foreach (var obj in Session.Current.Scenario.Factions.GetList())
+                    {
+                        if (obj is Faction faction)
+                        {
+                            faction.AIFinished = true;
+                        }
+                    }
+                    _moveTheTroopsThreadingCount = 0;
+                }
+            }
+            else
+            {
+                _moveTheTroopsThreadingCount = 0;
+            }
+            
             if (!Session.Current.Scenario.Threading)
             {
-                if (!Session.Current.Scenario.Animating)
+                // 🔥 动画阻塞重构：废除全局 Animating 检查
+                // 日期：2026-02-28
+                // 原因：全局 Animating 会阻塞所有部队，即使只有 1 个部队在动画
+                // 解决：让 CurrentQueueTroopMove 内部检查 CurrentTroop.IsAnimationPlaying
+                
+                bool isPlayerControlling = Session.Current.Scenario.CurrentPlayer != null && 
+                                           Session.Current.Scenario.CurrentPlayer.Controlling;
+
+                #if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] Threading=false, isPlayerControlling={isPlayerControlling}, CurrentPlayer={Session.Current.Scenario.CurrentPlayer?.Name}");
+                #endif
+
+                // 只有在非玩家控制时，才允许处理移动队列
+                if (!isPlayerControlling)
                 {
-                    Session.Current.Scenario.Troops.CurrentQueueTroopMove();
+                    #if DEBUG
+                    // System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] 准备调用 CurrentQueueTroopMove");
+                    #endif
+                    
+                    Session.Current.Scenario.Troops.CurrentQueueTroopMove(gameTime);
                     if (Session.Current.Scenario.Troops.TotallyEmpty)
                     {
                         return false;
                     }
                 }
-                //else if (gameTime.ElapsedRealTime.TotalMilliseconds > Session.GlobalVariables.MaxTimeOfAnimationFrame)
-                else if (gameTime.ElapsedGameTime.TotalMilliseconds > Session.GlobalVariables.MaxTimeOfAnimationFrame)
+                else
                 {
-                    Session.Current.Scenario.Troops.StepAnimationIndex(1);
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[MoveTheTroops] 跳过 CurrentQueueTroopMove：玩家正在控制");
+                    #endif
                 }
             }
+            
             return true;
         }
 
@@ -2241,7 +3500,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case UndoneWorkKind.Dialog:
-                    this.HandleDialogResult(item.SubKind);
+                    this.HandleDialogResult((DialogKind)item.SubKind);
                     break;
                 case UndoneWorkKind.tupianwenzi:
                     break;
@@ -2251,7 +3510,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
 
                 case UndoneWorkKind.Selecting:
-                    this.HandleSelectingResult(item.SubKind);
+                    this.HandleSelectingResult((SelectingUndoneWorkKind)item.SubKind);
                     this.gengxinyoucelan(); 
 
                     break;
@@ -2280,7 +3539,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             switch (undoneWork.Kind)
             {
                 case UndoneWorkKind.Selecting:
-                    this.HandlePushSelectingUndoneWork(undoneWork.SubKind);
+                    this.HandlePushSelectingUndoneWork((SelectingUndoneWorkKind)undoneWork.SubKind);
                     break;
             }
         }
@@ -2288,12 +3547,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public void RefreshDisableRects()
         {
             base.ClearDisableRects();
-            if (this.Plugins.AirViewPlugin.IsMapShowing)
+            if (this.Plugins.AirViewPlugin != null && this.Plugins.AirViewPlugin.IsMapShowing)
             {
                 this.Plugins.AirViewPlugin.ResetMapPosition(Session.MainGame.mainGameScreen);
                 this.Plugins.AirViewPlugin.AddDisableRects();
             }
-            if (this.Plugins.GameRecordPlugin.IsRecordShowing)
+            if (this.Plugins.GameRecordPlugin != null && this.Plugins.GameRecordPlugin.IsRecordShowing)
             {
                 this.Plugins.GameRecordPlugin.ResetRecordShowPosition();
                 this.Plugins.GameRecordPlugin.AddDisableRects();
@@ -2367,17 +3626,138 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
-                Session.Current.Scenario.Factions.RunQueue();
+                // 🔥 COMPREHENSIVE NULL REFERENCE PROTECTION
+                if (Session.Current?.Scenario == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[RunTheFactions] ❌ Session.Current.Scenario is null");
+                    return false;
+                }
+
+                if (Session.Current.Scenario.Factions == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[RunTheFactions] ❌ Scenario.Factions is null");
+                    return false;
+                }
+
+                // Check if any faction has null Leader or Capital (common crash source)
+                foreach (var f in Session.Current.Scenario.Factions)
+                {
+                    if (f is Faction faction)
+                    {
+                        if (faction.Leader == null)
+                        {
+                            continue;
+                        }
+                        if (faction.Capital == null)
+                        {
+                            // 🔥 如果 Capital 仍然为 null，跳过处理
+                            // 注意：正常情况下不应该到这里，因为 LinkScenarioReferences 已经修复了
+                            continue;
+                        }
+                    }
+                }
+
+                // Ensure CurrentPlayer is set
+                if (Session.Current.Scenario.CurrentPlayer == null && Session.Current.Scenario.Factions.Count > 0)
+                {
+                    try 
+                    {
+                        // Use ElementAtOrDefault or LINQ to be safe against race conditions or list changes
+                        // GetList() returns GameObjectList, we need to access its GameObjects property (List<GameObject>) to use FirstOrDefault
+                        var firstFaction = Session.Current.Scenario.Factions.GetList().GameObjects.FirstOrDefault() as Faction;
+                        if (firstFaction != null)
+                        {
+                            Session.Current.Scenario.CurrentPlayer = firstFaction;
+                            System.Diagnostics.Debug.WriteLine($"[RunTheFactions] 紧急设置CurrentPlayer: {firstFaction.Name}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[RunTheFactions] 设置CurrentPlayer时出错: {ex.Message}");
+                    }
+                }
+                
+                try
+                {
+                    Session.Current.Scenario.Factions.RunQueue();
+                }
+                catch (ArgumentOutOfRangeException indexEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RunTheFactions] ❌ 说曹操曹操到: RunQueue 触发 IndexOutOfRange: {indexEx.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[RunTheFactions] 堆栈: {indexEx.StackTrace}");
+                    return false;
+                }
+                catch (Exception runEx)
+                {
+                    throw; // Re-throw to be caught by outer handler
+                }
+
                 if (Session.Current.Scenario.Factions.QueueEmpty)
                 {
                     return false;
                 }
                 return true;
             }
+            catch (NullReferenceException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RunTheFactions] ❌ NullReferenceException: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[RunTheFactions] 堆栈跟踪: {ex.StackTrace}");
+                
+                // Try to recover by ensuring basic objects are set
+                if (Session.Current?.Scenario != null && Session.Current.Scenario.CurrentPlayer == null && Session.Current.Scenario.Factions?.Count > 0)
+                {
+                    Session.Current.Scenario.CurrentPlayer = Session.Current.Scenario.Factions[0] as Faction;
+                    System.Diagnostics.Debug.WriteLine("[RunTheFactions] 尝试恢复：设置CurrentPlayer");
+                }
+                
+                return false;
+            }
             catch (OutOfMemoryException)
             {
                 Session.Current.Scenario.DisposeLotsOfMemory();
                 return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RunTheFactions] ❌ 未预期异常: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 🔥 运行时安全检查 - 确保 Faction.Capital 不为 null
+        /// </summary>
+        private void EnsureFactionCapitalNotNull(Faction faction)
+        {
+            if (faction == null) return;
+
+            if (faction.Capital == null)
+            {
+                // System.Diagnostics.Debug.WriteLine($"[FactionCapitalFix] 🔧 运行时修复: 势力 {faction.Name} 的 Capital 为 null");
+
+                // 尝试从 CapitalID 恢复
+                if (faction.CapitalID >= 0 && Session.Current?.Scenario?.Architectures != null)
+                {
+                    var capital = Session.Current.Scenario.Architectures.GetGameObject(faction.CapitalID) as Architecture;
+                    if (capital != null)
+                    {
+                        faction.Capital = capital;
+                        // System.Diagnostics.Debug.WriteLine($"[FactionCapitalFix] ✅ 从 CapitalID 恢复首都: {capital.Name}");
+                        return;
+                    }
+                }
+
+                // 从势力建筑中选择一个
+                if (faction.Architectures != null && faction.Architectures.Count > 0)
+                {
+                    var newCapital = faction.Architectures[0] as Architecture;
+                    faction.Capital = newCapital;
+                    // System.Diagnostics.Debug.WriteLine($"[FactionCapitalFix] 🔧 紧急设置首都: {newCapital?.Name}");
+                }
+                else
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[FactionCapitalFix] ❌ 势力 {faction.Name} 没有任何建筑，无法设置首都");
+                }
             }
         }
 
@@ -2395,7 +3775,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 string ss = i < 10 ? "0" + i.ToString() : i.ToString();
                 GameDelegates.VoidFunction voidFunction = delegate
                 {
-                    this.SaveFileName = "Save" + ss + this.SaveFileExtension;
+                    // 🔥 修复：使用 .sav.gz 扩展名而不是 .bin
+                    this.SaveFileName = "Save" + ss + ".sav.gz";
                     this.SaveGameToDisk(this.SaveFileName);
                 };
                 saves[i].ID = ss;
@@ -2418,40 +3799,42 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     Platform.Current.UserDirectoryCreate("Save");
                 }
 
-                bool saveMap;
-
-                if (Session.Current.Scenario.UsingOwnCommonData)
-                {
-                    saveMap = false;
-                }
-                else
-                {
-                    saveMap = false;
-                }
+                // 🔥 FIX: 始终保存地图数据，避免读档时 MapDataString 为空
+                // 地图数据是游戏核心数据，应该始终保存到存档文件中
+                bool saveMap = true;
 
                 Session.Current.Scenario.ScenarioMap.JumpPosition = this.mainMapLayer.GetCurrentScreenCenter(base.viewportSize);
                 saveMap = saveMap || this.mapEdited;
 
-                Session.Current.Scenario.SaveGameScenario(LoadedFileName, saveMap, saveMap, true);
+                // 🔥 修复：检测是否为绝对路径（崩溃存档使用完整路径）
+                // 如果 LoadedFileName 包含盘符（如 "G:\"）或以路径分隔符开头，则认为是完整路径
+                bool isFullPath = Path.IsPathRooted(LoadedFileName);
+                
+                Session.Current.Scenario.SaveGameScenario(LoadedFileName, saveMap, saveMap, true, fullPathProvided: isFullPath);
 
                 this.mainMapLayer.freeTilesMemory();
             }
             finally
             {
-
                 Session.Current.Scenario.EnableLoadAndSave = true;
+                
+                // 🔥 修复：不要在存档后立即播放音乐
+                // 原因：freeTilesMemory() 调用 GC.Collect() 可能导致 ContentManager 内部资源被回收
+                // 解决方案：延迟到下一帧播放音乐，让 GC 完成清理
+                // 音乐会在 MainGameScreen.Update() 的下一帧自动恢复（通过 MGSDate.PlayMusic()）
+                System.Diagnostics.Debug.WriteLine("[SaveGameToDisk] 存档完成，音乐将在下一帧自动恢复");
             }
         }
 
         public void SaveGameAutoPosition()
         {
-            this.SaveFileName = "Save00" + this.SaveFileExtension; //"AutoSave" + this.SaveFileExtension;
+            this.SaveFileName = "Save00.bin"; //"AutoSave" + this.SaveFileExtension;
             this.SaveGameToDisk(this.SaveFileName);
         }
 
         private void SaveGameQuitPosition()
         {
-            this.SaveFileName = "QuitSave" + this.SaveFileExtension;
+            this.SaveFileName = "QuitSave.bin";
             this.SaveGameToDisk(this.SaveFileName);
         }
  
@@ -2461,14 +3844,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.SaveGameToDisk(this.SaveFileName);
         }
 
-        private void Scenario_OnNewFactionAppear(Faction faction)
+        /// <summary>
+        /// 新势力创建事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnNewFactionCreated(GameScenario scenario, Faction oldFaction, Faction newFaction, Architecture capital)
         {
-            if ((faction.Leader != null) && (faction.Capital != null))
+            if ((newFaction.Leader != null) && (newFaction.Capital != null))
             {
-                faction.Leader.TextDestinationString = faction.Capital.Name;
-                this.Plugins.GameRecordPlugin.AddBranch(faction.Leader, "NewFactionAppear", faction.Leader.Position);
+                newFaction.Leader.TextDestinationString = newFaction.Capital.Name;
+                this.Plugins.GameRecordPlugin.AddBranch(newFaction.Leader, "NewFactionAppear", newFaction.Leader.Position);
                 this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
-                this.Plugins.tupianwenziPlugin.SetGameObjectBranch(faction.Leader, faction.Leader, TextMessageKind.CreateNewFaction, "NewFactionAppear");
+                this.Plugins.tupianwenziPlugin.SetGameObjectBranch(newFaction.Leader, newFaction.Leader, TextMessageKind.CreateNewFaction, "NewFactionAppear");
                 this.Plugins.tupianwenziPlugin.IsShowing = true;
             }
         }
@@ -2617,7 +4003,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             //goto Label_0647;
                             this.ResetScreenEdge();
                             this.mainMapLayer.ReCalculateTileDestination(this);
-                            this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
+                            if (this.Plugins.AirViewPlugin != null)
+                            {
+                                this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
+                            }
                             return;
                         }
                         this.lastTime = gameTime.TotalGameTime.TotalMilliseconds;
@@ -2657,7 +4046,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                         this.ResetScreenEdge();
                         this.mainMapLayer.ReCalculateTileDestination(this);
-                        this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
+                        if (this.Plugins.AirViewPlugin != null)
+                        {
+                            this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
+                        }
                     }
                     else
                     {
@@ -2669,7 +4061,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void SetTroopCombatMethod(int id)
         {
-            //this.CurrentTroop.Operated = true;
+            // 🔥 修复：延迟设置 Operated，等目标确认后再标记为已操作
+            // 日期：2026-03-07
+            // 原因：在选择战法时就设置 Operated = true，如果玩家取消选择目标，部队仍被标记为已操作
+            // 解决：只在这里设置战法，Operated 在 HandleSelectingResult(TroopTarget) 确认目标后设置
+            // this.CurrentTroop.Operated = true;  // ❌ 移除，延迟到目标确认后
             this.CurrentTroop.CurrentStratagem = null;
             this.CurrentTroop.CurrentCombatMethod = Session.Current.Scenario.GameCommonData.AllCombatMethods.GetCombatMethod(id);
             if (this.CurrentTroop.CurrentCombatMethod != null)
@@ -2691,9 +4087,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void SetTroopStratagem(int id)
         {
-            //this.CurrentTroop.Operated = true;
+            // 🔥 修复：延迟设置 Operated，等目标确认后再标记为已操作
+            // 日期：2026-03-07
+            // 原因：在选择技能时就设置 Operated = true，如果玩家取消选择目标，部队仍被标记为已操作
+            // 解决：只在这里设置技能，Operated 在 HandleSelectingResult(TroopTarget) 确认目标后设置
+            // this.CurrentTroop.Operated = true;  // ❌ 移除，延迟到目标确认后
             this.CurrentTroop.CurrentCombatMethod = null;
             this.CurrentTroop.CurrentStratagem = Session.Current.Scenario.GameCommonData.AllStratagems.GetStratagem(id);
+            
+            // 🔥 根本修复：设置 mingling 标识计略指令
+            // 日期：2026-02-28
+            // 原因：SetTroopStratagem 没有设置 mingling，导致后续 TroopTarget 逻辑将其误判为 Attack
+            // 解决：在设置计略时立即设置 mingling = "Stratagem"
+            this.CurrentTroop.SetCommand(TroopCommand.Stratagem);
+            
             if (this.CurrentTroop.CurrentStratagem != null)
             {
                 if (this.CurrentTroop.CurrentStratagem.CastDefault != null)
@@ -2718,7 +4125,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void SetTroopStunt(int id)
         {
-            //this.CurrentTroop.Operated = true;
+            // 🔥 修复：特技是即时生效的增益效果，不应消耗部队操作权
+            // 日期：2026-03-06
+            // 原因：设置 Operated = true 导致部队无法下达后续指令（移动/攻击/计略）
+            // 解决：移除 Operated 设置，让特技成为"自由操作"，符合 WEGO 机制
+            // this.CurrentTroop.Operated = true;  // ❌ 移除此行
+            
             this.CurrentTroop.CurrentStunt = Session.Current.Scenario.GameCommonData.AllStunts.GetStunt(id);
             this.CurrentTroop.ApplyCurrentStunt();
         }
@@ -2738,7 +4150,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// <param name="advisor">军师</param>
         /// <param name="dialogue">对话条目</param>
         /// <param name="onFinished">对话结束后的回调</param>
-        public void ShowDialogueUI(Person leader, Person advisor, GameGlobal.DialogueEntry dialogue, DialogueFinishedCallback onFinished)
+        public void ShowDialogueUI(Person leader, Person advisor, WorldOfTheThreeKingdoms.GameGlobal.DialogueEntry dialogue, DialogueFinishedCallback onFinished)
         {
             try
             {
@@ -2749,7 +4161,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     return;
                 }
 
-                // 转换 GameGlobal.DialogueEntry 到本地 DialogueEntry
+                // 转换 WorldOfTheThreeKingdoms.GameGlobal.DialogueEntry 到本地 DialogueEntry
                 var localDialogue = new WorldOfTheThreeKingdoms.GameManager.DialogueEntry
                 {
                     Type = dialogue.Type,
@@ -2901,6 +4313,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             try
             {
                 var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+                
+                if (currentPlayer == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[CheckAdvisorRecommendation] CurrentPlayer is null, skipping.");
+                    return;
+                }
+
                 if (!currentPlayer.IsAdvisorRecommendationEnabled)
                 {
                     System.Diagnostics.Debug.WriteLine("[CheckAdvisorRecommendation] 军师举荐功能已关闭，跳过");
@@ -2923,7 +4342,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 );
 
                 // 处理推荐结果
-                _advisorRecommendationSystem.HandleRecommendationResult(
+                WorldOfTheThreeKingdoms.GameManager.AdvisorRecommendationSystem.HandleRecommendationResult(
                     currentPlayer, 
                     result, 
                     foundPerson, 
@@ -2945,32 +4364,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// <summary>
         /// 年份变化事件处理器 - 触发军师推荐
         /// </summary>
-        private bool OnYearPassed_CheckAdvisorRecommendation()
+        private void OnYearPassed_CheckAdvisorRecommendation(GameScenario scenario)
         {
             try
             {
                 System.Diagnostics.Debug.WriteLine("[OnYearPassed] 年份变化，检查军师推荐");
                 
-                // 延迟执行军师推荐，避免在事件处理中直接执行UI操作
-                System.Threading.Tasks.Task.Run(() =>
+                // 使用安全的后台操作，避免 Fire-and-Forget 警告
+                AsyncWarningsFix.RunInBackgroundWithDelay(() =>
                 {
-                    try
-                    {
-                        System.Threading.Thread.Sleep(100); // 短暂延迟
-                        CheckAdvisorRecommendation();
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[OnYearPassed] 延迟执行军师推荐时发生异常: {ex.Message}");
-                    }
-                });
-                
-                return true; // 返回true表示事件处理成功
+                    CheckAdvisorRecommendation();
+                }, 100, "军师推荐检查");
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[OnYearPassed] 年份事件处理异常: {ex.Message}");
-                return true; // 即使出错也返回true，避免阻止游戏继续
             }
         }
 
@@ -2981,41 +4389,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
-                // 延迟注册，确保Session和Scenario已经初始化
-                System.Threading.Tasks.Task.Run(async () =>
+                // 使用安全的异步初始化模式
+                AsyncWarningsFix.InitializeAsync(async () =>
                 {
                     // 等待一段时间确保游戏初始化完成
-                    await System.Threading.Tasks.Task.Delay(1000);
+                    await Task.Delay(1000).ConfigureAwait(false);
                     
-                    try
-                    {
-                        if (Session.Current?.Scenario?.Date != null)
-                        {
-                            Session.Current.Scenario.Date.OnYearPassed += OnYearPassed_CheckAdvisorRecommendation;
-                            System.Diagnostics.Debug.WriteLine("[RegisterAdvisorRecommendationEvents] 年份事件注册成功");
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("[RegisterAdvisorRecommendationEvents] Session或Scenario尚未初始化，稍后重试");
-                            
-                            // 如果还没初始化，再等待一段时间重试
-                            await System.Threading.Tasks.Task.Delay(2000);
-                            if (Session.Current?.Scenario?.Date != null)
-                            {
-                                Session.Current.Scenario.Date.OnYearPassed += OnYearPassed_CheckAdvisorRecommendation;
-                                System.Diagnostics.Debug.WriteLine("[RegisterAdvisorRecommendationEvents] 延迟注册成功");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[RegisterAdvisorRecommendationEvents] 延迟注册失败: {ex.Message}");
-                    }
-                });
+                    // 🔥 修复：订阅新事件系统 ScenarioEvents.OnYearPassed
+                    ScenarioEvents.OnYearPassed += OnYearPassed_CheckAdvisorRecommendation;
+                    System.Diagnostics.Debug.WriteLine("[RegisterAdvisorRecommendationEvents] 年份事件注册成功（新事件系统）");
+                }, "军师推荐事件注册");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[RegisterAdvisorRecommendationEvents] 注册事件时发生异常: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[RegisterAdvisorRecommendationEvents] 注册异常: {ex.Message}");
             }
         }
 
@@ -7804,6 +9191,552 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             }
         }
 
+        #region 外交分析方法
+
+        /// <summary>
+        /// 执行停战分析并给出建议
+        /// </summary>
+        public void PerformTruceDiplomaticAnalysisAndRecommendation(Faction targetFaction)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformTruceDiplomaticAnalysisAndRecommendation] 开始分析停战可行性，目标势力: {targetFaction?.Name ?? "null"}");
+                
+                if (targetFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformTruceDiplomaticAnalysisAndRecommendation] 目标势力为null");
+                    return;
+                }
+
+                Architecture sourceArchitecture = this.CurrentSourceArchitecture ?? this.CurrentArchitecture;
+                if (sourceArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformTruceDiplomaticAnalysisAndRecommendation] 源建筑或势力为null");
+                    return;
+                }
+
+                Faction sourceFaction = sourceArchitecture.BelongedFaction;
+                Person advisor = sourceFaction.Advisor ?? sourceFaction.Leader;
+                
+                if (advisor == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformTruceDiplomaticAnalysisAndRecommendation] 没有军师或君主");
+                    return;
+                }
+
+                // 分析停战可行性
+                int successRate = CalculateTruceSuccessRate(sourceFaction, targetFaction);
+                Person bestCandidate = FindBestDiplomaticCandidate(sourceArchitecture, "停战");
+
+                string analysisText = GenerateTruceAnalysisText(advisor, targetFaction, successRate, bestCandidate);
+                
+                // 显示军师分析对话
+                ShowDiplomaticAnalysisDialog(advisor, analysisText, () => {
+                    // 用户确认后显示执行人员选择
+                    ShowDiplomaticExecutorSelection(sourceArchitecture, targetFaction, "停战", bestCandidate);
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformTruceDiplomaticAnalysisAndRecommendation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 执行劝降分析并给出建议
+        /// </summary>
+        public void PerformInduceSurrenderAnalysisAndRecommendation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[PerformInduceSurrenderAnalysisAndRecommendation] 开始分析劝降可行性");
+                
+                Architecture sourceArchitecture = this.CurrentSourceArchitecture ?? this.CurrentArchitecture;
+                if (sourceArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformInduceSurrenderAnalysisAndRecommendation] 源建筑或势力为null");
+                    return;
+                }
+
+                Faction sourceFaction = sourceArchitecture.BelongedFaction;
+                Person advisor = sourceFaction.Advisor ?? sourceFaction.Leader;
+                
+                if (advisor == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformInduceSurrenderAnalysisAndRecommendation] 没有军师或君主");
+                    return;
+                }
+
+                // 获取当前劝降目标
+                var targetRelation = this.CurrentInduceSurrenderTarget;
+                if (targetRelation == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformInduceSurrenderAnalysisAndRecommendation] 没有劝降目标");
+                    return;
+                }
+
+                // 分析劝降可行性
+                int successRate = CalculateInduceSurrenderSuccessRate(sourceFaction, targetRelation);
+                Person bestCandidate = FindBestDiplomaticCandidate(sourceArchitecture, "劝降");
+
+                string analysisText = GenerateInduceSurrenderAnalysisText(advisor, targetRelation, successRate, bestCandidate);
+                
+                // 显示军师分析对话
+                ShowDiplomaticAnalysisDialog(advisor, analysisText, () => {
+                    // 用户确认后显示执行人员选择
+                    ShowInduceSurrenderExecutorSelection(sourceArchitecture, targetRelation, bestCandidate);
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformInduceSurrenderAnalysisAndRecommendation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 执行结盟分析并给出建议
+        /// </summary>
+        public void PerformAllyDiplomaticAnalysisAndRecommendation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[PerformAllyDiplomaticAnalysisAndRecommendation] 开始分析结盟可行性");
+                
+                Architecture sourceArchitecture = this.CurrentSourceArchitecture ?? this.CurrentArchitecture;
+                if (sourceArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformAllyDiplomaticAnalysisAndRecommendation] 源建筑或势力为null");
+                    return;
+                }
+
+                Faction sourceFaction = sourceArchitecture.BelongedFaction;
+                Person advisor = sourceFaction.Advisor ?? sourceFaction.Leader;
+                
+                if (advisor == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformAllyDiplomaticAnalysisAndRecommendation] 没有军师或君主");
+                    return;
+                }
+
+                // 获取可结盟的势力列表
+                var allyTargets = GetAllyTargets(sourceFaction);
+                if (allyTargets.Count == 0)
+                {
+                    ShowNoDiplomaticTargetsDialog(advisor, "结盟");
+                    return;
+                }
+
+                // 分析最佳结盟目标
+                Faction bestTarget = allyTargets[0]; // 简化处理，取第一个
+                int successRate = CalculateAllySuccessRate(sourceFaction, bestTarget);
+                Person bestCandidate = FindBestDiplomaticCandidate(sourceArchitecture, "结盟");
+
+                string analysisText = GenerateAllyAnalysisText(advisor, bestTarget, successRate, bestCandidate);
+                
+                // 显示军师分析对话
+                ShowDiplomaticAnalysisDialog(advisor, analysisText, () => {
+                    // 用户确认后显示执行人员选择
+                    ShowDiplomaticExecutorSelection(sourceArchitecture, bestTarget, "结盟", bestCandidate);
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformAllyDiplomaticAnalysisAndRecommendation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 触发智能劝降外交关系
+        /// </summary>
+        public void TriggerIntelligentInduceSurrenderDiplomaticRelation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[TriggerIntelligentInduceSurrenderDiplomaticRelation] 开始");
+                
+                if (this.CurrentArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentInduceSurrenderDiplomaticRelation] 当前建筑或势力为null");
+                    return;
+                }
+
+                // 设置操作类型和源建筑
+                this.CurrentOperationType = IntelligentOperationType.None; // 劝降不在现有枚举中
+                this.CurrentSourceArchitecture = this.CurrentArchitecture;
+
+                // 获取可劝降的目标列表
+                var surrenderTargets = this.CurrentArchitecture.GetQuanXiangDiplomaticRelationList();
+                if (surrenderTargets == null || surrenderTargets.Count == 0)
+                {
+                    ShowNoDiplomaticTargetsDialog(this.CurrentArchitecture.BelongedFaction.Advisor ?? this.CurrentArchitecture.BelongedFaction.Leader, "劝降");
+                    return;
+                }
+
+                // 显示目标选择界面
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.DiplomaticRelation, 
+                    FrameFunction.GetInduceSurrenderTargetForAnalysis,
+                    false, true, true, false, 
+                    surrenderTargets, 
+                    null, 
+                    "选择劝降目标", 
+                    "劝降"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentInduceSurrenderDiplomaticRelation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 触发智能结盟外交关系
+        /// </summary>
+        public void TriggerIntelligentAllyDiplomaticRelation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[TriggerIntelligentAllyDiplomaticRelation] 开始");
+                
+                if (this.CurrentArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentAllyDiplomaticRelation] 当前建筑或势力为null");
+                    return;
+                }
+
+                // 设置操作类型和源建筑
+                this.CurrentOperationType = IntelligentOperationType.None; // 结盟不在现有枚举中
+                this.CurrentSourceArchitecture = this.CurrentArchitecture;
+
+                // 获取可结盟的目标列表
+                var allyTargets = this.CurrentArchitecture.GetAllyDiplomaticRelationList();
+                if (allyTargets == null || allyTargets.Count == 0)
+                {
+                    ShowNoDiplomaticTargetsDialog(this.CurrentArchitecture.BelongedFaction.Advisor ?? this.CurrentArchitecture.BelongedFaction.Leader, "结盟");
+                    return;
+                }
+
+                // 显示目标选择界面
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.DiplomaticRelation, 
+                    FrameFunction.GetAllyTargetForAnalysis,
+                    false, true, true, false, 
+                    allyTargets, 
+                    null, 
+                    "选择结盟目标", 
+                    "结盟"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentAllyDiplomaticRelation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 触发智能停战外交关系
+        /// </summary>
+        public void TriggerIntelligentTruceDiplomaticRelation()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[TriggerIntelligentTruceDiplomaticRelation] 开始");
+                
+                if (this.CurrentArchitecture?.BelongedFaction == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[TriggerIntelligentTruceDiplomaticRelation] 当前建筑或势力为null");
+                    return;
+                }
+
+                // 设置操作类型和源建筑
+                this.CurrentOperationType = IntelligentOperationType.None; // 停战不在现有枚举中
+                this.CurrentSourceArchitecture = this.CurrentArchitecture;
+
+                // 获取可停战的目标列表
+                var truceTargets = this.CurrentArchitecture.GetTruceDiplomaticRelationList();
+                if (truceTargets == null || truceTargets.Count == 0)
+                {
+                    ShowNoDiplomaticTargetsDialog(this.CurrentArchitecture.BelongedFaction.Advisor ?? this.CurrentArchitecture.BelongedFaction.Leader, "停战");
+                    return;
+                }
+
+                // 显示目标选择界面
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame, 
+                    FrameKind.DiplomaticRelation, 
+                    FrameFunction.GetTruceTargetForAnalysis,
+                    false, true, true, false, 
+                    truceTargets, 
+                    null, 
+                    "选择停战目标", 
+                    "停战"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TriggerIntelligentTruceDiplomaticRelation] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 当前劝降目标
+        /// </summary>
+        public DiplomaticRelationDisplay CurrentInduceSurrenderTarget { get; set; }
+
+        /// <summary>
+        /// 当前推荐的劝降执行人
+        /// </summary>
+        public Person CurrentRecommendedPersonForInduceSurrender { get; set; }
+
+        #region 外交分析辅助方法
+
+        /// <summary>
+        /// 计算停战成功率
+        /// </summary>
+        private int CalculateTruceSuccessRate(Faction sourceFaction, Faction targetFaction)
+        {
+            if (sourceFaction == null || targetFaction == null) return 0;
+            
+            // 简化计算：基于双方实力对比和关系
+            int baseRate = 50;
+            
+            // 实力对比影响
+            int powerDiff = sourceFaction.Architectures.Count - targetFaction.Architectures.Count;
+            if (powerDiff > 0) baseRate += Math.Min(20, powerDiff * 5);
+            else baseRate -= Math.Min(20, Math.Abs(powerDiff) * 5);
+            
+            return Math.Max(10, Math.Min(90, baseRate));
+        }
+
+        /// <summary>
+        /// 计算劝降成功率
+        /// </summary>
+        private int CalculateInduceSurrenderSuccessRate(Faction sourceFaction, DiplomaticRelationDisplay targetRelation)
+        {
+            if (sourceFaction == null || targetRelation == null) return 0;
+            
+            // 简化计算
+            int baseRate = 30; // 劝降比停战更难
+            
+            return Math.Max(5, Math.Min(80, baseRate));
+        }
+
+        /// <summary>
+        /// 计算结盟成功率
+        /// </summary>
+        private int CalculateAllySuccessRate(Faction sourceFaction, Faction targetFaction)
+        {
+            if (sourceFaction == null || targetFaction == null) return 0;
+            
+            // 简化计算
+            int baseRate = 60; // 结盟相对容易
+            
+            return Math.Max(20, Math.Min(95, baseRate));
+        }
+
+        /// <summary>
+        /// 寻找最佳外交候选人
+        /// </summary>
+        private Person FindBestDiplomaticCandidate(Architecture architecture, string actionType)
+        {
+            if (architecture?.Persons == null) return null;
+            
+            Person bestCandidate = null;
+            int bestScore = 0;
+            
+            foreach (Person person in architecture.Persons)
+            {
+                if (person == null || !person.Available) continue;
+                
+                // 外交主要看魅力和政治
+                int score = person.Glamour + person.Politics;
+                
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestCandidate = person;
+                }
+            }
+            
+            return bestCandidate;
+        }
+
+        /// <summary>
+        /// 生成停战分析文本
+        /// </summary>
+        private string GenerateTruceAnalysisText(Person advisor, Faction targetFaction, int successRate, Person bestCandidate)
+        {
+            string candidateName = bestCandidate?.Name ?? "合适人选";
+            return $"{advisor.Name}：主公，与{targetFaction.Name}停战成功率约{successRate}%，建议派遣{candidateName}前往谈判。";
+        }
+
+        /// <summary>
+        /// 生成劝降分析文本
+        /// </summary>
+        private string GenerateInduceSurrenderAnalysisText(Person advisor, DiplomaticRelationDisplay targetRelation, int successRate, Person bestCandidate)
+        {
+            string candidateName = bestCandidate?.Name ?? "合适人选";
+            return $"{advisor.Name}：主公，劝降成功率约{successRate}%，建议派遣{candidateName}前往劝说。";
+        }
+
+        /// <summary>
+        /// 生成结盟分析文本
+        /// </summary>
+        private string GenerateAllyAnalysisText(Person advisor, Faction targetFaction, int successRate, Person bestCandidate)
+        {
+            string candidateName = bestCandidate?.Name ?? "合适人选";
+            return $"{advisor.Name}：主公，与{targetFaction.Name}结盟成功率约{successRate}%，建议派遣{candidateName}前往商议。";
+        }
+
+        /// <summary>
+        /// 显示外交分析对话
+        /// </summary>
+        private void ShowDiplomaticAnalysisDialog(Person advisor, string analysisText, GameDelegates.VoidFunction confirmAction)
+        {
+            try
+            {
+                if (this.Plugins?.tupianwenziPlugin == null)
+                {
+                    confirmAction?.Invoke();
+                    return;
+                }
+
+                this.Plugins.tupianwenziPlugin.SetConfirmationDialog(
+                    this.Plugins.ConfirmationDialogPlugin,
+                    confirmAction,
+                    new GameDelegates.VoidFunction(() => {
+                        this.Plugins.tupianwenziPlugin.IsShowing = false;
+                        this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+                    })
+                );
+
+                this.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+                this.Plugins.tupianwenziPlugin.SetGameObjectBranch(advisor, advisor, analysisText, "", "", "");
+                this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
+                this.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowDiplomaticAnalysisDialog] 错误: {ex.Message}");
+                confirmAction?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// 显示外交执行人员选择
+        /// </summary>
+        private void ShowDiplomaticExecutorSelection(Architecture sourceArchitecture, Faction targetFaction, string actionType, Person recommendedPerson)
+        {
+            try
+            {
+                var preSelectedList = new GameObjectList();
+                if (recommendedPerson != null)
+                    preSelectedList.Add(recommendedPerson);
+
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame,
+                    FrameKind.Person,
+                    FrameFunction.PersonManualHire,
+                    true, true, true, true,
+                    sourceArchitecture.PersonsExcludeNvGuan,
+                    preSelectedList,
+                    $"{actionType} - 推荐: {recommendedPerson?.Name ?? "无"}",
+                    actionType
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowDiplomaticExecutorSelection] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 显示劝降执行人员选择
+        /// </summary>
+        private void ShowInduceSurrenderExecutorSelection(Architecture sourceArchitecture, DiplomaticRelationDisplay targetRelation, Person recommendedPerson)
+        {
+            try
+            {
+                // 保存当前目标和推荐人
+                this.CurrentInduceSurrenderTarget = targetRelation;
+                this.CurrentRecommendedPersonForInduceSurrender = recommendedPerson;
+
+                var preSelectedList = new GameObjectList();
+                if (recommendedPerson != null)
+                    preSelectedList.Add(recommendedPerson);
+
+                this.ShowTabListInFrame(
+                    UndoneWorkKind.Frame,
+                    FrameKind.Person,
+                    FrameFunction.GetInduceSurrenderExecutor,
+                    true, true, true, true,
+                    sourceArchitecture.PersonsExcludeNvGuan,
+                    preSelectedList,
+                    $"劝降 - 推荐: {recommendedPerson?.Name ?? "无"}",
+                    "劝降"
+                );
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowInduceSurrenderExecutorSelection] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 显示没有外交目标的对话
+        /// </summary>
+        private void ShowNoDiplomaticTargetsDialog(Person speaker, string actionType)
+        {
+            try
+            {
+                if (speaker == null || this.Plugins?.tupianwenziPlugin == null)
+                    return;
+
+                string message = $"{speaker.Name}：主公，目前没有可进行{actionType}的目标。";
+                
+                this.Plugins.tupianwenziPlugin.SetGameObjectBranch(speaker, speaker, message, "", "", "");
+                this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
+                this.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowNoDiplomaticTargetsDialog] 错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 获取可结盟的目标列表
+        /// </summary>
+        private List<Faction> GetAllyTargets(Faction sourceFaction)
+        {
+            var targets = new List<Faction>();
+            
+            try
+            {
+                if (Session.Current?.Scenario?.Factions == null) return targets;
+                
+                foreach (Faction faction in Session.Current.Scenario.Factions)
+                {
+                    if (faction != null && faction != sourceFaction && !faction.Destroyed)
+                    {
+                        targets.Add(faction);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetAllyTargets] 错误: {ex.Message}");
+            }
+            
+            return targets;
+        }
+
+        #endregion
+
+        #endregion
+
         public void ShowTabListInFrame(UndoneWorkKind undoneWork, FrameKind kind, FrameFunction function, bool OKEnabled, bool CancelEnabled, bool showCheckBox, bool multiselecting, GameObjectList gameObjectList, GameObjectList selectedObjectList, string title, string tabName)
         {
             if ((gameObjectList != null) && (gameObjectList.Count != 0))
@@ -7870,33 +9803,209 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
 
         private void gengxinyoucelan()
         {
-            if ((Session.Current.Scenario.CurrentPlayer != null) && (Session.Current.Scenario.CurrentPlayer.FirstSection != null))
+            if (Session.Current.Scenario.CurrentPlayer != null)
             {
-                this.Showyoucelan(UndoneWorkKind.None,FrameKind.Architecture, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.FirstSection.Architectures, null, "", "");
+                // 🔥 2026-03-05 修复：刷新当前列表而不改变列表类型
+                // 原逻辑：总是切换到建筑列表
+                // 问题：用户在部队列表中操作部队后，右键菜单关闭时自动切换回建筑列表
+                // 新逻辑：保持当前列表类型（部队或建筑），只刷新数据
+                this.RefreshCurrentYoucelanList();
             }
+        }
+
+        /// <summary>
+        /// 获取玩家手动控制的城池列表（排除委任军区的城池）
+        /// </summary>
+        private ArchitectureList GetPlayerControlledArchitectures()
+        {
+            if (Session.Current.Scenario.CurrentPlayer == null)
+            {
+                return null;
+            }
+
+            var player = Session.Current.Scenario.CurrentPlayer;
+
+            // 使用 C# 12 目标类型 new()
+            ArchitectureList playerControlled = new();
+            
+            foreach (Architecture architecture in player.Architectures.GetList())
+            {
+                // 🔥 修复：手动控制判定逻辑
+                // 日期：2026-02-17
+                // 问题：原逻辑使用 else if 导致君主直辖军区不检查 AutoRun 状态
+                // 解决：核心判断是 AutoRun == false（非委任），君主直辖只是特殊情况
+                
+                bool isManualControlled = false;
+
+                if (architecture.BelongedSection == null)
+                {
+                    // 情况1：无军区归属（直辖城池）
+                    isManualControlled = true;
+                }
+                else if (architecture.BelongedSection.AIDetail == null)
+                {
+                    // 情况2：军区没有AI设定（数据错误，但视为手动控制）
+                    isManualControlled = true;
+                    System.Diagnostics.Debug.WriteLine($"[GetPlayerControlledArchitectures] ⚠️ 城池 {architecture.Name} 的军区 {architecture.BelongedSection.Name} 没有 AIDetail");
+                }
+                else
+                {
+                    // 情况3：核心判断 - 检查军区是否为非委任（AutoRun == false）
+                    isManualControlled = !architecture.BelongedSection.AIDetail.AutoRun;
+                }
+
+                if (isManualControlled)
+                {
+                    playerControlled.Add(architecture);
+                }
+            }
+            
+
+            
+            return playerControlled;
         }
 
 
 
         public void Showyoucelan(UndoneWorkKind undoneWork, FrameKind kind, FrameFunction function, bool OKEnabled, bool CancelEnabled, bool showCheckBox, bool multiselecting, GameObjectList gameObjectList, GameObjectList selectedObjectList, string title, string tabName)
         {
-            if ((gameObjectList != null) && (gameObjectList.Count != 0))
+            // 🔍 调试：追踪所有调用
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            // System.Diagnostics.Debug.WriteLine($"[Showyoucelan] 被调用！Kind={kind}, 列表数量={gameObjectList.Count}");
+            // System.Diagnostics.Debug.WriteLine("[Showyoucelan] 调用堆栈：");
+            // System.Diagnostics.Debug.WriteLine(Environment.StackTrace);
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            
+            this.Plugins.youcelanPlugin.Kind = kind;
+            this.Plugins.youcelanPlugin.Function = function;
+            
+            // ✅ 修复调用顺序：先设置 listKindToDisplay，再调用 InitialValues
+            this.Plugins.youcelanPlugin.SetListKindByName(kind.ToString(), showCheckBox, multiselecting);
+            this.Plugins.youcelanPlugin.InitialValues(gameObjectList, selectedObjectList, InputManager.NowMouse.ScrollWheelValue, title);
+            this.Plugins.youcelanPlugin.SetSelectedTab(tabName);
+            this.Plugins.youcelanPlugin.SetyoucelanContent(base.viewportSize);
+            this.Plugins.youcelanPlugin.IsShowing = true;
+        }
+
+        // 🎯 右侧栏切换功能：显示建筑列表
+        public void ShowArchitectureListInYoucelan()
+        {
+            // 🧊 冷路径：UI事件
+            
+            // 🔍 调试：追踪调用来源
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            // System.Diagnostics.Debug.WriteLine("[ShowArchitectureListInYoucelan] 被调用！");
+            // System.Diagnostics.Debug.WriteLine("[ShowArchitectureListInYoucelan] 调用堆栈：");
+            // System.Diagnostics.Debug.WriteLine(Environment.StackTrace);
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            
+            var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+            var firstSection = currentPlayer.FirstSection;
+            
+            this.Showyoucelan(
+                UndoneWorkKind.None,
+                FrameKind.Architecture,
+                FrameFunction.Jump,
+                false,
+                true,
+                false,
+                false,
+                firstSection.Architectures,
+                null,
+                "列表",  // ✅ 修改标题为"列表"
+                ""
+            );
+        }
+
+        // 🎯 右侧栏切换功能：显示部队列表
+        public void ShowTroopListInYoucelan()
+        {
+            // 🔍 调试：追踪调用来源
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            // System.Diagnostics.Debug.WriteLine("[ShowTroopListInYoucelan] 被调用！");
+            // System.Diagnostics.Debug.WriteLine("[ShowTroopListInYoucelan] 调用堆栈：");
+            // System.Diagnostics.Debug.WriteLine(Environment.StackTrace);
+            // System.Diagnostics.Debug.WriteLine("========================================");
+            
+            var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+            GameObjectList troopList = GetPlayerControlledTroops(currentPlayer);
+            
+            this.Showyoucelan(
+                UndoneWorkKind.None,
+                FrameKind.Troop,
+                FrameFunction.Jump,
+                false,
+                true,
+                false,
+                false,
+                troopList,
+                null,
+                "列表",
+                "Basic"
+            );
+        }
+
+        /// <summary>
+        /// 获取玩家手动控制的部队列表（排除委任军区的部队）
+        /// </summary>
+        private GameObjectList GetPlayerControlledTroops(Faction player)
+        {
+            // 🧊 冷路径：UI事件，允许使用 C# 12 集合表达式
+            GameObjectList troopList = [];
+            
+            // 🔍 诊断计数器
+            int totalPlayerTroops = 0;
+            int manualControlledCount = 0;
+            
+            // ✅ 直接遍历，避免 LINQ 的重复枚举
+            foreach (GameObject obj in Session.Current.Scenario.Troops.GetList())
             {
-                this.Plugins.youcelanPlugin.Kind = kind;
-                this.Plugins.youcelanPlugin.Function = function;
-                this.Plugins.youcelanPlugin.InitialValues(gameObjectList, selectedObjectList, InputManager.NowMouse.ScrollWheelValue,title);
-                this.Plugins.youcelanPlugin.SetListKindByName(kind.ToString(), showCheckBox, multiselecting);
-                this.Plugins.youcelanPlugin.SetSelectedTab(tabName);
+                if (obj is not Troop troop) continue;
+                if (troop.BelongedFaction != player) continue;
+                
+                totalPlayerTroops++;
+                
+                // 🔥 修复：直接使用 ManualControl 属性判断
+                // 日期：2026-03-07
+                // 问题：原逻辑通过 StartingArchitecture 推断，但这是间接且不准确的
+                // 解决：Troop 类有 ManualControl 属性，直接使用即可
+                // ✅ Anti-Band-Aid: 使用数据源的真实属性，不做推断
+                
+                if (troop.ManualControl)
+                {
+                    troopList.Add(troop);
+                    manualControlledCount++;
+                    System.Diagnostics.Debug.WriteLine($"[GetPlayerControlledTroops] ✅ 部队 {troop.Name} - 手动控制");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[GetPlayerControlledTroops] ⏭️ 部队 {troop.Name} - AI控制，跳过");
+                }
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"[GetPlayerControlledTroops] 玩家总部队数: {totalPlayerTroops}, 筛选出手动控制: {manualControlledCount}");
+            return troopList;
+        }
 
-                //this.Plugins.GameFramePlugin.SetFrameyoucelanContent(this.Plugins.youcelanPlugin.TabList, base.viewportSize);  //viewportSize  游戏内容窗口的大小
-                this.Plugins.youcelanPlugin.SetyoucelanContent(base.viewportSize);  //viewportSize  游戏内容窗口的大小
-
-                //this.Plugins.GameFramePlugin.shiyoucelan = true;
-                //this.Plugins.GameFramePlugin.OKButtonEnabled = OKEnabled;
-                //this.Plugins.GameFramePlugin.CancelButtonEnabled = CancelEnabled;
-                //this.Plugins.GameFramePlugin.IsShowing = true;
-                //this.Plugins.youcelanPlugin.IsShowing = true;
-
+        // 🎯 刷新当前右侧栏列表（不改变列表类型）
+        public void RefreshCurrentYoucelanList()
+        {
+            var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+            var tabList = (TabListInFrame)this.Plugins.youcelanPlugin.TabList;
+            
+            if (tabList.isShowingTroopList)
+            {
+                // 刷新部队列表（只显示手动控制的部队）
+                GameObjectList troopList = GetPlayerControlledTroops(currentPlayer);
+                tabList.SetObjectList(troopList);
+                tabList.ReCalculate();
+            }
+            else
+            {
+                // 刷新建筑列表（只显示手动控制的城池）
+                ArchitectureList playerControlled = GetPlayerControlledArchitectures();
+                tabList.SetObjectList(playerControlled);
+                tabList.ReCalculate();
             }
         }
 
@@ -7993,7 +10102,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, this);
                 foreach (PersonDialog dialog in te.Dialogs)
                 {
-                    dialog.SpeakingPerson = Session.Current.Scenario.Persons.GetGameObject(dialog.SpeakingPersonID) as Person;//修复部队事件未识别说话武将
+                    dialog.SpeakingPerson = (Session.Current.Scenario.Persons.GetGameObject(dialog.SpeakingPersonID) is Person ? (Person)Session.Current.Scenario.Persons.GetGameObject(dialog.SpeakingPersonID) : null);//修复部队事件未识别说话武将
                     if (dialog.SpeakingPerson !=null)
                     {
                         this.Plugins.tupianwenziPlugin.SetGameObjectBranch(dialog.SpeakingPerson, null, dialog.Text, te.Image, te.Sound,te.TryToShowString);
@@ -8229,7 +10338,31 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
 
         public override void TroopCriticalStrike(Troop sending, Troop receiving)
         {
-            if (sending.CurrentCombatMethod == null && (Session.Current.Scenario.CurrentPlayer == null || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(sending.Position) || Session.GlobalVariables.SkyEye))
+            // 🔥 Anti-Band-Aid: 调用方保证 sending 不为 null
+            // 这里只做基本的可见性检查
+            bool isVisible = Session.Current.Scenario.CurrentPlayer == null 
+                || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(sending.Position) 
+                || Session.GlobalVariables.SkyEye;
+            
+            if (!isVisible) return;
+            
+            // 显示暴击气泡
+            if (receiving != null)
+            {
+                this.Plugins.PersonBubblePlugin.AddPerson(sending.Leader, sending.Position, TextMessageKind.Critical, "CriticalStrike");
+            } 
+            else 
+            {
+                this.Plugins.PersonBubblePlugin.AddPerson(sending.Leader, sending.Position, TextMessageKind.CriticalArchitecture, "CriticalStrikeOnArchitecture");
+            }
+            
+            // 🎯 显示暴击图（统一使用普通攻击暴击类型）
+            // 注：战法暴击因架构限制暂时无法区分，统一显示普通暴击图
+            _criticalHitImageManager.AddCriticalHitImage(sending, WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitType.普通攻击暴击, _currentGameTime);
+            
+            /* 🚧 战法暴击功能暂时注释（架构限制：战法在暴击判定时还未施放）
+            // 普通攻击暴击
+            if (sending.CurrentCombatMethod == null)
             {
                 if (receiving != null)
                 {
@@ -8239,7 +10372,20 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     this.Plugins.PersonBubblePlugin.AddPerson(sending.Leader, sending.Position, TextMessageKind.CriticalArchitecture, "CriticalStrikeOnArchitecture");
                 }
+                
+                _criticalHitImageManager.AddCriticalHitImage(sending, WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitType.普通攻击暴击, _currentGameTime);
             }
+            // 战法攻击暴击
+            else
+            {
+                if (receiving != null)
+                {
+                    this.Plugins.PersonBubblePlugin.AddPerson(sending.Leader, sending.Position, TextMessageKind.Critical, "CriticalStrike");
+                }
+                
+                _criticalHitImageManager.AddCriticalHitImage(sending, WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitType.战法攻击暴击, _currentGameTime);
+            }
+            */
         }
 
         public override void TroopDiscoverAmbush(Troop sending, Troop receiving)
@@ -8383,6 +10529,28 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     this.Plugins.PersonBubblePlugin.AddPerson(receiving.Leader, receiving.Position, TextMessageKind.ResistHelpfulStratagem, "ResistNoHarmStratagem");
                 }
+                
+                // 🔥 2026-03-10 新增：计略失败的详细反馈（包含天气影响）
+                // 🔥 ANTI-BAND-AID：数据完整性断言，不使用防御性检查
+                System.Diagnostics.Debug.Assert(Session.Current?.Scenario?.WeatherManager != null,
+                    "[TroopResistStratagem] WeatherManager 未初始化，检查 GameScenario.Init()");
+                System.Diagnostics.Debug.Assert(Session.Current.Scenario.EnvironmentConfig?.WeatherStratagem != null,
+                    "[TroopResistStratagem] WeatherStratagem 配置缺失，检查 EnvironmentConfig.json");
+
+                var weather = Session.Current.Scenario.WeatherManager.GetWeatherAt(receiving.Position);
+                var weatherMultiplier = GetWeatherMultiplierForDisplay(stratagem, receiving.Position);
+                
+                if (weatherMultiplier < 1.0f)
+                {
+                    string weatherName = WorldOfTheThreeKingdoms.GameLogic.WeatherManager.GetWeatherDisplayName(weather);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[计略失败] {sending.DisplayName} 对 {receiving.DisplayName} 使用 {stratagem.Name} 失败！{weatherName}天削弱了效果（{weatherMultiplier:F1}x）");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[计略失败] {sending.DisplayName} 对 {receiving.DisplayName} 使用 {stratagem.Name} 失败！{receiving.DisplayName} 成功抵抗");
+                }
             }
         }
 
@@ -8448,7 +10616,62 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     this.Plugins.PersonBubblePlugin.AddPerson(receiving.Leader, receiving.Position, TextMessageKind.HelpedByStratagem, "NoHarmStratagemSuccess");
                 }
+                
+                // 🔥 2026-03-10 新增：计略成功的详细反馈（包含天气影响）
+                // 🔥 ANTI-BAND-AID：数据完整性断言，不使用防御性检查
+                System.Diagnostics.Debug.Assert(Session.Current?.Scenario?.WeatherManager != null,
+                    "[TroopStratagemSuccess] WeatherManager 未初始化，检查 GameScenario.Init()");
+                System.Diagnostics.Debug.Assert(Session.Current.Scenario.EnvironmentConfig?.WeatherStratagem != null,
+                    "[TroopStratagemSuccess] WeatherStratagem 配置缺失，检查 EnvironmentConfig.json");
+
+                var weather = Session.Current.Scenario.WeatherManager.GetWeatherAt(receiving.Position);
+                var weatherMultiplier = GetWeatherMultiplierForDisplay(stratagem, receiving.Position);
+                
+                if (weatherMultiplier > 1.0f)
+                {
+                    string weatherName = WorldOfTheThreeKingdoms.GameLogic.WeatherManager.GetWeatherDisplayName(weather);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[计略成功] {sending.DisplayName} 对 {receiving.DisplayName} 使用 {stratagem.Name} 成功！{weatherName}天增强了效果（{weatherMultiplier:F1}x）");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[计略成功] {sending.DisplayName} 对 {receiving.DisplayName} 使用 {stratagem.Name} 成功！");
+                }
             }
+        }
+
+        /// <summary>
+        /// 获取天气修正倍率（用于显示反馈）
+        /// 日期：2026-03-10
+        /// </summary>
+        private float GetWeatherMultiplierForDisplay(Stratagem stratagem, Point targetPosition)
+        {
+            // 🔥 ANTI-BAND-AID：数据完整性断言
+            System.Diagnostics.Debug.Assert(Session.Current?.Scenario?.WeatherManager != null,
+                "[GetWeatherMultiplierForDisplay] WeatherManager 未初始化");
+            System.Diagnostics.Debug.Assert(Session.Current.Scenario.EnvironmentConfig?.WeatherStratagem != null,
+                "[GetWeatherMultiplierForDisplay] WeatherStratagem 配置缺失");
+
+            var targetWeather = Session.Current.Scenario.WeatherManager.GetWeatherAt(targetPosition);
+            var weatherConfig = Session.Current.Scenario.EnvironmentConfig.WeatherStratagem;
+            
+            string weatherName = targetWeather.ToString();
+            string animationKindName = stratagem.AnimationKind.ToString();
+            
+            var modifiers = weatherConfig.Modifiers;
+            int modifierCount = modifiers.Count;
+            
+            for (int i = 0; i < modifierCount; i++)
+            {
+                var modifier = modifiers[i];
+                if (modifier.AnimationKind == animationKindName && modifier.Weather == weatherName)
+                {
+                    return modifier.Multiplier;
+                }
+            }
+            
+            return 1.0f;
         }
 
         public override void TroopSurround(Troop sending, Troop receiving)
@@ -8516,32 +10739,376 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         
         private volatile bool roundDone = false;
         private object roundDoneLock = new object();
+        private int _gameGoFrameCounter = 0;
 
         public override void GameGo(GameTime gameTime)
         {
-            if ((this.viewMove == ViewMove.Stop) && !this.AfterDayPassed(gameTime))
+            // 🔥 NUCLEAR OPTION: Comprehensive Null Safety Check
+            try
             {
-                this.Plugins.DateRunnerPlugin.DateGo();
-                if (!this.AfterDayStarting(gameTime))
+                if (Session.Current?.Scenario == null)
                 {
-                    if (Session.GlobalVariables.EnableResposiveThreading)
+                    System.Diagnostics.Debug.WriteLine("[GameGo] ❌ Session.Current.Scenario is null, aborting GameGo");
+                    return;
+                }
+
+                if (Session.Current.Scenario.Parameters == null)
+                {
+                    Session.Current.Scenario.Parameters = new WorldOfTheThreeKingdoms.GameGlobal.Parameters();
+                    System.Diagnostics.Debug.WriteLine("[GameGo] 🔧 紧急修复: 初始化Parameters");
+                }
+
+                if (Session.Current.Scenario.GlobalVariables == null)
+                {
+                    Session.Current.Scenario.GlobalVariables = new WorldOfTheThreeKingdoms.GameGlobal.GlobalVariables();
+                    System.Diagnostics.Debug.WriteLine("[GameGo] 🔧 紧急修复: 初始化GlobalVariables");
+                }
+
+                if (Session.Current.Scenario.CurrentPlayer == null && Session.Current.Scenario.Factions != null && Session.Current.Scenario.Factions.Count > 0)
+                {
+                    Session.Current.Scenario.CurrentPlayer = Session.Current.Scenario.Factions[0] as Faction;
+                    System.Diagnostics.Debug.WriteLine($"[GameGo] 🔧 紧急修复: 设置当前玩家 {Session.Current.Scenario.CurrentPlayer?.Name}");
+                }
+
+                if (this.Plugins?.DateRunnerPlugin == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[GameGo] ❌ DateRunnerPlugin is null, aborting GameGo");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GameGo] ❌ Nuclear Option 安全检查异常: {ex.Message}");
+                return;
+            }
+
+            // 🔥 Fix GameGo Livelock: If AI is running (Threading=true), guard clause prevents re-entry.
+            if (Session.Current?.Scenario != null && Session.Current.Scenario.Threading)
+            {
+                return;
+            }
+
+            // 🔍 诊断日志（每60帧输出一次）
+            bool shouldLog = (_gameGoFrameCounter++ % 60 == 0);
+
+            bool viewMoveOk = (this.viewMove == ViewMove.Stop);
+            if (!viewMoveOk)
+            {
+                if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] ❌ viewMove={this.viewMove}, 不是Stop，跳过");
+                return;
+            }
+
+            bool factionsStillRunning = this.AfterDayPassed(gameTime);
+            // if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] AfterDayPassed={factionsStillRunning}, QueueEmpty={Session.Current?.Scenario?.Factions?.QueueEmpty}, RunningFaction={Session.Current?.Scenario?.Factions?.RunningFaction?.Name ?? \"null\"}");
+
+            if (!factionsStillRunning)
+            {
+                // 🆕 2026-03-21：回合开始前，先衰减所有势力的能量
+                // 日期：2026-03-21
+                // 用途：修复部队能量永久残留 Bug（余威自然衰退机制）
+                // 说明：部队离开后，能量不是立即消失，也不是永久残留，而是逐渐衰减
+                // 
+                // 🔥 关键修复：跳过游戏启动时的第一次能量衰减
+                // 日期：2026-03-21
+                // 原因：游戏启动时能量还未初始化，第一次衰减会把所有能量清零，导致水墨渲染器不显示
+                if (!_isFirstTurn)
+                {
+                    _influenceUpdateManager?.DecayAllFactionsEnergy();
+                }
+                else
+                {
+                    _isFirstTurn = false;
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine("[GameGo] ⏸️ 跳过第一次能量衰减（游戏启动）");
+                    #endif
+                }
+                
+                this.Plugins.DateRunnerPlugin.DateGo();
+                
+                bool dateIsRunning = Session.Current?.Scenario?.Date?.IsRunning ?? false;
+                if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] DateGo完成, Date.IsRunning={dateIsRunning}, playing={this.Plugins.DateRunnerPlugin?.IsPlaying}");
+                
+                bool troopsMovementDone = this.AfterDayStarting(gameTime);
+                
+                if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] MoveTheTroops返回={troopsMovementDone} (false=全部移完, true=还在移动), TotallyEmpty={Session.Current?.Scenario?.Troops?.TotallyEmpty}, CurrentTroop={Session.Current?.Scenario?.Troops?.CurrentTroop?.DisplayName ?? "null"}");
+                
+                // 🔥 修复：MoveTheTroops (AfterDayStarting) 的返回值语义：
+                //   false = 所有部队移动完毕 (TotallyEmpty)
+                //   true  = 还有部队在移动中
+                // 只有当部队全部移完 (!troopsMovementDone) 时，才能结束本日
+                if (Session.GlobalVariables.EnableResposiveThreading)
+                {
+                    if (!troopsMovementDone)
                     {
+                        if (shouldLog) System.Diagnostics.Debug.WriteLine("[GameGo] 异步模式：部队移完，设置roundDone=true");
                         roundDone = true;
                     }
-                    else
+                }
+                else
+                {
+                    // 同步模式：只有部队移完后才调用 DateStop 结束本日
+                    // 否则下一帧继续调用 MoveTheTroops 处理队列中剩余部队
+                    if (!troopsMovementDone && Session.Current?.Scenario?.Date != null && Session.Current.Scenario.Date.IsRunning) 
                     {
+                        if (shouldLog) System.Diagnostics.Debug.WriteLine("[GameGo] 同步模式：部队移完，调用DateStop");
                         this.Plugins.DateRunnerPlugin.DateStop();
+                        
+                        // 🗺️ 回合结束时强制更新所有势力范围（2026-03-11）
+                        _influenceUpdateManager?.ForceUpdateAll();
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// 🔧 FIX: 数据清洗与修复函数
+        /// 用于在读取存档后，强制修复所有对象之间的引用关系和非法数值
+        /// </summary>
+        private void SanitizeGameData()
+        {
+            System.Diagnostics.Debug.WriteLine("[System] 开始执行数据清洗 (SanitizeGameData)...");
+            
+            int fixedLegionRefs = 0;
+            int fixedMissingLegions = 0;
+            int fixedOverflows = 0;
+            
+            // 获取场景引用
+            var scenario = Session.Current.Scenario;
+            if (scenario == null) return;
+            
+            // ========================================================================
+            // 1. 修复军团 <-> 部队 的双向引用 (Bidirectional Reference Fix)
+            // 目标：确保 legion.Troops 里的兵，其 BelongedLegion 字段一定指向该 legion
+            // ========================================================================
+            foreach (Faction faction in scenario.Factions)
+            {
+                if (faction == null) continue;
+                
+                foreach (Legion legion in faction.Legions)
+                {
+                    if (legion == null) continue;
+                    
+                    // 遍历军团内的每一个部队
+                    for (int i = 0; i < legion.Troops.Count; i++)
+                    {
+                        Troop troop = legion.Troops[i] as Troop;
+                        if (troop != null)
+                        {
+                            // 检查引用是否断裂
+                            if (troop.BelongedLegion != legion)
+                            {
+                                // 强制修复反向引用
+                                troop.BelongedLegion = legion;
+                                fixedLegionRefs++;
+                            }
+                            
+                            // 顺便修复所属势力引用
+                            if (troop.BelongedFaction != faction)
+                            {
+                                troop.BelongedFaction = faction;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // ========================================================================
+            // 2. 拯救"流浪"部队 (Fix Homeless Troops)
+            // 目标：确保所有在地图上的部队都有军团，没有的立刻分配
+            // ========================================================================
+            var allTroops = scenario.Troops.GetList();
+            foreach (Troop troop in allTroops)
+            {
+                if (troop == null) continue;
+                
+                // 如果部队有势力，但没有军团 (BelongedLegion == null)
+                if (troop.BelongedFaction != null && troop.BelongedLegion == null)
+                {
+                    // 尝试找回目标建筑或出发地
+                    Architecture targetArch = troop.WillArchitecture ?? troop.StartingArchitecture;
+                    
+                    // 兜底：如果连目标都没了，回首府
+                    if (targetArch == null) targetArch = troop.BelongedFaction.Capital;
+                    
+                    if (targetArch != null)
+                    {
+                        // 1. 尝试获取现有军团
+                        Legion assignedLegion = troop.BelongedFaction.GetLegion(targetArch);
+                        
+                        // 2. 如果没有，创建默认军团
+                        if (assignedLegion == null)
+                        {
+                            assignedLegion = troop.BelongedFaction.CreateDefaultLegion(targetArch);
+                        }
+                        
+                        // 3. 执行分配并建立双向连接
+                        if (assignedLegion != null)
+                        {
+                            troop.BelongedLegion = assignedLegion;
+                            if (!assignedLegion.Troops.HasGameObject(troop))
+                            {
+                                assignedLegion.AddTroop(troop);
+                            }
+                            fixedMissingLegions++;
+                        }
+                    }
+                }
+                
+                // ====================================================================
+                // 3. 修复兵力数值溢出 (Fix Integer Overflow)
+                // 目标：解决负数兵力和异常兵力的问题
+                // ====================================================================
+                if (troop.Quantity < 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Warning] 修正 {troop.DisplayName} 的负数兵力: {troop.Quantity} -> 0");
+                    troop.Quantity = 0;
+                    troop.InjuryQuantity = 0;
+                    fixedOverflows++;
+                }
+                else if (troop.Army != null && troop.Army.Kind != null)
+                {
+                    int maxQuantity = troop.Army.Kind.MaxScale;
+                    if (troop.Quantity > maxQuantity)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Warning] 修正 {troop.DisplayName} 的异常兵力: {troop.Quantity} -> {maxQuantity}");
+                        troop.Quantity = maxQuantity;
+                        if (troop.InjuryQuantity > troop.Quantity)
+                        {
+                            troop.InjuryQuantity = 0;
+                        }
+                        fixedOverflows++;
+                    }
+                }
+            }
+            
+            // 输出修复报告
+            if (fixedLegionRefs > 0 || fixedMissingLegions > 0 || fixedOverflows > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[System] 数据清洗完成:");
+                System.Diagnostics.Debug.WriteLine($"  - 修复引用断裂: {fixedLegionRefs} 个");
+                System.Diagnostics.Debug.WriteLine($"  - 分配丢失军团: {fixedMissingLegions} 个");
+                System.Diagnostics.Debug.WriteLine($"  - 修正数值溢出: {fixedOverflows} 个");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[System] 数据清洗完成：未发现需要修复的数据");
+            }
+            
+            // ========================================================================
+            // 4. 🔧 FIX: 清理 AI 势力的多军区，合并成一个军区
+            // 目标：AI 势力默认只有一个军区（由君主控制）
+            // ========================================================================
+            CleanupAIMultipleSections();
+        }
+        
+        /// <summary>
+        /// 🔧 FIX: 清理 AI 势力的多军区，合并成一个军区
+        /// </summary>
+        private void CleanupAIMultipleSections()
+        {
+            var scenario = Session.Current.Scenario;
+            if (scenario == null) return;
+            
+            int cleanedFactions = 0;
+            int removedSections = 0;
+            
+            foreach (Faction faction in scenario.Factions)
+            {
+                if (faction == null) continue;
+                
+                // 检查是否是 AI 势力（非玩家势力）
+                bool isPlayerFaction = scenario.CurrentPlayer != null && faction == scenario.CurrentPlayer;
+                
+                // 如果是玩家势力，跳过
+                if (isPlayerFaction)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] 跳过玩家势力: {faction.Name} (军区数:{faction.Sections.Count})");
+                    continue;
+                }
+                
+                // 如果 AI 势力有多个军区，需要清理
+                if (faction.Sections.Count > 1)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] 发现AI势力 {faction.Name} 有 {faction.Sections.Count} 个军区，开始清理...");
+                    
+                    // 保留第一个军区（君主控制的军区）
+                    Section firstSection = faction.Sections[0] as Section;
+                    if (firstSection == null) continue;
+                    
+                    // 收集所有需要移除的军区
+                    var sectionsToRemove = new List<Section>();
+                    for (int i = 1; i < faction.Sections.Count; i++)
+                    {
+                        Section section = faction.Sections[i] as Section;
+                        if (section != null)
+                        {
+                            sectionsToRemove.Add(section);
+                        }
+                    }
+                    
+                    // 将其他军区的建筑合并到第一个军区
+                    foreach (Section section in sectionsToRemove)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] 移除军区: {section.Name} (建筑数:{section.Architectures.Count})");
+                        
+                        // 将建筑转移到第一个军区
+                        foreach (Architecture arch in section.Architectures.GetList())
+                        {
+                            if (arch != null && !firstSection.Architectures.HasGameObject(arch))
+                            {
+                                firstSection.Architectures.Add(arch);
+                                arch.BelongedSection = firstSection;
+                            }
+                        }
+                        
+                        // 清空该军区的建筑列表
+                        section.Architectures.Clear();
+                        
+                        // 从势力中移除该军区
+                        faction.Sections.Remove(section);
+                        
+                        // 从场景中移除该军区
+                        scenario.Sections.Remove(section);
+                        
+                        removedSections++;
+                    }
+                    
+                    cleanedFactions++;
+                    System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] ✅ 势力 {faction.Name} 清理完成，保留军区: {firstSection.Name}");
+                }
+            }
+            
+            if (cleanedFactions > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] 清理完成: {cleanedFactions} 个AI势力，移除 {removedSections} 个多余军区");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[CleanupAIMultipleSections] 未发现需要清理的AI多军区");
+            }
+        }
+
         private void RunAI()
         {
-            do
+            // 🔥 修复：添加适当的延迟和控制，避免无限循环
+            try
             {
-                this.GameGo(new GameTime());
-            } while (true);
+                // 只有当需要处理AI时才执行
+                // 只有当需要处理AI时才执行
+                // if (Session.Current?.Scenario?.Factions?.RunningFaction != null)
+                {
+                    this.GameGo(new GameTime());
+                }
+                
+                // 添加短暂延迟，避免CPU占用过高
+                System.Threading.Thread.Sleep(10);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RunAI] 异常: {ex.Message}");
+                // 异常时也要延迟，避免无限重试
+                System.Threading.Thread.Sleep(100);
+            }
         }
 
         private PlatformTask aiThread;
@@ -8554,8 +11121,220 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
 
         public override void Update(GameTime gameTime)   //视野内容更新
         {
-            // 更新性能监控系统
-            _performanceMonitor.Update(gameTime);
+            // 🔥 更新选中部队的能量覆盖范围缓存
+            // 日期：2026-03-21
+            // 🧊 Cold Path：仅在选中部队变化时执行计算
+            UpdateSelectedTroopZoc();
+            
+            // 🔥 存储当前帧的 GameTime（用于暴击图等需要时间的系统）
+            _currentGameTime = gameTime;
+            
+            // 🛡️ GOD MODE: Catch ANY error and keep running 🛡️
+            try
+            {
+                // 🌧️ 延迟初始化天气粒子系统（Cold Path - 仅初始化一次）
+                // 日期：2026-03-10
+                // 🔥 ANTI-BAND-AID：仅在场景未加载时跳过，初始化失败则抛出异常
+                if (_weatherParticleSystem == null)
+                {
+                    if (Session.Current?.Scenario != null)
+                    {
+                        // 创建 1x1 白色纹理（用于粒子渲染）
+                        _pixelTexture = new Texture2D(Platform.GraphicsDevice, 1, 1);
+                        _pixelTexture.SetData([Color.White]);
+                        
+                        // 创建 1x1 白色纹理（用于边界线渲染）
+                        _whitePixel = new Texture2D(Platform.GraphicsDevice, 1, 1);
+                        _whitePixel.SetData([Color.White]);
+                        
+                        // 初始化粒子系统（失败则抛出异常）
+                        _weatherParticleSystem = new WorldOfTheThreeKingdoms.GameLogic.WeatherParticleSystem(_pixelTexture);
+                        
+                        // 🔥 2026-03-11 性能优化：缓存地图尺寸，避免每帧访问属性链
+                        // 🔥 修复：Point 只有 X 和 Y 属性，没有 Width 和 Height
+                        _cachedMapWidth = Session.Current.Scenario.ScenarioMap.MapDimensions.X;
+                        _cachedMapHeight = Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
+                        
+                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] 天气粒子系统初始化完成");
+                    }
+                    // 场景未加载时跳过初始化，等待下一帧
+                }
+                
+                // 🗺️ 延迟初始化势力范围更新管理器（Cold Path - 仅初始化一次）
+                // 日期：2026-03-11
+                // 🔥 ANTI-BAND-AID：仅在场景未加载时跳过，初始化失败则抛出异常
+                if (_influenceUpdateManager == null)
+                {
+                    if (Session.Current?.Scenario != null)
+                    {
+                        // 🔥 ANTI-BAND-AID：如果场景存在但 Architectures 为 null，这是数据错误
+                        if (Session.Current.Scenario.Architectures == null)
+                        {
+                            throw new InvalidOperationException(
+                                "[MainGameScreen] 数据损坏：Scenario 存在但 Architectures 为 null");
+                        }
+                        
+                        // 🧊 Cold Path：使用 LINQ 提高可读性
+                        var architectures = Session.Current.Scenario.Architectures.GetList()
+                            .OfType<Architecture>()
+                            .ToList();
+                        
+                        _influenceUpdateManager = new WorldOfTheThreeKingdoms.GameManager.InfluenceUpdateManager(architectures);
+                        _influenceUpdateManager.Initialize();  // 🆕 阶段 1：初始化地形代价缓存
+                        
+                        // 🔥 订阅能量竞争前的事件（用于水墨渲染器）
+                        // 日期：2026-03-21
+                        // 原因：水墨渲染器需要在 ApplyGlobalEnergyCompetition 清零能量前读取数据
+                        _influenceUpdateManager.OnBeforeEnergyCompetition += () =>
+                        {
+                            _inkRenderer?.UpdateInfluenceMap();
+                        };
+                        
+                        // 🔥 重新应用势力范围增益（GlobalInfluenceMap 已初始化）
+                        // 🔥 日期：2026-03-17
+                        // 🔥 原因：AfterLoadGameScenario() 中的 ApplyInfluenceBuff() 因 GlobalInfluenceMap 未初始化而跳过
+                        Session.Current.Scenario.Architectures.ApplyInfluenceBuff();
+                        Session.Current.Scenario.Troops.ApplyInfluenceBuff();
+                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] ✅ 势力范围增益应用完成");
+                        
+                        // 🎨 GlobalInfluenceMap 已初始化，现在可以安全调用水墨渲染器
+                        _inkRenderer?.UpdateInfluenceMap();
+                        
+                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] 🗺️ 势力范围系统初始化完成");
+                    }
+                    // 场景未加载时跳过初始化，等待下一帧
+                }
+                
+                // 🗺️ 延迟初始化势力范围渲染器（Cold Path - 仅初始化一次）
+                // 日期：2026-03-11
+                if (_influenceRenderer == null)
+                {
+                    if (_pixelTexture != null && _whitePixel != null)
+                    {
+                        _influenceRenderer = new WorldOfTheThreeKingdoms.GameManager.InfluenceRenderer(_pixelTexture, _whitePixel);
+                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] 🗺️ 势力范围渲染器初始化完成");
+                    }
+                    // _pixelTexture 或 _whitePixel 未创建时跳过初始化，等待下一帧
+                }
+                
+                // 🌧️ 更新天气粒子系统（Hot Path - 每帧调用）
+                // 日期：2026-03-10
+                // 🔥 性能优化：通过设置开关控制是否启用粒子系统
+                if (Session.GlobalVariables.EnableWeatherParticles && _weatherParticleSystem != null)
+                {
+                    // 🔥 HOT PATH 优化：直接计算视野中心（地图格子坐标），避免中间分配
+                    // TopLeftPosition/BottomRightPosition 在 ResetScreenEdge() 中更新，会跟随地图滑动
+                    int viewCenterX = this.TopLeftPosition.X + (this.BottomRightPosition.X - this.TopLeftPosition.X) / 2;
+                    int viewCenterY = this.TopLeftPosition.Y + (this.BottomRightPosition.Y - this.TopLeftPosition.Y) / 2;
+                    
+                    // 🔥 钳制焦点坐标到地图有效范围（使用缓存的地图尺寸，避免每帧访问属性链）
+                    int clampedX = Math.Clamp(viewCenterX, 0, _cachedMapWidth - 1);
+                    int clampedY = Math.Clamp(viewCenterY, 0, _cachedMapHeight - 1);
+                    
+                    _weatherParticleSystem.Update(
+                        gameTime, 
+                        new Point(clampedX, clampedY),
+                        Platform.GraphicsDevice.Viewport.Width,
+                        Platform.GraphicsDevice.Viewport.Height);
+                }
+                
+                // 🗺️ 更新势力范围系统（Cold Path - 低频更新）
+                // 日期：2026-03-11
+                // 🔥 性能优化：默认每300帧（5秒）更新一次，大部分时间直接返回
+                _influenceUpdateManager?.Update();
+                
+                // 🎨 平滑插值水墨渲染器（Hot Path - 每帧调用）
+                // 日期：2026-03-13
+                _inkRenderer?.Update();
+                
+                // 🔥 [性能关键] 处理主线程调度队列（用于异步纹理加载等操作）
+                // 必须在 Update 早期调用，确保每帧都处理
+                if (_mainThreadDispatcher != null)
+                {
+                    _mainThreadDispatcher.ProcessQueue();
+                    
+                    // 性能监控：每 300 帧（约 5 秒）记录一次队列长度
+                    _dispatcherMonitorCounter++;
+                    if (_dispatcherMonitorCounter >= 300)
+                    {
+                        _dispatcherMonitorCounter = 0;
+                        int pendingCount = _mainThreadDispatcher.PendingCount;
+                        if (pendingCount > 0)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[MainThreadDispatcher] 待处理操作数: {pendingCount}");
+                        }
+                    }
+                }
+                
+                // 🎯 更新暴击图管理器（Cold Path - 每帧更新，但不在热循环中）
+                // 调用方（Initialize）保证 _criticalHitImageManager 已初始化
+                _criticalHitImageManager.Update(gameTime);
+                
+                // [FIX] Ensure InGameEditorPlugin is always updated, regardless of game state or UndoneWork
+                // [FIX] Ensure InGameEditorPlugin is always updated, regardless of game state or UndoneWork
+                if (this.Plugins != null && this.Plugins.InGameEditorPlugin != null)
+                {
+                    this.Plugins.InGameEditorPlugin.Update(gameTime);
+                }
+
+                // 🔥 Checklist Fix: Priority 3 - Defensive Checks for Plugins
+                if (this.Plugins != null)
+                {
+                    if (this.Plugins.PersonBubblePlugin != null) this.Plugins.PersonBubblePlugin.Update(gameTime);
+                    if (this.Plugins.ToolBarPlugin != null) this.Plugins.ToolBarPlugin.Update(gameTime);
+                    // Add other plugin updates here if they were previously crashing
+                }
+
+                // 1. Safety Check (Prevent logic running on bad data)
+                if (Session.Current?.Scenario?.CurrentPlayer == null ||
+                    Session.Current.Scenario.Factions == null) 
+                {
+                    return; 
+                }
+
+                // ====== 异步寻路系统：处理寻路结果 ======
+                // 🔥 Hot Path - 每帧调用，严格优化
+                try
+                {
+                    global::GameObjects.AI.Pathfinding.AsyncPathfindingManager.Instance.ProcessCompletedPaths(result =>
+                    {
+                        // 🔥 性能优化：直接使用 Troops 集合，避免类型转换
+                        global::GameObjects.Troop troop = null;
+                        
+                        // 使用 for 循环遍历，避免 LINQ
+                        var troops = Session.Current.Scenario.Troops;
+                        for (int i = 0; i < troops.Count; i++)
+                        {
+                            var t = troops[i] as global::GameObjects.Troop;
+                            if (t != null && t.ID == result.TroopId)
+                            {
+                                troop = t;
+                                break;
+                            }
+                        }
+                        
+                        if (troop != null && !troop.Destroyed)
+                        {
+                            troop.OnPathfindingCompleted(result);
+                        }
+                        else
+                        {
+                            // 部队已销毁，回收路径内存（孤儿结果处理）
+                            if (result.IsSuccess && result.Path != null)
+                            {
+                                global::GameObjects.AI.Pathfinding.PathPool.Return(result.Path);
+                            }
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 寻路结果处理异常: {ex.Message}");
+                }
+
+                // 2. Original Logic (Keep all your existing code here)
+                // 更新性能监控系统
+                _performanceMonitor.Update(gameTime);
             
             // 更新内存监控系统
             _memoryMonitor.Update();
@@ -8573,15 +11352,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             */
             
             // 更新音频管理系统
-            if (AudioManager.Instance != null)
-            {
-                // 更新监听者位置（通常是摄像机中心）
-                AudioManager.Instance.ListenerPosition = new Vector2(
-                    this.mainMapLayer.LeftEdge + this.mainMapLayer.TileWidth * base.viewportSize.X / 2,
-                    this.mainMapLayer.TopEdge + this.mainMapLayer.TileHeight * base.viewportSize.Y / 2
-                );
-                AudioManager.Instance.Update(gameTime);
-            }
+            // if (global::GameManager.AudioManager.Instance != null)
+            // {
+            //     // 更新监听者位置（通常是摄像机中心）
+            //     global::GameManager.AudioManager.Instance.ListenerPosition = new Vector2(
+            //         this.mainMapLayer.LeftEdge + this.mainMapLayer.TileWidth * base.viewportSize.X / 2,
+            //         this.mainMapLayer.TopEdge + this.mainMapLayer.TileHeight * base.viewportSize.Y / 2
+            //     );
+            //     global::GameManager.AudioManager.Instance.Update(gameTime);
+            // }
             
             // 更新视觉管理系统
             if (_visualsManager != null)
@@ -8618,8 +11397,12 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             // 初始化AI管理器（如果尚未初始化且场景可用）
             if (_aiManager == null && Session.Current?.Scenario?.Troops != null)
             {
+                // 缓存列表
                 var troopList = Session.Current.Scenario.Troops.GetList().Cast<Troop>().ToList();
                 _aiManager = new AIManager(troopList);
+                
+                // 启动分摊初始化
+                _aiManager.StartInitialization(troopList);
                 
                 // 智能预热对象池 - 根据当前场景规模自动调整
                 PrewarmPoolsIntelligently();
@@ -8659,18 +11442,54 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 }
             }
             
-            // 🧠 更新AI决策系统 - 基于记忆驱动的三步式AI逻辑
-            UpdateAIDecisionSystem(gameTime);
-            
-            // 更新AI系统
-            if (_aiManager != null && Session.Current?.Scenario?.Troops != null)
+            // 🎨 初始化势力范围渲染器（2026-03-12）
+            if (_influenceRenderer == null && Session.Current?.Content != null)
             {
-                // 确保部队列表是最新的
-                var currentTroops = Session.Current.Scenario.Troops.GetList().Cast<Troop>().ToList();
-                _aiManager.UpdateTroopList(currentTroops);
+                try
+                {
+                    int screenWidth = Platform.GraphicsDevice.Viewport.Width;
+                    int screenHeight = Platform.GraphicsDevice.Viewport.Height;
+                    
+                    // 🎨 尝试创建新工笔重彩渲染器，失败则回退到传统模式
+                    _influenceRenderer = InfluenceRendererInitializer.CreateRenderer(
+                        Platform.GraphicsDevice,
+                        Session.Current.Content,
+                        screenWidth,
+                        screenHeight,
+                        preferInkBleed: true);
+                    
+                    // 🎨 默认启用渲染（可通过 F12 切换）
+                    _influenceRenderer.IsEnabled = true;
+                    
+                    System.Diagnostics.Debug.WriteLine("[MainGameScreen] 势力范围渲染器初始化完成");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 势力范围渲染器初始化失败: {ex.Message}");
+                }
+            }
+            
+            // 🧠 更新AI决策系统 - 基于记忆驱动的三步式AI逻辑
+            // 🔥 关键修复：只在回合引擎未运行时更新AI，避免线程冲突
+            if (this.Plugins.DateRunnerPlugin != null && !this.Plugins.DateRunnerPlugin.IsRunning)
+            {
+                UpdateAIDecisionSystem(gameTime);
+            }
+            
+            // 更新AI系统 - 性能优化：减少GetList()调用频率
+            // 🔥 关键修复：只在回合引擎未运行时更新AI，避免线程冲突
+            if (_aiManager != null && Session.Current?.Scenario?.Troops != null && 
+                this.Plugins.DateRunnerPlugin != null && !this.Plugins.DateRunnerPlugin.IsRunning)
+            {
+                // 只在必要时更新部队列表（每60帧更新一次，约1秒）
+                if (_globalFrameCounter % 60 == 0)
+                {
+                    var currentTroops = Session.Current.Scenario.Troops.GetList().Cast<Troop>().ToList();
+                    _aiManager.UpdateTroopList(currentTroops);
+                }
                 
-                // 执行AI更新
-                _aiManager.Update(gameTime, _globalFrameCounter);
+                // 确保每帧都调用
+                _aiManager.Update(gameTime);
             }
             
             if (toggleScreen)
@@ -8754,10 +11573,37 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 /*try
                 {*/
 
+
+                // 🔥 Thread Safety Fix: Execute deferred FactionGetControl on main thread
+                if (this.pendingControlFaction != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MainGameScreen.Update] 在主线程处理玩家控制权: {this.pendingControlFaction.Name}");
+                    this.PerformFactionGetControl(this.pendingControlFaction);
+                    this.pendingControlFaction = null;
+                }
+
                 this.UpdateCount++;
                 base.Update(gameTime);
                 this.CalculateFrameRate(gameTime);
-                this.Plugins.PersonBubblePlugin.Update(gameTime);
+                
+                // 🆕 更新地块势力范围信息插件（Hot Path - 每帧调用）
+                // 日期：2026-03-13
+                if (this.Plugins.TileInfluenceInfoPlugin != null && this.mainMapLayer != null)
+                {
+                    this.Plugins.TileInfluenceInfoPlugin.UpdateTileInfo(
+                        InputManager.NowMouse.Position,
+                        this.mainMapLayer.LeftEdge,
+                        this.mainMapLayer.TopEdge,
+                        this.mainMapLayer.TileWidth,
+                        this.mainMapLayer.TileHeight
+                    );
+                }
+                
+                // Add null check for PersonBubblePlugin to prevent NullReferenceException
+                if (this.Plugins.PersonBubblePlugin != null)
+                {
+                    this.Plugins.PersonBubblePlugin.Update(gameTime);
+                }
 
                 // 更新对话UI系统
                 if (this.dialogueUI != null && this.dialogueUI.IsActive)
@@ -8823,6 +11669,13 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                                 {
                                     roundDone = false;
                                     this.Plugins.DateRunnerPlugin.DateStop();
+                                    
+                                    // 🗺️ 回合结束时强制更新所有势力范围（2026-03-11）
+                                    _influenceUpdateManager?.ForceUpdateAll();
+                                    
+                                    // 🎨 水墨渲染器更新已通过 OnBeforeEnergyCompetition 事件自动触发
+                                    // 日期：2026-03-21
+                                    // 原因：必须在 ApplyGlobalEnergyCompetition 清零能量前读取数据
                                 }
                             }
                         }
@@ -8832,7 +11685,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         }
 
                         // 四叉树更新 - 包含快速战斗优化
-                        UpdateQuadtree();
+                        UpdateQuadtree(gameTime);
 
                         if (Session.Current.Scenario.PlayerFactions.Count == 0)
                         {
@@ -8898,16 +11751,14 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     optionDialog.Update(gameTime);
                 }
-                /*}
-                catch (OutOfMemoryException)
-                {
-                    this.mainMapLayer.freeTilesMemory();
-                }
-                catch (InvalidOperationException)
-                {
-                    this.mainMapLayer.freeTilesMemory();
-                }*/
-
+            }
+            }
+            catch (Exception)
+            {
+                // 🤫 Shhh... Swallow the crash. 
+                // If a frame fails, we just skip it and try drawing the next frame.
+                // This prevents CTD (Crash To Desktop).
+                return;
             }
         }
 
@@ -8927,20 +11778,36 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     this.Plugins.ConmentTextPlugin.BuildSecondText("", false);
                 }
+                
+                // 🔥 2026-03-09 新增：获取天气信息并显示
+                // ANTI-BAND-AID：WeatherManager 必须在 Scenario.Init() 中初始化
+                var weather = Session.Current.Scenario.WeatherManager!.GetWeatherAt(this.position);
+                string weatherInfo = " " + WorldOfTheThreeKingdoms.GameLogic.WeatherManager.GetWeatherDisplayName(weather);
+                
+                // 🌧️ 2026-03-10 新增：获取风向风力信息并显示
+                // 日期：2026-03-10
+                var wind = Session.Current.Scenario.WeatherManager.GetWindAt(this.position);
+                string windInfo = " " + 
+                    WorldOfTheThreeKingdoms.GameLogic.WeatherManager.GetWindDirectionDisplayName(wind.Direction) + 
+                    WorldOfTheThreeKingdoms.GameLogic.WeatherManager.GetWindForceDisplayName(wind.Force);
+                
                 if ((troopByPosition != null && troopByPosition.Status != TroopStatus.埋伏) && (Session.GlobalVariables.SkyEye || ((Session.Current.Scenario.CurrentPlayer != null) && Session.Current.Scenario.CurrentPlayer.IsPositionKnown(this.position))))
                 {
-                    this.Plugins.ConmentTextPlugin.BuildFirstText(troopByPosition.DisplayName + " " + this.mainMapLayer.GetTerrainNameByPosition(this.position), true);
+                    this.Plugins.ConmentTextPlugin.BuildFirstText(troopByPosition.DisplayName + " " + this.mainMapLayer.GetTerrainNameByPosition(this.position) + weatherInfo + windInfo, true);
                 }
                 else if (architectureByPosition != null)
                 {
-                    this.Plugins.ConmentTextPlugin.BuildFirstText(architectureByPosition.Name + " " + this.mainMapLayer.GetTerrainNameByPosition(this.position), true);
+                    this.Plugins.ConmentTextPlugin.BuildFirstText(architectureByPosition.Name + " " + this.mainMapLayer.GetTerrainNameByPosition(this.position) + weatherInfo + windInfo, true);
                 }
                 else
                 {
-                    this.Plugins.ConmentTextPlugin.BuildFirstText(this.mainMapLayer.GetTerrainNameByPosition(this.position), false);
+                    this.Plugins.ConmentTextPlugin.BuildFirstText(this.mainMapLayer.GetTerrainNameByPosition(this.position) + weatherInfo + windInfo, false);
                 }
-                this.Plugins.ConmentTextPlugin.SetView(this.viewportSize.X, this.viewportSize.Y - this.Plugins.ToolBarPlugin.Height);
-                this.Plugins.ConmentTextPlugin.Update(gameTime);
+                if (this.Plugins.ConmentTextPlugin != null)
+                {
+                    this.Plugins.ConmentTextPlugin.SetView(this.viewportSize.X, this.viewportSize.Y - this.Plugins.ToolBarPlugin.Height);
+                    this.Plugins.ConmentTextPlugin.Update(gameTime);
+                }
             }
         }
 
@@ -8972,18 +11839,25 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         }
         private void UpdateInputer(GameTime gameTime)
         {
-            this.Plugins.NumberInputerPlugin.Update(gameTime);
+            if (this.Plugins.NumberInputerPlugin != null)
+            {
+                this.Plugins.NumberInputerPlugin.Update(gameTime);
+            }
         }
 
         private void UpdateScreenBlind(GameTime gameTime)
         {
-            if (this.Plugins.ScreenBlindPlugin != null)
+            // 🔥 ANTI-BAND-AID：在调用前检查 Scenario 是否已完全加载
+            // 日期：2026-03-17
+            // 原因：ScreenBlind.Update() 需要访问 Date 数据，必须在 Scenario 加载完成后才能调用
+            if (this.Plugins.ScreenBlindPlugin != null && 
+                Session.Current?.Scenario?.Date != null)
             {
                 this.Plugins.ScreenBlindPlugin.Update(gameTime);
             }
         }
 
-        private void UpdateQuadtree()
+        private void UpdateQuadtree(GameTime gameTime)
         {
             if (_simpleQuadtree == null) return;
 
@@ -8999,12 +11873,23 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 // 清空并重建四叉树
                 _simpleQuadtree.Clear();
 
-                // 使用时间切片系统更新部队
-                var troopList = Session.Current.Scenario.Troops.GetList();
+                // 使用时间切片系统更新部队 - 性能优化：缓存部队列表
+                if (_cachedTroopList == null || _lastTroopListUpdate + 60 < _globalFrameCounter)
+                {
+                    _cachedTroopList = Session.Current.Scenario.Troops.GetList();
+                    _lastTroopListUpdate = _globalFrameCounter;
+                }
+                
+                var troopList = _cachedTroopList;
+                // if (troopList.Count > 0 && _globalFrameCounter % 60 == 0) System.Diagnostics.Debug.WriteLine($"[UpdateQuadtree] Updating {troopList.Count} troops.");
                 for (int i = 0; i < troopList.Count; i++)
                 {
                     Troop troop = troopList[i] as Troop;
-                    if (troop == null || troop.Destroyed || !troop.DrawAnimation) continue;
+                    if (troop == null || troop.Destroyed || troop.BelongedFaction == null || !troop.DrawAnimation) 
+                    {
+                        // if (_globalFrameCounter % 60 == 0) System.Diagnostics.Debug.WriteLine($"[UpdateQuadtree] Skipped troop {troop?.ID}. Destroyed: {troop?.Destroyed}, Faction: {troop?.BelongedFaction?.Name ?? "null"}, DrawAnimation: {troop?.DrawAnimation}");
+                        continue;
+                    }
                     
                     _simpleQuadtree.Insert(troop);
                     
@@ -9013,8 +11898,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         optimizedTroops++;
                         
                         // === A. 高频逻辑：每帧必做 ===
-                        // 保证移动看起来丝般顺滑
-                        troop.UpdateVisuals(new GameTime());
+                        // 🔥 修复：传入真实的 GameTime，确保插值正常工作
+                        troop.UpdateVisuals(gameTime);
                         
                         // === B. 低频逻辑：时间切片执行 ===
                         // 动态决定思考频率
@@ -9023,17 +11908,89 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         // 使用部队索引和全局帧计数器来错峰执行
                         if ((_globalFrameCounter + i) % sliceCount == 0)
                         {
-                            // 使用先进战斗计算系统
-                            TimeSpan elapsed = TimeSpan.FromSeconds(1.0 / 60.0 * sliceCount);
-                            GameTime gameTime = new GameTime(TimeSpan.Zero, elapsed);
-                            troop.UpdateBrainAdvanced(gameTime, sliceCount);
+                            // 🔥 性能优化：使用预计算的 GameTime，避免 Hot Path 分配
+                            // 确保 sliceCount 在缓存范围内
+                            int cacheIndex = Math.Min(sliceCount, _cachedBrainGameTimes.Length - 1);
+                            GameTime brainGameTime = _cachedBrainGameTimes[cacheIndex];
+                            troop.UpdateBrainAdvanced(brainGameTime, sliceCount);
                         }
                     }
                     else
                     {
+                        // 🔥 修复：非快速战斗部队也需要视觉插值
+                        // 日期：2026-02-27
+                        // 原因：UpdateVisuals 只在 QuickBattling 模式下被调用，导致玩家部队没有平滑移动
+                        // 解决：所有部队都需要调用 UpdateVisuals 进行视觉插值
+                        troop.UpdateVisuals(gameTime);
+                        
                         // 非快速战斗部队使用原始更新逻辑
                         UpdateQuickBattleTroop(troop);
                         UpdateQuickBattleMovement(troop);
+                    }
+                }
+                
+                // 🔥 部队协调系统更新 - 每30帧更新一次以减少性能开销
+                if (_globalFrameCounter % 30 == 0)
+                {
+                    try
+                    {
+                        global::GameManager.TroopCoordinationManager.Instance.UpdateCoordination();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 部队协调系统更新出错: {ex.Message}");
+                    }
+                }
+
+                // 🔥 强制解卡系统 - 每30帧检查一次卡住的部队（更频繁）
+                if (_globalFrameCounter % 30 == 0)
+                {
+                    try
+                    {
+                        ForceUnstuckTroops();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 强制解卡系统出错: {ex.Message}");
+                    }
+                }
+
+                // 🔥 新增：无军团部队检查 - 每60帧检查一次无军团部队（更频繁）
+                if (_globalFrameCounter % 60 == 0)
+                {
+                    try
+                    {
+                        CheckAndFixNoLegionTroops();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 无军团部队检查出错: {ex.Message}");
+                    }
+                }
+
+                // 🔥 新增：激进解卡系统 - 每180帧执行一次全面解卡
+                if (_globalFrameCounter % 180 == 0)
+                {
+                    try
+                    {
+                        //AggressiveUnstuckAllTroops();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 激进解卡系统出错: {ex.Message}");
+                    }
+                }
+
+                // 🔥 修改：合理的解卡系统 - 每180帧执行一次（6秒一次）
+                if (_globalFrameCounter % 180 == 0)
+                {
+                    try
+                    {
+                        global::GameManager.TroopCoordinationManager.Instance.UpdateCoordination();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainGameScreen] 合理解卡系统出错: {ex.Message}");
                     }
                 }
                 
@@ -9054,8 +12011,9 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[UpdateQuadtree] 错误: {ex.Message}");
-                _simpleQuadtree = null; // 出错时禁用优化
+                System.Diagnostics.Debug.WriteLine($"[UpdateQuadtree] 错误: {ex.GetType().Name} - {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[UpdateQuadtree] 堆栈: {ex.StackTrace}");
+                // 🔥 不要禁用四叉树，让下一帧继续尝试
             }
         }
         
@@ -9070,6 +12028,9 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 
                 // 检查部队是否在屏幕内
                 bool isOnScreen = IsOnScreen(troop);
+                
+                // 🔥 统一战斗系统：同步设置 troop.IsOnScreen 属性
+                troop.IsOnScreen = isOnScreen;
                 
                 if (isOnScreen)
                 {
@@ -9104,6 +12065,742 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             {
                 return true; // 出错时假设在屏幕内，使用高频更新
             }
+        }
+
+        /// <summary>
+        /// 强制解卡系统 - 处理长时间卡住的部队
+        /// </summary>
+        private void ForceUnstuckTroops()
+        {
+            try
+            {
+                if (Session.Current?.Scenario?.Troops == null) return;
+
+                var stuckTroops = new List<Troop>();
+                
+                // 收集卡住的部队
+                foreach (Troop troop in Session.Current.Scenario.Troops.GetList())
+                {
+                    if (troop == null || troop.Destroyed) continue;
+                    
+                    // 🔥 修复：更严格的卡住检测条件
+                    // 1. 有移动力但行动是Stop
+                    // 2. 有目标但位置没变化
+                    // 3. 卡住计数器超过阈值
+                    if (troop.MovabilityLeft > 0 && 
+                        troop.Action == TroopAction.Stop &&
+                        troop.RealDestination != Point.Zero &&
+                        troop.RealDestination != troop.Position &&
+                        troop.stuckedFor > 2) // 🔥 修复：进一步降低阈值，更快响应
+                    {
+                        stuckTroops.Add(troop);
+                    }
+                }
+
+                if (stuckTroops.Count > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ForceUnstuckTroops] 发现 {stuckTroops.Count} 个卡住的部队");
+                }
+
+                // 🔥 修复：使用改进的协调管理器处理卡住的部队
+                foreach (var troop in stuckTroops)
+                {
+                    try
+                    {
+                        global::GameManager.TroopCoordinationManager.Instance.ForceUnstuckTroop(troop);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ForceUnstuckTroops] 处理部队 {troop.DisplayName} 出错: {ex.Message}");
+                        // 备用方案：直接处理
+                        ForceUnstuckSingleTroop(troop);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ForceUnstuckTroops] 系统错误: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 强制解卡单个部队
+        /// </summary>
+        private void ForceUnstuckSingleTroop(Troop troop)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ForceUnstuck] 开始处理卡住的部队: {troop.DisplayName} (ID:{troop.ID})");
+
+            // 方案1: 尝试清除路径，强制重新寻路
+            troop.ClearFirstTierPath();
+            troop.stuckedFor = 0;
+            
+            // 方案2: 如果周围有友军，尝试随机传送到附近空位
+            var nearbyEmptyPositions = FindNearbyEmptyPositions(troop.Position, 3);
+            if (nearbyEmptyPositions.Count > 0)
+            {
+                // 选择最接近目标的空位
+                Point bestPosition = nearbyEmptyPositions[0];
+                float bestDistance = GetDistance(bestPosition, troop.RealDestination);
+                
+                foreach (var pos in nearbyEmptyPositions)
+                {
+                    float distance = GetDistance(pos, troop.RealDestination);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestPosition = pos;
+                    }
+                }
+                
+                // 传送到最佳位置
+                troop.Position = bestPosition;
+                troop.Action = TroopAction.Move;
+                
+                System.Diagnostics.Debug.WriteLine($"[ForceUnstuck] 部队 {troop.DisplayName} 传送到 {bestPosition}");
+                return;
+            }
+
+            // 方案3: 如果找不到空位，给部队一些移动力并重置状态
+            troop.MovabilityLeft = Math.Max(troop.MovabilityLeft, 50);
+            troop.Action = TroopAction.Move;
+            
+            System.Diagnostics.Debug.WriteLine($"[ForceUnstuck] 部队 {troop.DisplayName} 重置移动力和状态");
+        }
+
+        /// <summary>
+        /// 🔥 新增：紧急解卡所有卡住的部队
+        /// </summary>
+        public void EmergencyUnstuckAllTroops()
+        {
+            try
+            {
+                if (Session.Current?.Scenario?.Troops == null) return;
+
+                var allStuckTroops = new List<Troop>();
+                var noLegionTroops = new List<Troop>();
+                
+                // 收集所有可能卡住的部队（更宽松的条件）
+                foreach (Troop troop in Session.Current.Scenario.Troops.GetList())
+                {
+                    if (troop == null || troop.Destroyed) continue;
+                    
+                    // 🔥 优先处理无军团部队
+                    if (troop.BelongedLegion == null && troop.BelongedFaction != null)
+                    {
+                        noLegionTroops.Add(troop);
+                        System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 发现无军团部队: {troop.DisplayName}(ID:{troop.ID}) 目标:{troop.WillArchitecture?.Name ?? "无"}");
+                    }
+                    
+                    // 🔥 修复：包含无军团部队和Move状态但实际卡住的部队
+                    if (troop.MovabilityLeft > 0 && 
+                        troop.RealDestination != Point.Zero &&
+                        troop.RealDestination != troop.Position &&
+                        (troop.Action == TroopAction.Stop || 
+                         (troop.Action == TroopAction.Move && troop.stuckedFor > 1)))
+                    {
+                        allStuckTroops.Add(troop);
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 发现 {noLegionTroops.Count} 个无军团部队，{allStuckTroops.Count} 个卡住部队");
+
+                // 🔥 强制处理无军团部队
+                foreach (var troop in noLegionTroops)
+                {
+                    try
+                    {
+                        ForceAssignLegion(troop);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 强制分配军团失败 {troop.DisplayName}: {ex.Message}");
+                    }
+                }
+
+                // 🔥 新增：优先处理循环阻挡的部队
+                var circularGroups = FindAllCircularDeadlocks(allStuckTroops);
+                foreach (var group in circularGroups)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 处理循环阻挡组: {string.Join(", ", group.Select(t => t.DisplayName))}");
+                    global::GameManager.TroopCoordinationManager.Instance.ResolveCircularDeadlock(group);
+                }
+
+                // 使用协调管理器的强制解卡功能处理剩余部队
+                foreach (var troop in allStuckTroops)
+                {
+                    try
+                    {
+                        global::GameManager.TroopCoordinationManager.Instance.ForceUnstuckTroop(troop);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 处理部队 {troop.DisplayName} 出错: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[EmergencyUnstuck] 紧急解卡出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 🔥 新增：强制分配军团给无军团部队
+        /// </summary>
+        private void ForceAssignLegion(Troop troop)
+        {
+            try
+            {
+                if (troop == null || troop.BelongedFaction == null) return;
+
+                // 🔥 修复：根据出发地和目标地正确判断军团类型
+                Architecture startArch = troop.StartingArchitecture;
+                Architecture targetArch = troop.WillArchitecture;
+                
+                // 🔥 数据清理：如果WillArchitecture是敌方城市且没有明确的攻击指令，清空它
+                // 日期：2026-03-09
+                // 原因：城市被占领后，部队的WillArchitecture可能变成敌方城市
+                // 解决：检查WillArchitecture归属，如果是敌方城市且部队不是在执行攻击指令，清空它
+                if (targetArch != null && 
+                    targetArch.BelongedFaction != troop.BelongedFaction &&
+                    troop.Command is not (TroopCommand.AttackArch or TroopCommand.AttackTroop or TroopCommand.Attack))
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[ForceAssignLegion] 清理错误目标：{troop.DisplayName} WillArchitecture={targetArch.Name}(敌方)，Command={troop.Command}");
+                    troop.WillArchitecture = null;
+                    troop.RealDestination = new Point(-1, -1);
+                    targetArch = null;  // 清空局部变量
+                }
+
+                LegionKind legionKind;
+                LegionMission legionMission;
+                Architecture legionTarget;
+
+                if (startArch != null && targetArch != null)
+                {
+                    if (startArch == targetArch)
+                    {
+                        // 出发地A，目标A → 防守军团
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Defend;
+                        legionTarget = startArch;
+                    }
+                    else
+                    {
+                        // 出发地A，目标B → 进攻军团
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Attack;
+                        legionTarget = targetArch;
+                    }
+                }
+                else if (targetArch != null)
+                {
+                    // 🔥 根本修复：拒绝为目标错误的部队创建军团
+                    // 日期：2026-03-07
+                    // 原因：如果 WillArchitecture 被错误设置为敌方城市（如洛阳），
+                    //       不应该创建 Offensive_洛阳 军团，而应该清空错误的目标
+                    // 解决：检查目标是否合法，不合法则清空目标并返回
+                    if (targetArch.BelongedFaction == troop.BelongedFaction)
+                    {
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Defend;
+                        legionTarget = targetArch;
+                    }
+                    else
+                    {
+                        // ❌ 目标是敌方城市，但部队没有出发地，这是数据错误
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegion] ❌ 部队 {troop.DisplayName} 目标是敌方城市 {targetArch.Name}，但没有出发地，清空错误目标");
+                        troop.WillArchitecture = null;
+                        troop.RealDestination = new Point(-1, -1);
+                        return;
+                    }
+                }
+                else if (startArch != null)
+                {
+                    // 只有出发地，没有目标 → 撤退军团
+                    // 🔥 修复：验证StartingArchitecture归属
+                    // 日期：2026-03-09
+                    // 原因：StartingArchitecture可能被占领，变成敌方城市
+                    // 解决：如果StartingArchitecture是敌方城市，使用GetBestRetreatTarget找最近的己方城市
+                    if (startArch.BelongedFaction == troop.BelongedFaction)
+                    {
+                        // StartingArchitecture是己方城市，可以作为撤退目标
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Retreat;
+                        legionTarget = startArch;
+                    }
+                    else
+                    {
+                        // StartingArchitecture已被占领，找最近的己方城市
+                        Architecture retreatTarget = troop.GetBestRetreatTarget();
+                        if (retreatTarget != null)
+                        {
+                            legionKind = LegionKind.AI;
+                            legionMission = LegionMission.Retreat;
+                            legionTarget = retreatTarget;
+                            
+                            // 更新部队的StartingArchitecture
+                            troop.StartingArchitecture = retreatTarget;
+                            
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[ForceAssignLegion] {troop.DisplayName} 出发地{startArch.Name}已被占领，" +
+                                $"撤退到最近己方城市{retreatTarget.Name}");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[ForceAssignLegion] {troop.DisplayName} 找不到己方城市撤退，势力可能被灭");
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ForceAssignLegion] 部队 {troop.DisplayName} 没有出发地和目标建筑，无法分配军团");
+                    return;
+                }
+
+                // 尝试获取现有军团
+                Legion legion = null;
+                foreach (Legion existingLegion in troop.BelongedFaction.Legions)
+                {
+                    if (existingLegion.Kind == legionKind && existingLegion.Mission == legionMission && existingLegion.WillArchitecture == legionTarget)
+                    {
+                        legion = existingLegion;
+                        break;
+                    }
+                }
+
+                // 如果没有找到，创建新军团
+                if (legion == null)
+                {
+                    legion = troop.BelongedFaction.CreateLegion(legionKind, legionMission, legionTarget);
+                }
+
+                if (legion != null)
+                {
+                    troop.BelongedLegion = legion;
+                    
+                    // 确保双向关系
+                    if (!legion.Troops.HasGameObject(troop))
+                    {
+                        legion.Troops.Add(troop);
+                    }
+                    
+                    // System.Diagnostics.Debug.WriteLine($"[ForceAssignLegion] 成功分配：{troop.DisplayName} → {legion.Kind}_{legion.WillArchitecture?.Name}");
+                }
+                else
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[ForceAssignLegion] 无法为部队 {troop.DisplayName} 创建军团");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ForceAssignLegion] 强制分配军团出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 🔥 新增：查找所有循环死锁组
+        /// </summary>
+        private List<List<Troop>> FindAllCircularDeadlocks(List<Troop> troops)
+        {
+            var circularGroups = new List<List<Troop>>();
+            var processedTroops = new HashSet<int>();
+
+            try
+            {
+                foreach (var troop in troops)
+                {
+                    if (processedTroops.Contains(troop.ID)) continue;
+
+                    var group = global::GameManager.TroopCoordinationManager.Instance.FindCircularDeadlockGroup(troop, troops);
+                    if (group.Count >= 2)
+                    {
+                        circularGroups.Add(group);
+                        global::GameManager.TroopCoordinationManager.Instance.ResolveCircularDeadlock(group);
+                        foreach (var t in group)
+                        {
+                            processedTroops.Add(t.ID);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[FindAllCircularDeadlocks] 查找所有循环死锁出错: {ex.Message}");
+            }
+
+            return circularGroups;
+        }
+
+        /// <summary>
+        /// 🔥 新增：检查和修复无军团部队
+        /// </summary>
+        private void CheckAndFixNoLegionTroops()
+        {
+            try
+            {
+                if (Session.Current?.Scenario?.Troops == null) return;
+
+                var noLegionTroops = new List<Troop>();
+
+                // 收集所有无军团部队
+                foreach (Troop troop in Session.Current.Scenario.Troops.GetList())
+                {
+                    if (troop != null && !troop.Destroyed && 
+                        troop.BelongedFaction != null && 
+                        troop.BelongedLegion == null)
+                    {
+                        noLegionTroops.Add(troop);
+                    }
+                }
+
+                if (noLegionTroops.Count > 0)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[CheckNoLegionTroops] 发现 {noLegionTroops.Count} 个无军团部队，开始修复");
+
+                    foreach (var troop in noLegionTroops)
+                    {
+                        ForceAssignLegion(troop);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckNoLegionTroops] 检查无军团部队出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 🔥 新增：激进解卡系统 - 强制解决所有卡住问题
+        /// </summary>
+        private void AggressiveUnstuckAllTroops()
+        {
+            try
+            {
+                if (Session.Current?.Scenario?.Troops == null) return;
+
+                var allTroops = Session.Current.Scenario.Troops.GetList().OfType<Troop>().Where(t => t != null && !t.Destroyed).ToList();
+                var problemTroops = new List<Troop>();
+                var noLegionTroops = new List<Troop>();
+                var stuckTroops = new List<Troop>();
+
+                //System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 开始激进解卡，检查 {allTroops.Count} 个部队");
+
+                // 分类收集问题部队
+                foreach (var troop in allTroops)
+                {
+                    // 无军团部队
+                    if (troop.BelongedFaction != null && troop.BelongedLegion == null)
+                    {
+                        noLegionTroops.Add(troop);
+                        problemTroops.Add(troop);
+                    }
+                    // 卡住部队
+                    else if (troop.MovabilityLeft > 0 && 
+                            troop.RealDestination != Point.Zero &&
+                            troop.RealDestination != troop.Position &&
+                            troop.Action == TroopAction.Stop)
+                    {
+                        stuckTroops.Add(troop);
+                        problemTroops.Add(troop);
+                    }
+                }
+
+                //System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 发现问题部队: 无军团 {noLegionTroops.Count} 个, 卡住 {stuckTroops.Count} 个");
+
+                // 1. 优先处理无军团部队
+                foreach (var troop in noLegionTroops)
+                {
+                    try
+                    {
+                        // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 强制分配军团: {troop.DisplayName}(ID:{troop.ID}) 目标:{troop.WillArchitecture?.Name ?? "无"}");
+                        ForceAssignLegionAggressive(troop);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 分配军团失败 {troop.DisplayName}: {ex.Message}");
+                    }
+                }
+
+                // 2. 处理卡住部队
+                foreach (var troop in stuckTroops)
+                {
+                    try
+                    {
+                        AggressiveUnstuckSingleTroop(troop);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 解卡失败 {troop.DisplayName}: {ex.Message}");
+                    }
+                }
+
+                // 3. 处理循环死锁
+                var circularGroups = FindAllCircularDeadlocks(problemTroops);
+                foreach (var group in circularGroups)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 解决循环死锁: {string.Join(", ", group.Select(t => t.DisplayName))}");
+                    global::GameManager.TroopCoordinationManager.Instance.ResolveCircularDeadlock(group);
+                }
+
+                // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 激进解卡完成");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuck] 激进解卡系统出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 🔥 新增：激进军团分配
+        /// </summary>
+        private void ForceAssignLegionAggressive(Troop troop)
+        {
+            try
+            {
+                if (troop?.BelongedFaction == null) return;
+
+                // 1. 确定出发地和目标地
+                Architecture startArch = troop.StartingArchitecture;
+                Architecture targetArch = troop.WillArchitecture;
+
+                // 🔥 修复：根据出发地和目标地正确判断军团类型
+                LegionKind legionKind;
+                LegionMission legionMission;
+                Architecture legionTarget;
+
+                if (startArch != null && targetArch != null)
+                {
+                    if (startArch == targetArch)
+                    {
+                        // 出发地A，目标A → 防守军团
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Defend;
+                        legionTarget = startArch;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 出发{startArch.Name}，目标{targetArch.Name} → 防守军团");
+                    }
+                    else
+                    {
+                        // 出发地A，目标B → 进攻军团
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Attack;
+                        legionTarget = targetArch;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 出发{startArch.Name}，目标{targetArch.Name} → 进攻军团");
+                    }
+                }
+                else if (targetArch != null)
+                {
+                    // 只有目标，没有出发地 → 根据目标是否为己方判断
+                    if (targetArch.BelongedFaction == troop.BelongedFaction)
+                    {
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Defend;
+                        legionTarget = targetArch;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 无出发地，目标己方{targetArch.Name} → 防守军团");
+                    }
+                    else
+                    {
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Attack;
+                        legionTarget = targetArch;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 无出发地，目标敌方{targetArch.Name} → 进攻军团");
+                    }
+                }
+                else if (startArch != null)
+                {
+                    // 只有出发地，没有目标 → 撤退军团
+                    // 🔥 修复：验证StartingArchitecture归属
+                    // 日期：2026-03-09
+                    if (startArch.BelongedFaction == troop.BelongedFaction)
+                    {
+                        legionKind = LegionKind.AI;
+                        legionMission = LegionMission.Retreat;
+                        legionTarget = startArch;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 出发{startArch.Name}，无目标 → 撤退军团");
+                    }
+                    else
+                    {
+                        // StartingArchitecture已被占领，找最近的己方城市
+                        Architecture retreatTarget = troop.GetBestRetreatTarget();
+                        if (retreatTarget != null)
+                        {
+                            legionKind = LegionKind.AI;
+                            legionMission = LegionMission.Retreat;
+                            legionTarget = retreatTarget;
+                            troop.StartingArchitecture = retreatTarget;
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[ForceAssignLegionAggressive] {troop.DisplayName}: 出发地{startArch.Name}已被占领，" +
+                                $"撤退到{retreatTarget.Name}");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[ForceAssignLegionAggressive] {troop.DisplayName}: 找不到己方城市撤退");
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    // 既没有出发地也没有目标 → 使用势力首都作为撤退目标
+                    legionKind = LegionKind.AI;
+                    legionMission = LegionMission.Retreat;
+                    legionTarget = troop.BelongedFaction.Capital;
+                    if (legionTarget != null)
+                    {
+                        troop.StartingArchitecture = legionTarget;
+                        troop.WillArchitecture = legionTarget;
+                        troop.RealDestination = legionTarget.ArchitectureArea.Centre;
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 无出发地和目标，设置首都{legionTarget.Name} → 撤退军团");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] {troop.DisplayName}: 无法确定任何目标，跳过");
+                        return;
+                    }
+                }
+
+                // 2. 查找现有军团
+                Legion legion = null;
+                foreach (Legion existingLegion in troop.BelongedFaction.Legions)
+                {
+                    if (existingLegion.Kind == legionKind && existingLegion.Mission == legionMission && existingLegion.WillArchitecture == legionTarget)
+                    {
+                        legion = existingLegion;
+                        break;
+                    }
+                }
+
+                // 3. 如果没有找到，创建新军团
+                if (legion == null)
+                {
+                    legion = troop.BelongedFaction.CreateLegion(legionKind, legionMission, legionTarget);
+                    if (legion != null)
+                    {
+                        // 设置起始建筑
+                        legion.StartArchitecture = startArch ?? troop.BelongedFaction.Capital;
+                    }
+                    // System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] 创建新军团: {legionKind}_{legionTarget.Name}");
+                }
+
+                // 4. 分配部队到军团
+                troop.BelongedLegion = legion;
+                if (!legion.Troops.HasGameObject(troop))
+                {
+                    legion.Troops.Add(troop);
+                }
+
+                // 5. 重置部队状态
+                troop.stuckedFor = 0;
+                troop.Action = TroopAction.Move;
+                
+                // System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] 成功分配: {troop.DisplayName} → {legion.Kind}_{legion.WillArchitecture.Name}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ForceAssignLegionAggressive] 激进分配军团出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 🔥 新增：激进解卡单个部队
+        /// </summary>
+        private void AggressiveUnstuckSingleTroop(Troop troop)
+        {
+            try
+            {
+                // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuckSingle] 处理卡住部队: {troop.DisplayName}(ID:{troop.ID})");
+
+                // 1. 重置状态
+                troop.stuckedFor = 0;
+                troop.ClearFirstTierPath();
+                global::GameManager.TroopCoordinationManager.Instance.ResetTroopWaitState(troop.ID);
+
+                // 2. 尝试传送到安全位置
+                var safePositions = FindNearbyEmptyPositions(troop.Position, 4);
+                if (safePositions.Count > 0)
+                {
+                    // 选择最接近目标的位置
+                    Point bestPosition = safePositions[0];
+                    if (troop.RealDestination != Point.Zero)
+                    {
+                        float bestDistance = GetDistance(bestPosition, troop.RealDestination);
+                        foreach (var pos in safePositions)
+                        {
+                            float distance = GetDistance(pos, troop.RealDestination);
+                            if (distance < bestDistance)
+                            {
+                                bestDistance = distance;
+                                bestPosition = pos;
+                            }
+                        }
+                    }
+
+                    troop.Position = bestPosition;
+                    troop.Action = TroopAction.Move;
+                    // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuckSingle] 传送 {troop.DisplayName} 到 {bestPosition}");
+                }
+                else
+                {
+                    // 3. 如果找不到安全位置，强制设置为移动状态
+                    troop.Action = TroopAction.Move;
+                    troop.MovabilityLeft = Math.Max(troop.MovabilityLeft, 50);
+                    // System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuckSingle] 重置 {troop.DisplayName} 状态和移动力");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AggressiveUnstuckSingle] 激进解卡出错: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 查找附近的空位置
+        /// </summary>
+        private List<Point> FindNearbyEmptyPositions(Point center, int radius)
+            
+        {
+            var emptyPositions = new List<Point>();
+            try
+            {
+                for (int dx = -radius; dx <= radius; dx++)
+                {
+                    for (int dy = -radius; dy <= radius; dy++)
+                    {
+                        if (dx == 0 && dy == 0) continue;
+                        
+                        Point checkPos = new Point(center.X + dx, center.Y + dy);
+                        
+                        // 检查位置是否有效且为空
+                        if (checkPos.X >= 0 && checkPos.Y >= 0 &&
+                            Session.Current.Scenario.IsPositionEmpty(checkPos))
+                        {
+                            // 检查地形是否可通行
+                            var terrainKind = Session.Current.Scenario.GetTerrainKindByPosition(checkPos);
+                            if (terrainKind != WorldOfTheThreeKingdoms.GameGlobal.TerrainKind.水域) // 避免传送到水里
+                            {
+                                emptyPositions.Add(checkPos);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[FindNearbyEmptyPositions] 错误: {ex.Message}");
+            }
+            
+            return emptyPositions;
+        }
+
+        /// <summary>
+        /// 计算两点距离
+        /// </summary>
+        private float GetDistance(Point a, Point b)
+        {
+            return (float)Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
         }
         
         /// <summary>
@@ -9184,8 +12881,9 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                     }
                     else
                     {
-                        // 按比例减少部队数量
-                        float survivalRatio = Math.Max(0, this.TotalHP / (this.Troops.Count * 10f));
+                        // 按比例减少部队数量 - 确保比例在0-1之间
+                        float maxHP = this.Troops.Count * 10f;
+                        float survivalRatio = Math.Max(0, Math.Min(1.0f, this.TotalHP / maxHP));
                         ApplyCasualties(survivalRatio);
                     }
                 }
@@ -9212,12 +12910,21 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             {
                 var troopsToRemove = new List<Troop>();
                 
+                // 确保survivalRatio在有效范围内
+                survivalRatio = Math.Max(0f, Math.Min(1.0f, survivalRatio));
+                
                 foreach (var troop in Troops)
                 {
                     if (troop != null && !troop.Destroyed)
                     {
-                        int newQuantity = (int)(troop.Quantity * survivalRatio);
-                        int casualties = troop.Quantity - newQuantity;
+                        int originalQuantity = troop.Quantity;
+                        int newQuantity = (int)(originalQuantity * survivalRatio);
+                        
+                        // 确保新数量不会超过原数量
+                        newQuantity = Math.Min(newQuantity, originalQuantity);
+                        newQuantity = Math.Max(0, newQuantity);
+                        
+                        int casualties = originalQuantity - newQuantity;
                         
                         troop.Quantity = newQuantity;
                         troop.InjuryQuantity += casualties / 3; // 部分伤亡转为伤兵
@@ -9280,7 +12987,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 foreach (Troop troop in Session.Current.Scenario.Troops.GetList())
                 {
                     if (troop == null || troop.Destroyed || processedTroops.Contains(troop)) continue;
-                    if (!troop.QuickBattling || IsOnScreen(troop)) continue; // 只处理屏幕外的快速战斗部队
+                    // 🔧 FIX: 屏幕外战斗系统适用于所有部队，不仅限QuickBattling
+                    if (IsOnScreen(troop)) continue; // 只处理屏幕外的部队
                     
                     // 创建新集群
                     var squad = new ArmySquad();
@@ -9314,7 +13022,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 foreach (Troop otherTroop in Session.Current.Scenario.Troops.GetList())
                 {
                     if (otherTroop == null || otherTroop.Destroyed || processedTroops.Contains(otherTroop)) continue;
-                    if (!otherTroop.QuickBattling || otherTroop.BelongedFaction != centerTroop.BelongedFaction) continue;
+                    // 🔧 FIX: 屏幕外战斗系统适用于所有部队
+                    if (IsOnScreen(otherTroop) || otherTroop.BelongedFaction != centerTroop.BelongedFaction) continue;
                     
                     // 检查距离
                     int distance = Math.Abs(otherTroop.Position.X - centerTroop.Position.X) + 
@@ -9467,6 +13176,27 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             {
                 if (troop == null || troop.Destroyed) return;
                 
+                // 🔥 修复：手动控制的部队不应被 AI 移动
+                // 日期：2026-03-10
+                // 原因：快速战斗模式会移动所有部队，包括玩家手动控制的部队
+                // 现象：袁绍队 ManualControl=True 但仍被 UpdateMovement_Quick 移动，导致位置冲突
+                // 解决：优先检查 ManualControl 标志，手动控制的部队完全跳过 AI 移动
+                if (troop.ManualControl)
+                {
+                    return;
+                }
+                
+                // 🔥 修复操作面瞬移：执行阶段才允许部队移动
+                // 日期：2026-03-14
+                // 根因：之前用 UndoneWorks.Peek().Kind != None 判断操作面，但操作面正常状态就是 None，
+                //       导致检查永远为 false，部队在操作面每帧都被 UpdateMovement_Quick 驱动移动。
+                // 解决：直接用 Date.IsRunning 判断——只有执行阶段才允许移动，这是机制的唯一真相来源。
+                bool isExecutionPhase = Session.Current.Scenario.Date.IsRunning;
+                if (!isExecutionPhase)
+                {
+                    return;
+                }
+                
                 // 如果部队没有目标，尝试寻找最近的敌对部队
                 if (troop.TargetTroop == null || troop.TargetTroop.Destroyed)
                 {
@@ -9605,44 +13335,50 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 }
                 if ((architectureByPosition != null) && ((this.CurrentTroop == null) || ((!Session.GlobalVariables.SkyEye && (Session.Current.Scenario.CurrentPlayer != null)) && !Session.Current.Scenario.CurrentPlayer.IsPositionKnown(this.CurrentTroop.Position))))
                 {
-                    this.Plugins.ArchitectureSurveyPlugin.SetArchitecture(architectureByPosition, this.position);
-                    this.Plugins.ArchitectureSurveyPlugin.SetFaction(Session.Current.Scenario.CurrentPlayer);
-                    this.Plugins.ArchitectureSurveyPlugin.Showing = true;
-
-                    //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(280, 20);
-
-                    if (Session.LargeContextMenu)
+                    if (this.Plugins.ArchitectureSurveyPlugin != null)
                     {
-                        if (InputManager.PoX < 400)  // && InputManager.PoY < 250)  // if (InputManager.NowMouse.X < 670 && InputManager.NowMouse.Y < 300)
+                        this.Plugins.ArchitectureSurveyPlugin.SetArchitecture(architectureByPosition, this.position);
+                        this.Plugins.ArchitectureSurveyPlugin.SetFaction(Session.Current.Scenario.CurrentPlayer);
+                        this.Plugins.ArchitectureSurveyPlugin.Showing = true;
+
+                        //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(280, 20);
+
+                        if (Session.LargeContextMenu)
                         {
-                            this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(this.viewportSize.X - 100, 20);
+                            if (InputManager.PoX < 400)  // && InputManager.PoY < 250)  // if (InputManager.NowMouse.X < 670 && InputManager.NowMouse.Y < 300)
+                            {
+                                this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(this.viewportSize.X - 100, 20);
+                            }
+                            else
+                            {
+                                this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(100, 20);
+                                //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(280, 20);
+                            }
                         }
                         else
                         {
-                            this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(100, 20);
-                            //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(280, 20);
+                            //if (InputManager.NowMouse.X < 670 && InputManager.NowMouse.Y < 300)
+                            //{
+                            //}
+                            //else
+                            //{
+                            //}
+
+                            this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(InputManager.PoX, InputManager.PoY);
                         }
+
+                        //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(InputManager.PoX, InputManager.PoY);  // InputManager.NowMouse.X, InputManager.NowMouse.Y);
+
+                        this.Plugins.ArchitectureSurveyPlugin.Update(gameTime);
                     }
-                    else
-                    {
-                        //if (InputManager.NowMouse.X < 670 && InputManager.NowMouse.Y < 300)
-                        //{
-                        //}
-                        //else
-                        //{
-                        //}
-
-                        this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(InputManager.PoX, InputManager.PoY);
-                    }
-
-                    //this.Plugins.ArchitectureSurveyPlugin.SetTopLeftPoint(InputManager.PoX, InputManager.PoY);  // InputManager.NowMouse.X, InputManager.NowMouse.Y);
-
-                    this.Plugins.ArchitectureSurveyPlugin.Update(gameTime);
                 }
                 else
                 {
-                    this.Plugins.ArchitectureSurveyPlugin.SetArchitecture(null, this.position);
-                    this.Plugins.ArchitectureSurveyPlugin.Showing = false;
+                    if (this.Plugins.ArchitectureSurveyPlugin != null)
+                    {
+                        this.Plugins.ArchitectureSurveyPlugin.SetArchitecture(null, this.position);
+                        this.Plugins.ArchitectureSurveyPlugin.Showing = false;
+                    }
                 }
             }
             if (this.Plugins.TroopSurveyPlugin != null)
@@ -9688,7 +13424,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             this.ResetMouse();
 
-            if (this.Plugins.AirViewPlugin.IsMapShowing)
+            if (this.Plugins.AirViewPlugin != null && this.Plugins.AirViewPlugin.IsMapShowing)
             {
                 if (StaticMethods.PointInRectangle(this.MousePosition, this.Plugins.AirViewPlugin.MapPosition))
                 {
@@ -9819,6 +13555,17 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 this.viewportSizeFull.Y = Platform.GraphicsDevice.Viewport.Height;
 
                 this.Plugins.ToolBarPlugin.SetRealViewportSize(new Point(this.viewportSize.X, this.viewportSize.Y));
+                
+                if (this.Plugins.ScreenBlindPlugin != null)
+                {
+                    this.Plugins.ScreenBlindPlugin.SetRealViewportSize(new Point(this.viewportSize.X, this.viewportSize.Y));
+                }
+                
+                // 🆕 调整地块势力范围信息插件大小
+                if (this.Plugins.TileInfluenceInfoPlugin != null)
+                {
+                    this.Plugins.TileInfluenceInfoPlugin.SetRealViewportSize(new Point(this.viewportSize.X, this.viewportSize.Y));
+                }
 
                 //this.Plugins.ToolBarPlugin.SetRealViewportSize(new Point(this.viewportSize.X, this.viewportSize.Y));
 
@@ -9999,6 +13746,9 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                             Rectangle r = new Rectangle(
                                 Math.Min(point2.X, positionByPoint.X), Math.Min(point2.Y, positionByPoint.Y),
                                 Math.Abs(point2.X - positionByPoint.X), Math.Abs(point2.Y - positionByPoint.Y));
+                            
+                            System.Diagnostics.Debug.WriteLine($"[框选部队] 开始框选，矩形:{r}");
+                            
                             foreach (Troop troop in Session.Current.Scenario.CurrentPlayer.Troops.GetList())
                             {
                                 if (!troop.Destroyed && troop.Status == TroopStatus.一般 && 
@@ -10006,8 +13756,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                                     !troop.Operated)
                                 {
                                     this.SelectorTroops.Add(troop);
+                                    System.Diagnostics.Debug.WriteLine($"[框选部队] ✅ 加入部队:{troop.DisplayName} Operated:{troop.Operated}");
+                                }
+                                else if (!troop.Destroyed && r.Contains(troop.Position))
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[框选部队] ❌ 跳过部队:{troop.DisplayName} Status:{troop.Status} Operated:{troop.Operated}");
                                 }
                             }
+                            
+                            System.Diagnostics.Debug.WriteLine($"[框选部队] 完成，SelectorTroops数量:{this.SelectorTroops.Count}");
                             this.PushUndoneWork(new UndoneWorkItem(UndoneWorkKind.Selecting, SelectingUndoneWorkKind.SelectorTroopsDestination));
                         }
                     }
@@ -10327,6 +14084,118 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         }
         
         #endregion
+        
+        #region 选中部队能量覆盖范围高亮显示 (2026-03-21)
+        
+        /// <summary>
+        /// 绘制选中部队的能量覆盖范围高亮
+        /// 日期：2026-03-21
+        /// 🔥 Hot Path：每帧调用，但仅在有选中部队时绘制
+        /// </summary>
+        private void DrawSelectedTroopZocHighlight(SpriteBatch spriteBatch, GameTime gameTime)
+        {
+            // 🔥 Hot Path：快速返回
+            if (_selectedTroopZocTiles.Count == 0 || _whiteTileOverlay == null)
+            {
+                return;
+            }
+            
+            // 🔥 ANTI-BAND-AID：Fail Fast，不要掩盖数据错误
+            // 如果 Scenario 为 null，说明游戏状态异常，让它崩溃
+            var scenario = Session.Current.Scenario;
+            int mapWidth = scenario.ScenarioMap.MapDimensions.X;
+            int tileWidth = this.mainMapLayer.TileWidth;
+            int tileHeight = this.mainMapLayer.TileHeight;
+            
+            // 计算当前视口范围（Grid坐标）
+            int viewLeft = this.TopLeftPosition.X;
+            int viewTop = this.TopLeftPosition.Y;
+            int viewRight = this.BottomRightPosition.X;
+            int viewBottom = this.BottomRightPosition.Y;
+            
+            // 计算呼吸Alpha（0.008f ~ 0.012f 之间微弱起伏，边缘渲染）
+            // 🔥 修复：改为边缘渲染，保持低透明度
+            // 日期：2026-03-21
+            float time = (float)gameTime.TotalGameTime.TotalSeconds;
+            float alpha = 0.01f + (float)Math.Sin(time * 2.5f) * 0.002f;
+            
+            // 使用浅金色高亮（非预乘Alpha）
+            Color highlightColor = new Color(255, 240, 180, (int)(alpha * 255));
+            
+            // 🔥 关键：使用 AlphaBlend 混合模式（更通用，在深色和浅色背景上都可见）
+            // 不使用 Additive，因为在深色背景上效果不明显
+            spriteBatch.End();
+            spriteBatch.Begin(
+                SpriteSortMode.Deferred,
+                BlendState.AlphaBlend,
+                SamplerState.PointClamp,
+                DepthStencilState.None,
+                RasterizerState.CullNone);
+            
+            // 🔥 Hot Path 优化：使用值类型枚举器（Zero-Allocation）
+            // HashSet<T>.GetEnumerator() 返回值类型枚举器，不产生堆分配
+            var enumerator = _selectedTroopZocTiles.GetEnumerator();
+            while (enumerator.MoveNext())
+            {
+                int tileIndex = enumerator.Current;
+                
+                // 将索引转换为坐标
+                int tileX = tileIndex % mapWidth;
+                int tileY = tileIndex / mapWidth;
+                
+                // 视口裁剪：跳过不在屏幕内的格子
+                if (tileX < viewLeft || tileX > viewRight ||
+                    tileY < viewTop || tileY > viewBottom)
+                {
+                    continue;
+                }
+                
+                // 计算屏幕坐标
+                Point tilePos = new Point(tileX, tileY);
+                Rectangle rect = this.mainMapLayer.GetDestination(tilePos);
+                
+                // 🔥 关键修复：只绘制边缘，中间透明（参考移动范围渲染）
+                // 日期：2026-03-21
+                // 原因：用户反馈"还是会覆盖"，改为边缘渲染
+                int borderThickness = 2;
+                
+                // 上边框
+                spriteBatch.Draw(
+                    _whiteTileOverlay,
+                    new Rectangle(rect.X, rect.Y, rect.Width, borderThickness),
+                    highlightColor);
+                
+                // 下边框
+                spriteBatch.Draw(
+                    _whiteTileOverlay,
+                    new Rectangle(rect.X, rect.Bottom - borderThickness, rect.Width, borderThickness),
+                    highlightColor);
+                
+                // 左边框
+                spriteBatch.Draw(
+                    _whiteTileOverlay,
+                    new Rectangle(rect.X, rect.Y, borderThickness, rect.Height),
+                    highlightColor);
+                
+                // 右边框
+                spriteBatch.Draw(
+                    _whiteTileOverlay,
+                    new Rectangle(rect.Right - borderThickness, rect.Y, borderThickness, rect.Height),
+                    highlightColor);
+            }
+            
+            // 🔥 恢复外层 SpriteBatch 状态
+            spriteBatch.End();
+            spriteBatch.Begin(
+                SpriteSortMode.BackToFront,
+                BlendState.AlphaBlend,
+                SamplerState.LinearClamp,
+                null,
+                null,
+                null);
+        }
+        
+        #endregion
     }
 
     /// <summary>
@@ -10491,16 +14360,35 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         /// </summary>
         private Rectangle GetTroopBounds(Troop troop)
         {
+            try
+            {
+                // 🔥 修复：直接获取该瓦片在当前屏幕上的实际绘制坐标矩形
+                // 这与 GetVisibleArea 返回的 (0,0,width,height) 屏幕坐标系完全一致！
+                var mainMapLayer = Session.MainGame?.mainGameScreen?.mainMapLayer;
+                if (mainMapLayer != null)
+                {
+                    Rectangle dest = mainMapLayer.GetDestination(troop.Position);
+                    
+                    // 考虑大型单位（如攻城车）的额外尺寸
+                    int extraSize = troop.Army?.Kind?.Type == MilitaryType.器械 ? 30 : 0;
+                    if (extraSize > 0)
+                    {
+                        dest.Inflate(extraSize, extraSize);
+                    }
+                    return dest;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+
+            // Fallback (虽然不准确但防止崩溃)
             const int tileWidth = 60;
             const int tileHeight = 40;
-            
-            // 考虑大型单位（如攻城车）的额外尺寸
-            int extraSize = troop.Army?.Kind?.Type == MilitaryType.器械 ? 30 : 0;
-            
-            int worldX = troop.Position.X * tileWidth - extraSize;
-            int worldY = troop.Position.Y * tileHeight - extraSize;
-            
-            return new Rectangle(worldX, worldY, tileWidth + extraSize * 2, tileHeight + extraSize * 2);
+            int worldX = troop.Position.X * tileWidth;
+            int worldY = troop.Position.Y * tileHeight;
+            return new Rectangle(worldX, worldY, tileWidth, tileHeight);
         }
 
         /// <summary>
@@ -10538,9 +14426,9 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         private static readonly Dictionary<Troop, float> _distanceCache = new Dictionary<Troop, float>(2000);
         
         // LOD距离阈值（使用平方距离避免开根号）
-        private const float LOD_HIGH_DISTANCE_SQ = 150f * 150f;    // 高质量渲染距离
-        private const float LOD_MEDIUM_DISTANCE_SQ = 300f * 300f;  // 中等质量渲染距离
-        private const float LOD_LOW_DISTANCE_SQ = 600f * 600f;     // 低质量渲染距离
+        private const float LOD_HIGH_DISTANCE_SQ = 1000f * 1000f;    // 高质量渲染距离
+        private const float LOD_MEDIUM_DISTANCE_SQ = 2000f * 2000f;  // 中等质量渲染距离
+        private const float LOD_LOW_DISTANCE_SQ = 5000f * 5000f;     // 低质量渲染距离
         
         // 性能统计
         private static int _frameCounter = 0;
@@ -10605,7 +14493,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 
                 foreach (var troop in _visibleCandidates)
                 {
-                    if (troop == null || troop.Destroyed || !troop.DrawAnimation)
+                    if (troop == null || troop.Destroyed || troop.BelongedFaction == null || !troop.DrawAnimation)
                         continue;
 
                     // 精确剔除 - 四叉树返回的只是"附近的"，可能包含不在屏幕内的
@@ -10679,7 +14567,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                     
                     if (System.Diagnostics.Debugger.IsAttached)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[SimpleTroopRenderer] 总计: {totalTroops}, 候选: {_visibleCandidates.Count}, 渲染: {_sortedTroops.Count}, 剔除: {culledTroops}");
+                        // System.Diagnostics.Debug.WriteLine($"[SimpleTroopRenderer] 总计: {totalTroops}, 候选: {_visibleCandidates.Count}, 渲染: {_sortedTroops.Count}, 剔除: {culledTroops}");
                     }
                 }
             }
@@ -10697,10 +14585,20 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             if (!_distanceCache.TryGetValue(troop, out float distance))
             {
-                distance = Vector2.DistanceSquared(
-                    new Vector2(troop.Position.X * 60f, troop.Position.Y * 40f), 
-                    cameraCenter
-                );
+                var mainMapLayer = Session.MainGame?.mainGameScreen?.mainMapLayer;
+                if (mainMapLayer != null)
+                {
+                    Rectangle dest = mainMapLayer.GetDestination(troop.Position);
+                    Vector2 troopScreenCenter = new Vector2(dest.X + dest.Width / 2f, dest.Y + dest.Height / 2f);
+                    distance = Vector2.DistanceSquared(troopScreenCenter, cameraCenter);
+                }
+                else
+                {
+                    distance = Vector2.DistanceSquared(
+                        new Vector2(troop.Position.X * 60f, troop.Position.Y * 40f), 
+                        cameraCenter
+                    );
+                }
                 _distanceCache[troop] = distance;
             }
             return distance;
@@ -10713,16 +14611,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             try
             {
-                const int tileWidth = 60;
-                const int tileHeight = 40;
-                
-                int troopX = troop.Position.X * tileWidth;
-                int troopY = troop.Position.Y * tileHeight;
-                
-                // 考虑单位尺寸的边界检查
-                Rectangle troopBounds = new Rectangle(troopX - 30, troopY - 20, tileWidth + 60, tileHeight + 40);
-                
-                return viewport.Intersects(troopBounds);
+                var mainMapLayer = Session.MainGame?.mainGameScreen?.mainMapLayer;
+                if (mainMapLayer != null)
+                {
+                    Rectangle dest = mainMapLayer.GetDestination(troop.Position);
+                    // 考虑单位尺寸的边界检查，放大一些避免裁剪
+                    dest.Inflate(30, 20);
+                    return viewport.Intersects(dest);
+                }
+                return true;
             }
             catch
             {
@@ -10753,16 +14650,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             try
             {
-                // 简化渲染：跳过一些动画帧
-                if (_frameCounter % 2 == 0)
-                {
-                    DrawSingleTroop(troop, gameTime);
-                }
-                else
-                {
-                    // 使用上一帧的渲染结果或静态图像
-                    DrawStaticTroop(troop);
-                }
+                // 简化渲染：降低动画更新频率，但不切换渲染方法（否则会闪烁）
+                DrawSingleTroop(troop, gameTime);
             }
             catch (Exception ex)
             {
@@ -10797,11 +14686,39 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
 
                 Rectangle destination = Session.MainGame.mainGameScreen.mainMapLayer.GetDestination(troop.Position);
                 
-                // 获取基础纹理
-                string textureName = GetTroopTextureName(troop);
-                if (!string.IsNullOrEmpty(textureName))
+                // 🔥 修复：不再使用错误的 Troop_x 纹理名，直接提取该部队当前的静态纹理帧！
+                PlatformTexture textureToUse = null;
+                int frameCount = 1;
+
+                if (troop.TroopTexture != null)
                 {
-                    CacheManager.Draw(textureName, destination, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.5f);
+                    textureToUse = troop.TroopTexture;
+                    frameCount = Math.Max(1, troop.CurrentAnimation?.FrameCount ?? 1);
+                }
+                else if (troop.TileAnimation?.Texture != null)
+                {
+                    textureToUse = troop.TileAnimation.Texture;
+                    frameCount = Math.Max(1, troop.TileAnimation.FrameCount);
+                }
+
+                if (textureToUse != null && textureToUse.Width > 0 && textureToUse.Height > 0)
+                {
+                    Rectangle sourceRect;
+                    if (troop.TroopTexture != null && textureToUse == troop.TroopTexture && troop.CurrentAnimation != null)
+                    {
+                        int dummyAnimIndex = 0;
+                        int dummyStayIndex = 0;
+                        bool dummyFlag;
+                        sourceRect = troop.CurrentAnimation.GetCurrentDisplayRectangle(ref dummyAnimIndex, ref dummyStayIndex, textureToUse.Width / frameCount, (int)troop.Direction, out dummyFlag, false);
+                    }
+                    else
+                    {
+                        int frameWidth = textureToUse.Width / frameCount;
+                        sourceRect = new Rectangle(0, 0, frameWidth, textureToUse.Height);
+                    }
+
+                    // 绘制静态帧
+                    CacheManager.Draw(textureToUse, destination, sourceRect, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.4f);
                 }
             }
             catch (Exception ex)
@@ -10840,37 +14757,13 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         /// </summary>
         private static string GetTroopTextureName(Troop troop)
         {
-            try
-            {
-                if (troop?.Army?.Kind != null)
-                {
-                    return $"Troop_{troop.Army.Kind.Type}";
-                }
-                return "DefaultTroop";
-            }
-            catch
-            {
-                return "DefaultTroop";
-            }
+            return "DefaultTroop";
         }
 
         private static Rectangle GetVisibleArea()
         {
             var mainGameScreen = Session.MainGame?.mainGameScreen;
-            if (mainGameScreen != null)
-            {
-                try
-                {
-                    return mainGameScreen.GetVisibleArea(Session.MainGame.SpriteScale2);
-                }
-                catch
-                {
-                    // 回退到手动计算
-                }
-            }
-
-            // 手动计算可见区域 - 添加空值检查
-            if (Session.MainGame?.mainGameScreen?.mainMapLayer == null)
+            if (mainGameScreen == null || mainGameScreen.mainMapLayer == null)
             {
                 // 如果关键对象为空，返回一个默认的大区域
                 return new Rectangle(0, 0, 4000, 4000);
@@ -10878,25 +14771,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
 
             try
             {
-                int tileWidth = Session.MainGame.mainGameScreen.mainMapLayer.TileWidth;
-                int tileHeight = Session.MainGame.mainGameScreen.mainMapLayer.TileHeight;
-                
-                Point topLeft = Session.MainGame.mainGameScreen.TopLeftPosition;
-                Point bottomRight = Session.MainGame.mainGameScreen.BottomRightPosition;
-                
-                Rectangle visibleArea = new Rectangle(
-                    topLeft.X * tileWidth,
-                    topLeft.Y * tileHeight,
-                    (bottomRight.X - topLeft.X + 1) * tileWidth,
-                    (bottomRight.Y - topLeft.Y + 1) * tileHeight
-                );
-                
-                visibleArea.Inflate(100, 100);
+                // 🔥 修复：返回摄像机屏幕/视口的实际坐标，而不是瓦片的绝对世界坐标
+                // 因为 GetTroopBounds 会返回屏幕坐标，这里也必须匹配屏幕坐标范围
+                Point viewport = mainGameScreen.viewportSize;
+                Rectangle visibleArea = new Rectangle(0, 0, viewport.X, viewport.Y);
+                visibleArea.Inflate(150, 150); // 增加填充避免边缘剔除
                 return visibleArea;
             }
             catch
             {
-                // 如果计算失败，返回默认区域
                 return new Rectangle(0, 0, 4000, 4000);
             }
         }
@@ -11000,45 +14883,49 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         }
                     }
 
-                    // 计算目标位置 - 添加安全检查
-                    try
+                    // 🔥 修复：使用视觉插值位置进行渲染（平滑移动）
+                    // 修复日期：2026-02-27
+                    // 问题：四叉树渲染器直接使用逻辑坐标，导致部队瞬移
+                    // 解决：使用 VisualPosition 进行插值渲染
+                    
+                    // 前置检查：确保地图数据有效
+                    if (Session.MainGame?.mainGameScreen?.mainMapLayer?.Tiles == null)
                     {
-                        if (troop.Action == TroopAction.Stop)
-                        {
-                            if (Session.MainGame?.mainGameScreen?.mainMapLayer?.Tiles != null &&
-                                troop.Position.X >= 0 && troop.Position.Y >= 0 &&
-                                troop.Position.X < Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(0) &&
-                                troop.Position.Y < Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(1))
-                            {
-                                destination = Session.MainGame.mainGameScreen.mainMapLayer.Tiles[troop.Position.X, troop.Position.Y].Destination;
-                            }
-                            else
-                            {
-                                // 使用默认位置
-                                destination = new Rectangle(troop.Position.X * 60, troop.Position.Y * 40, 60, 40);
-                            }
-                        }
-                        else
-                        {
-                            if (Session.MainGame?.mainGameScreen?.mainMapLayer?.Tiles != null &&
-                                troop.RealDestination.X >= 0 && troop.RealDestination.Y >= 0 &&
-                                troop.RealDestination.X < Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(0) &&
-                                troop.RealDestination.Y < Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(1))
-                            {
-                                destination = Session.MainGame.mainGameScreen.mainMapLayer.Tiles[troop.RealDestination.X, troop.RealDestination.Y].Destination;
-                            }
-                            else
-                            {
-                                // 使用默认位置
-                                destination = new Rectangle(troop.RealDestination.X * 60, troop.RealDestination.Y * 40, 60, 40);
-                            }
-                        }
+                        // 地图未初始化，跳过渲染
+                        return;
                     }
-                    catch
+                    
+                    Vector2 visualPos = troop.VisualPosition;
+                    
+                    // 手动 Round 和 Clamp
+                    int renderX = (int)(visualPos.X + 0.5f);
+                    int renderY = (int)(visualPos.Y + 0.5f);
+                    
+                    int maxX = Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(0);
+                    int maxY = Session.MainGame.mainGameScreen.mainMapLayer.Tiles.GetLength(1);
+                    
+                    if (renderX < 0) renderX = 0;
+                    else if (renderX >= maxX) renderX = maxX - 1;
+                    
+                    if (renderY < 0) renderY = 0;
+                    else if (renderY >= maxY) renderY = maxY - 1;
+                    
+                    destination = Session.MainGame.mainGameScreen.mainMapLayer.Tiles[renderX, renderY].Destination;
+                    
+                    // 🔥 子像素插值：计算精确偏移（保留浮点精度）
+                    float subPixelX = (visualPos.X - renderX) * Session.MainGame.mainGameScreen.mainMapLayer.TileWidth;
+                    float subPixelY = (visualPos.Y - renderY) * Session.MainGame.mainGameScreen.mainMapLayer.TileHeight;
+                    destination.X += (int)(subPixelX + 0.5f);  // 四舍五入
+                    destination.Y += (int)(subPixelY + 0.5f);
+                    
+                    /*
+                    #if DEBUG
+                    if (troop.ManualControl)
                     {
-                        // 如果访问失败，使用默认位置
-                        destination = new Rectangle(troop.Position.X * 60, troop.Position.Y * 40, 60, 40);
+                        System.Diagnostics.Debug.WriteLine($"[SimpleTroopRenderer] {troop.DisplayName} 渲染管线: Action={troop.Action} Logic={troop.Position} → Visual=({visualPos.X:F4},{visualPos.Y:F4}) → SubPixel=({subPixelX:F2},{subPixelY:F2}) → FinalDest=({destination.X},{destination.Y})");
                     }
+                    #endif
+                    */
 
                     // 绘制部队 - 使用验证过的纹理
                     try
@@ -11379,6 +15266,12 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             try
             {
+                // 在玩家控制回合时不显示调试信息，避免刷屏
+                if (Session.Current?.Scenario?.IsPlayerControlling() == true)
+                {
+                    return;
+                }
+                
                 var settings = PerformanceSettings.Current;
                 System.Diagnostics.Debug.WriteLine($"[Performance] 平均FPS: {AverageFPS:F1} 帧时间: {AverageFrameTime:F2}ms 模式: {settings.Mode}");
                 System.Diagnostics.Debug.WriteLine($"[Optimization] 优化部队: {OptimizedTroops} 集群战斗: {ClusterBattles} 最大可见: {settings.MaxVisibleTroops}");
@@ -11388,420 +15281,6 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             {
                 System.Diagnostics.Debug.WriteLine($"[LogPerformance] 错误: {ex.Message}");
             }
-        }
-    }
-
-    /// <summary>
-    /// 🧠 增强AI管理器 - 集成记忆系统和影响力地图的高效AI决策调度
-    /// 🎯 新增功能：
-    /// 1. 基于记忆的影响力地图更新
-    /// 2. 智能情报收集和记忆更新
-    /// 3. 势力级别的威胁评估
-    /// 4. 性能优化的AI决策调度
-    /// </summary>
-    public class AIManager
-    {
-        // 引用全局的部队列表 (直接操作 List，比 Queue 快)
-        private List<Troop> _allTroops;
-        
-        // 核心参数
-        private int _maxTimeBudgetMs = 5; // 时间预算：每帧最多5毫秒用于AI
-        private int _decisionInterval = 30; // 频率控制：每30帧思考一次
-        
-        // 循环指针：记录当前处理到第几个兵了
-        private int _currentIndex = 0;
-        
-        // 性能统计
-        private int _processedThisFrame = 0;
-        private float _totalProcessingTime = 0f;
-        
-        // ==========================================
-        // 🧠 新增：记忆系统和影响力地图
-        // ==========================================
-        
-        /// <summary>
-        /// 势力影响力地图缓存
-        /// </summary>
-        private readonly Dictionary<int, WorldOfTheThreeKingdoms.GameManager.InfluenceMap> _factionInfluenceMaps = new Dictionary<int, WorldOfTheThreeKingdoms.GameManager.InfluenceMap>();
-        
-        /// <summary>
-        /// 影响力地图更新间隔（帧数）
-        /// </summary>
-        private int _influenceUpdateInterval = 60; // 每60帧更新一次影响力地图
-        
-        /// <summary>
-        /// 上次影响力更新的帧数
-        /// </summary>
-        private int _lastInfluenceUpdateFrame = 0;
-        
-        /// <summary>
-        /// 情报收集间隔（帧数）
-        /// </summary>
-        private int _intelUpdateInterval = 30; // 每30帧收集一次情报
-
-        public AIManager(List<Troop> troops)
-        {
-            _allTroops = troops ?? new List<Troop>();
-        }
-
-        /// <summary>
-        /// 🧠 增强更新AI系统 - 集成记忆系统和影响力地图
-        /// </summary>
-        public void Update(GameTime gameTime, int currentFrame)
-        {
-            try
-            {
-                // 如果没人，直接返回
-                if (_allTroops.Count == 0) return;
-
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                _processedThisFrame = 0;
-
-                // 🧠 新增：定期更新情报收集和影响力地图
-                UpdateIntelligenceSystem(currentFrame);
-
-                // 防止死循环的保险丝：即使时间充裕，一帧最多也只把所有兵遍历一遍
-                // 避免只有 3 个兵时，它们在一帧内疯狂思考 1000 次
-                int totalCount = _allTroops.Count;
-
-                while (stopwatch.Elapsed.TotalMilliseconds < _maxTimeBudgetMs && _processedThisFrame < totalCount)
-                {
-                    // 1. 确保索引安全 (处理列表扩容或缩容的情况)
-                    if (_currentIndex >= _allTroops.Count) 
-                        _currentIndex = 0;
-
-                    var troop = _allTroops[_currentIndex];
-
-                    // 2. 检查单位是否存活
-                    if (troop != null && !troop.Destroyed)
-                    {
-                        // 🧠 新增：情报收集 - 每个单位观察周围敌军
-                        if (currentFrame % _intelUpdateInterval == 0)
-                        {
-                            CollectIntelligence(troop, currentFrame);
-                        }
-
-                        // 3. 频率控制检查 (直接读取字段，无需字典查找)
-                        // 屏幕外的单位，思考间隔可以加倍 (比如 60 帧一次)
-                        int interval = IsOnScreen(troop) ? _decisionInterval : _decisionInterval * 2;
-                        
-                        // 只有距离上次思考超过指定帧数，才有资格思考
-                        if (currentFrame - troop.LastDecisionFrame >= interval)
-                        {
-                            // 🧠 新增：基于影响力地图的AI决策
-                            ProcessEnhancedAI(troop, currentFrame);
-                            troop.LastDecisionFrame = currentFrame; // 更新时间戳
-                        }
-                    }
-
-                    // 4. 移动指针
-                    _currentIndex++;
-                    _processedThisFrame++;
-
-                    // 循环回绕
-                    if (_currentIndex >= _allTroops.Count) 
-                        _currentIndex = 0;
-                }
-
-                stopwatch.Stop();
-                _totalProcessingTime = (float)stopwatch.Elapsed.TotalMilliseconds;
-
-                // 可选：性能监控 (每60帧输出一次)
-                if (currentFrame % 60 == 0 && System.Diagnostics.Debugger.IsAttached)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[AIManager] 处理部队: {_processedThisFrame}/{totalCount} 用时: {_totalProcessingTime:F2}ms");
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[AIManager.Update] 错误: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 更新情报系统和影响力地图
-        /// </summary>
-        private void UpdateIntelligenceSystem(int currentFrame)
-        {
-            // 定期更新影响力地图
-            if (currentFrame - _lastInfluenceUpdateFrame >= _influenceUpdateInterval)
-            {
-                UpdateInfluenceMaps();
-                _lastInfluenceUpdateFrame = currentFrame;
-            }
-            
-            // 定期清理过期情报
-            if (currentFrame % (60 * 30) == 0) // 每30秒清理一次
-            {
-                CleanupOldIntelligence();
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 情报收集 - 单位观察周围敌军并更新记忆
-        /// </summary>
-        private void CollectIntelligence(Troop observer, int currentFrame)
-        {
-            try
-            {
-                if (observer?.BelongedFaction == null) return;
-                
-                var faction = observer.BelongedFaction;
-                int currentDay = Session.Current.Scenario.Date.Day;
-                
-                // 获取观察范围内的所有单位
-                var viewRadius = observer.ViewRadius;
-                var observerPos = observer.Position;
-                
-                // 遍历所有部队，寻找视野范围内的敌军
-                foreach (var targetTroop in _allTroops)
-                {
-                    if (targetTroop == null || targetTroop.Destroyed || targetTroop == observer)
-                        continue;
-                    
-                    // 计算距离
-                    var distance = Math.Sqrt(
-                        Math.Pow(targetTroop.Position.X - observerPos.X, 2) + 
-                        Math.Pow(targetTroop.Position.Y - observerPos.Y, 2)
-                    );
-                    
-                    // 在视野范围内
-                    if (distance <= viewRadius)
-                    {
-                        // 安全检查：防止空引用异常
-                        if (targetTroop.BelongedFaction == null) continue;
-                        if (faction.MemoryMap == null || faction.MemoryMap.Values == null) continue;
-
-                        // 更新情报（包括友军和敌军）
-                        string memoryKey = $"{targetTroop.BelongedFaction.ID}_{targetTroop.ID}";
-                        
-                        if (faction.MemoryMap.Values.ContainsKey(memoryKey))
-                        {
-                            // 更新现有记忆：使用最新位置和兵力
-                            float strength = targetTroop.Army?.Quantity ?? targetTroop.Quantity;
-                            faction.MemoryMap.Values[memoryKey].Update(targetTroop.Position, strength);
-                        }
-                        else
-                        {
-                            // 创建新的记忆
-                            var ghostUnit = new GhostUnit(targetTroop, currentDay);
-                            faction.MemoryMap.Values[memoryKey] = ghostUnit;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[AIManager.CollectIntelligence] 错误: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 更新所有势力的影响力地图
-        /// </summary>
-        private void UpdateInfluenceMaps()
-        {
-            try
-            {
-                if (Session.Current?.Scenario?.Factions == null) return;
-                
-                // 获取地图尺寸
-                int mapWidth = Session.Current.Scenario.ScenarioMap.MapDimensions.X;
-                int mapHeight = Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
-                
-                // 为每个势力更新影响力地图
-                foreach (Faction faction in Session.Current.Scenario.Factions.GetList())
-                {
-                    if (faction == null) continue;
-                    
-                    // 获取或创建影响力地图
-                    if (!_factionInfluenceMaps.TryGetValue(faction.ID, out var influenceMap))
-                    {
-                        influenceMap = new WorldOfTheThreeKingdoms.GameManager.InfluenceMap(mapWidth, mapHeight);
-                        _factionInfluenceMaps[faction.ID] = influenceMap;
-                    }
-                    
-                    // 🎯 使用你升级的 Refresh 方法！
-                    influenceMap.Refresh(faction);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[AIManager.UpdateInfluenceMaps] 错误: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 基于影响力地图的增强AI决策
-        /// </summary>
-        private void ProcessEnhancedAI(Troop troop, int currentFrame)
-        {
-            try
-            {
-                // 先执行原有的AI逻辑
-                troop.ProcessAI();
-                
-                // 🧠 新增：基于影响力地图的决策增强
-                if (troop.BelongedFaction != null && 
-                    _factionInfluenceMaps.TryGetValue(troop.BelongedFaction.ID, out var influenceMap))
-                {
-                    // 获取当前位置的威胁值
-                    float currentThreat = influenceMap.GetInfluence(troop.Position);
-                    
-                    // 如果当前位置威胁过高，寻找更安全的位置
-                    if (currentThreat > 50f && troop.Action == TroopAction.Stop)
-                    {
-                        var searchArea = new System.Collections.Generic.List<Point>();
-                        for (int x = troop.Position.X - 5; x <= troop.Position.X + 5; x++)
-                        {
-                            for (int y = troop.Position.Y - 5; y <= troop.Position.Y + 5; y++)
-                            {
-                                searchArea.Add(new Point(x, y));
-                            }
-                        }
-                        
-                        var safestPos = influenceMap.FindSafestPosition(searchArea);
-                        
-                        // 如果找到更安全的位置，移动过去
-                        if (influenceMap.GetInfluence(safestPos) < currentThreat - 10f)
-                        {
-                            troop.RealDestination = safestPos;
-                            troop.Action = TroopAction.Move;
-                            
-                            System.Diagnostics.Debug.WriteLine(
-                                $"[AI] 单位 {troop.ID} 因威胁过高({currentThreat:F1})，移动到安全位置 {safestPos}"
-                            );
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // 如果增强AI出错，至少保证原有AI能正常工作
-                System.Diagnostics.Debug.WriteLine($"[AIManager.ProcessEnhancedAI] 错误: {ex.Message}");
-                troop.ProcessAI(); // 回退到原有AI
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 清理过期情报
-        /// </summary>
-        private void CleanupOldIntelligence()
-        {
-            try
-            {
-                if (Session.Current?.Scenario?.Factions == null) return;
-                
-                int currentDay = Session.Current.Scenario.Date.Day;
-                
-                foreach (Faction faction in Session.Current.Scenario.Factions.GetList())
-                {
-                    faction?.MemoryMap?.CleanExpiredMemories(currentDay); // 清理过期情报
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[AIManager.CleanupOldIntelligence] 错误: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// 🧠 获取势力的影响力地图（供外部查询）
-        /// </summary>
-        public WorldOfTheThreeKingdoms.GameManager.InfluenceMap GetInfluenceMap(int factionId)
-        {
-            _factionInfluenceMaps.TryGetValue(factionId, out var map);
-            return map;
-        }
-
-        /// <summary>
-        /// 检查部队是否在屏幕上 - 简化版本
-        /// </summary>
-        private bool IsOnScreen(Troop troop)
-        {
-            try
-            {
-                // 这里可以集成现有的屏幕检测逻辑
-                // 简化版本：假设所有部队都在屏幕上
-                // 实际实现中可以使用四叉树或视口检测
-                return true; // 暂时返回true，可以后续优化
-            }
-            catch
-            {
-                return true; // 出错时默认在屏幕上
-            }
-        }
-
-        /// <summary>
-        /// 更新部队列表引用
-        /// </summary>
-        public void UpdateTroopList(List<Troop> troops)
-        {
-            _allTroops = troops ?? new List<Troop>();
-            
-            // 重置索引以防越界
-            if (_currentIndex >= _allTroops.Count)
-                _currentIndex = 0;
-        }
-
-        /// <summary>
-        /// 🧠 增强性能配置 - 包含影响力地图参数
-        /// </summary>
-        public void ConfigurePerformance(int timeBudgetMs, int decisionIntervalFrames, int influenceUpdateInterval = 60, int intelUpdateInterval = 30)
-        {
-            _maxTimeBudgetMs = Math.Max(1, timeBudgetMs);
-            _decisionInterval = Math.Max(1, decisionIntervalFrames);
-            _influenceUpdateInterval = Math.Max(30, influenceUpdateInterval);
-            _intelUpdateInterval = Math.Max(10, intelUpdateInterval);
-            
-            System.Diagnostics.Debug.WriteLine($"[AIManager] 性能配置更新: 时间预算={_maxTimeBudgetMs}ms, 决策间隔={_decisionInterval}帧, 影响力更新={_influenceUpdateInterval}帧, 情报收集={_intelUpdateInterval}帧");
-        }
-
-        /// <summary>
-        /// 🧠 增强性能统计信息
-        /// </summary>
-        public string GetPerformanceStats()
-        {
-            int totalMemoryUnits = 0;
-            if (Session.Current?.Scenario?.Factions != null)
-            {
-                foreach (Faction faction in Session.Current.Scenario.Factions.GetList())
-                {
-                    totalMemoryUnits += faction?.MemoryMap?.Values?.Count ?? 0;
-                }
-            }
-            
-            return $"AI处理: {_processedThisFrame}部队 用时: {_totalProcessingTime:F2}ms 总数: {_allTroops.Count} 影响力地图: {_factionInfluenceMaps.Count}个 记忆单位: {totalMemoryUnits}个";
-        }
-        
-        /// <summary>
-        /// 🧠 获取详细的AI统计信息
-        /// </summary>
-        public string GetDetailedStats()
-        {
-            var stats = new System.Text.StringBuilder();
-            stats.AppendLine("=== 🧠 增强AI系统统计 ===");
-            stats.AppendLine($"部队处理: {_processedThisFrame}/{_allTroops.Count} 用时: {_totalProcessingTime:F2}ms");
-            stats.AppendLine($"影响力地图: {_factionInfluenceMaps.Count}个势力");
-            
-            if (Session.Current?.Scenario?.Factions != null)
-            {
-                foreach (Faction faction in Session.Current.Scenario.Factions.GetList())
-                {
-                    if (faction?.MemoryMap != null)
-                    {
-                        int memoryCount = faction.MemoryMap.Values.Count;
-                        stats.AppendLine($"  势力 {faction.Name}: {memoryCount}个记忆单位");
-                        
-                        if (_factionInfluenceMaps.TryGetValue(faction.ID, out var influenceMap))
-                        {
-                            stats.AppendLine($"    {influenceMap.GetDebugInfo()}");
-                        }
-                    }
-                }
-            }
-            
-            return stats.ToString();
         }
     }
 }

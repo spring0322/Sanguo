@@ -8,8 +8,11 @@ namespace GameObjects.ArchitectureDetail
     [DataContract]
     public class FacilityKindTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, FacilityKind> FacilityKinds = new Dictionary<int, FacilityKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, FacilityKind>))]
+        public Dictionary<int, FacilityKind> FacilityKinds = [];
 
         private int maxFacilitySpace = -1;
         public int GetMaxFacilitySpace()

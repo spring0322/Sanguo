@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -19,12 +19,20 @@ namespace ContextMenuPlugin
     {
         private string author = "clip_on";
         private ContextMenu contextMenu = new ContextMenu();
+        public ContextMenu ContextMenu { get { return this.contextMenu; } }
         private const string DataPath = @"Content\Textures\GameComponents\ContextMenu\Data\";
         private string description = "上下文菜单";
         private const string Path = @"Content\Textures\GameComponents\ContextMenu\";
         private string pluginName = "ContextMenuPlugin";
         private string version = "1.0.0";
         private const string XMLFilename = "ContextMenuData.xml";
+
+        // 作弊模式开关
+        public static bool CheatMode = false;
+        
+        // 🔥 新增：延迟初始化支持
+        private bool _scenarioInitialized = false;
+        private readonly object _initLock = new();
 
         public void Dispose()
         {
@@ -97,6 +105,12 @@ namespace ContextMenuPlugin
 
         public void Prepare(int X, int Y, Microsoft.Xna.Framework.Point viewportSize)
         {
+            // 🔥 在显示菜单前确保场景数据已初始化
+            if (!_scenarioInitialized)
+            {
+                SetScenarioLazy();
+            }
+            
             if (Session.LargeContextMenu)
             {
                 this.contextMenu.Prepare(365, Y, viewportSize);                
@@ -117,11 +131,38 @@ namespace ContextMenuPlugin
             this.LoadDataFromXMLDocument(@"Content\Data\Plugins\ContextMenuData.xml");
         }
 
+        // 🔥 实现延迟初始化接口
+        public bool SupportLazyInit => true;
+        
         public void SetScenario()
+        {
+            // 空实现，延迟到真正使用时
+        }
+        
+        public void SetScenarioLazy()
+        {
+            lock (_initLock)
+            {
+                if (_scenarioInitialized) return;
+                
+                System.Diagnostics.Debug.WriteLine("[ContextMenuPlugin] 开始延迟初始化场景数据...");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                // 原有的初始化逻辑
+                InitializeScenarioData();
+                
+                _scenarioInitialized = true;
+                sw.Stop();
+                System.Diagnostics.Debug.WriteLine($"[ContextMenuPlugin] 延迟初始化完成: {sw.ElapsedMilliseconds} ms");
+            }
+        }
+        
+        private void InitializeScenarioData()
         {
             foreach (MenuKind kind in this.contextMenu.MenuKinds)
             {
-                if (kind.Name.Equals("TroopLeftClick"))
+                string kindName = kind.Name;
+                if (kindName.Equals("TroopLeftClick"))
                 {
                     foreach (MenuItem i in kind.MenuItems)
                     {
@@ -174,6 +215,7 @@ namespace ContextMenuPlugin
                         }
                     }
                 }
+                
             }
         }
 
@@ -199,7 +241,29 @@ namespace ContextMenuPlugin
 
         public void Update(GameTime gameTime)
         {
+            // 检测作弊模式切换: Ctrl + Z
+            if (InputManager.KeyBoardState.IsKeyDown(Microsoft.Xna.Framework.Input.Keys.Z) && 
+                InputManager.KeyBoardState.IsKeyDown(Microsoft.Xna.Framework.Input.Keys.LeftControl) && 
+                InputManager.KeyBoardStatePre.IsKeyUp(Microsoft.Xna.Framework.Input.Keys.Z))
+            {
+                CheatMode = !CheatMode;
+                System.Diagnostics.Debug.WriteLine($"[ContextMenu] CheatMode toggled to: {CheatMode}");
+
+                // 强制刷新当前菜单可见性
+                this.contextMenu.RefreshAllItemsVisible();
+            }
+            
+            // 监听全局作弊模式变化（通过Ctrl+Shift+Z切换）
+            if (Session.GlobalVariables.EnableCheat != lastGlobalCheatState)
+            {
+                lastGlobalCheatState = Session.GlobalVariables.EnableCheat;
+                System.Diagnostics.Debug.WriteLine($"[ContextMenu] Global EnableCheat changed to: {lastGlobalCheatState}");
+                this.contextMenu.RefreshAllItemsVisible();
+            }
         }
+
+        private static bool lastGlobalCheatState = false;
+
 
         public void ShezhiBianduiLiebiaoXinxi(bool Xianshi, Microsoft.Xna.Framework.Rectangle Weizhi)
         {
@@ -223,6 +287,14 @@ namespace ContextMenuPlugin
             }
         }
 
+        public object CurrentGameObject
+        {
+            get
+            {
+                return this.contextMenu.CurrentGameObject;
+            }
+        }
+
         public string Description
         {
             get
@@ -237,6 +309,21 @@ namespace ContextMenuPlugin
             {
                 return this;
             }
+        }
+
+        public void ClearFunctions()
+        {
+            this.contextMenu.ClearFunctions();
+        }
+
+        public void AddMenu(string DisplayName, Action SelectedAction)
+        {
+            this.contextMenu.AddMenu(DisplayName, SelectedAction);
+        }
+
+        public void Show()
+        {
+            this.contextMenu.Show();
         }
 
         public bool IsShowing

@@ -15,7 +15,7 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
         public override void ApplyEffectKind(Faction f, Event e)
         {
             GameObjectList d = Session.Current.Scenario.DiplomaticRelations.GetDiplomaticRelationListByFactionID(f.ID);
-            Faction f2 = Session.Current.Scenario.Factions.GetGameObject(targetFactionID) as Faction;
+            Faction f2 = Session.Current.Scenario.Factions.GetGameObject(targetFactionID) is Faction ? (Faction)Session.Current.Scenario.Factions.GetGameObject(targetFactionID) : null;
             //GameObjectList c = Session.Current.Scenario.DiplomaticRelations.GetDiplomaticRelationListByFactionID(f2.ID);
             foreach (GameObjects.FactionDetail.DiplomaticRelation i in d)
             {
@@ -50,3 +50,4 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
         }
     }
 }
+

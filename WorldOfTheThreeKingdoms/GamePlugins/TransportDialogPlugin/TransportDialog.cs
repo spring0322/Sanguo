@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -389,7 +389,7 @@ namespace TransportDialogPlugin
             this.GameFramePlugin.CancelButtonEnabled = true;
             this.GameFramePlugin.SetOKFunction(delegate
             {
-                this.DestinationArchitecture = this.TabListPlugin.SelectedItem as Architecture;
+                this.DestinationArchitecture = this.TabListPlugin.SelectedItem is Architecture ? (Architecture)this.TabListPlugin.SelectedItem : null;
             });
             this.GameFramePlugin.IsShowing = true;
         }
@@ -604,4 +604,5 @@ namespace TransportDialogPlugin
         }
     }
 }
+
 

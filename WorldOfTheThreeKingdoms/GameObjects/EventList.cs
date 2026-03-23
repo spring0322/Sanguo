@@ -5,7 +5,8 @@ using System.Runtime.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 根本修复：移除 [DataContract]，添加 [JsonConverter]
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class EventList : GameObjectList
     {
         public void AddEventWithEvent(Event te, bool add = true)
@@ -14,7 +15,10 @@ namespace GameObjects
             {
                 base.Add(te);
             }
-            te.OnApplyEvent += new Event.ApplyEvent(this.te_OnApplyEvent);
+            
+
+            
+            te.OnApplyEvent += te_OnApplyEvent;
         }
 
         private void te_OnApplyEvent(Event te, Architecture a, Screen screen)

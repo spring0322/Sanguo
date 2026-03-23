@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
@@ -30,9 +30,7 @@ namespace GameObjects
             this.itemID = itemID;
         }
 
-        private static Regex dateMatcher = new Regex("^(\\d+)年(1?\\d)月([123]?\\d)日$", RegexOptions.Compiled);
-        private static Regex slashMatcher = new Regex("^(\\d+)/(\\d+)$", RegexOptions.Compiled);
-        private static Regex numberFirstMatcher = new Regex("^(\\d+).*$", RegexOptions.Compiled);
+
         public int Compare(GameObject x, GameObject y)
         {
             if ((x == null) || (y == null))
@@ -133,7 +131,9 @@ namespace GameObjects
                         }
                         else
                         {
-                            result = -1;
+                            // 🔥 修复：当两个值都无法解析为数字时，比较字符串而不是总返回 -1
+                            // 这确保了比较器的自反性（A == A）和传递性（A < B < C）
+                            result = objX.ToString().CompareTo(objY.ToString());
                         }
                     }
                 }
@@ -156,8 +156,8 @@ namespace GameObjects
             {
                 String xStr = objX.ToString();
                 String yStr = objY.ToString();
-                Match xMatch = slashMatcher.Match(xStr);
-                Match yMatch = slashMatcher.Match(yStr);
+                Match xMatch = RegexPatterns.SlashDatePattern().Match(xStr);
+                Match yMatch = RegexPatterns.SlashDatePattern().Match(yStr);
 
                 if (xMatch.Success && yMatch.Success)
                 {
@@ -177,8 +177,8 @@ namespace GameObjects
                 }
                 else
                 {
-                    xMatch = dateMatcher.Match(xStr);
-                    yMatch = dateMatcher.Match(yStr);
+                    xMatch = RegexPatterns.DatePattern().Match(xStr);
+                    yMatch = RegexPatterns.DatePattern().Match(yStr);
                     if (xMatch.Success && yMatch.Success)
                     {
                         int xYear = int.Parse(xMatch.Groups[1].ToString());
@@ -205,8 +205,8 @@ namespace GameObjects
                     }
                     else
                     {
-                        xMatch = numberFirstMatcher.Match(xStr);
-                        yMatch = numberFirstMatcher.Match(yStr);
+                        xMatch = RegexPatterns.NumberFirstPattern().Match(xStr);
+                        yMatch = RegexPatterns.NumberFirstPattern().Match(yStr);
                         if (xMatch.Success && yMatch.Success)
                         {
                             int xNum = int.Parse(xMatch.Groups[1].ToString());

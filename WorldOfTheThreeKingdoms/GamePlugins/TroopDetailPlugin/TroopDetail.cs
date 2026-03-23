@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GameObjects.Influences;
@@ -10,6 +10,7 @@ using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Tools;
 
 namespace TroopDetailPlugin
 {
@@ -158,7 +159,36 @@ namespace TroopDetailPlugin
 				CacheManager.Draw(this.BackgroundTexture, this.BackgroundDisplayPosition, nullable, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.2f);
 				nullable = null;
 
-                CacheManager.DrawZhsanAvatar(this.ShowingTroop.Leader, this.PortraitDisplayPosition, 0.199f, PortraitSize.Small);
+				// 绘制原有的小头像 - 1:1 比例
+				// 🔥 性能优化：避免在 Draw 循环中分配 Rectangle
+				// 日期：2026-02-12
+				// 原始尺寸：64x80（4:5 比例）
+				// 修改为：64x64（1:1 比例）
+				try
+				{
+					if (this.ShowingTroop.Leader != null)
+					{
+						// 直接内联计算，避免属性调用和中间变量分配
+						int x = this.PortraitClient.X + this.DisplayOffset.X;
+						int y = this.PortraitClient.Y + this.DisplayOffset.Y;
+						int size = this.PortraitClient.Width;  // 使用宽度作为正方形边长
+						
+						// 绘制头像（移除测试矩形）
+						CacheManager.DrawZhsanAvatar(
+							this.ShowingTroop.Leader, 
+							new Rectangle(x, y, size, size),  // 1:1 比例
+							0.199f, 
+							PortraitSize.Small
+						);
+					}
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"[TroopDetail] 头像绘制失败: {ex.Message}");
+				}
+
+				// 暂时禁用立绘显示
+				// this.DrawPortraitAndTitle();
 
 				this.TroopNameText.Draw(0.1999f);
 				List<LabelText>.Enumerator enumerator = this.LabelTexts.GetEnumerator();
@@ -184,6 +214,152 @@ namespace TroopDetailPlugin
 				this.CombatMethodText.Draw(0.1999f);
 				this.StuntText.Draw(0.1999f);
 				this.InfluenceText.Draw(0.1999f);
+			}
+		}
+
+		private void DrawPortraitAndTitle()
+		{
+			// 暂时禁用立绘显示，专注于修复原有头像
+			// 如果需要立绘功能，可以在原有头像正常显示后再启用
+			
+			/*
+			if (this.ShowingTroop?.Leader == null) return;
+
+			try
+			{
+				// 获取菜单区域
+				Rectangle menuRect = this.BackgroundDisplayPosition;
+				
+				// 设定尺寸参数 - 使用更小的尺寸避免遮挡
+				int portraitSize = 60;     // 头像大小，更小一点
+				int titleHeight = 18;      // 下方称号条的高度
+				int spacing = 2;           // 头像和称号条之间的间距
+
+				// 计算位置 - 放在原有头像的下方
+				Rectangle portraitRect = new Rectangle(
+					menuRect.X + 30,       // 与原有头像X位置对齐
+					menuRect.Y + 140,      // 在原有头像下方，避免冲突
+					portraitSize,
+					portraitSize);
+
+				Rectangle titleRect = new Rectangle(
+					portraitRect.X,
+					portraitRect.Bottom + spacing, // 放在头像正下方
+					portraitSize,                  // 宽度和头像一致
+					titleHeight);
+
+				// 获取像素纹理用于绘制背景
+				var pixelTexture = GetPixelTexture();
+				if (pixelTexture != null)
+				{
+					// 绘制头像背景 (半透明黑底衬托)
+					CacheManager.Draw(pixelTexture, portraitRect, null, new Color(0, 0, 0, 180), 0f, Vector2.Zero, SpriteEffects.None, 0.198f);
+				}
+				
+				// 绘制立绘 - 使用Small尺寸
+				CacheManager.DrawZhsanAvatar(this.ShowingTroop.Leader, portraitRect, 0.197f, PortraitSize.Small);
+				
+				// 画头像边框
+				DrawBorder(portraitRect, 1, Color.Gray);
+
+				// 绘制下方称号条
+				string titleText = GetPersonTitle();
+				
+				// 背景色：使用势力颜色作为底色
+				Color factionColor = this.ShowingTroop.BelongedFaction?.FactionColor ?? Color.DarkGray;
+				if (pixelTexture != null)
+				{
+					CacheManager.Draw(pixelTexture, titleRect, null, factionColor, 0f, Vector2.Zero, SpriteEffects.None, 0.198f);
+				}
+
+				// 绘制称号文字
+				if (!string.IsNullOrEmpty(titleText))
+				{
+					// 判定文字颜色 (深底白字，浅底黑字)
+					bool isBright = (0.299 * factionColor.R + 0.587 * factionColor.G + 0.114 * factionColor.B) > 150;
+					Color textColor = isBright ? Color.Black : Color.White;
+
+					// 计算文字居中坐标
+					Vector2 textSize = Session.Current.Font.MeasureString(titleText);
+					float scale = 0.8f; // 使用稍小的字体
+					if (textSize.X * scale > titleRect.Width - 4)
+					{
+						scale = (titleRect.Width - 4) / textSize.X;
+					}
+
+					Vector2 textPos = new Vector2(
+						titleRect.X + (titleRect.Width - textSize.X * scale) / 2,
+						titleRect.Y + (titleRect.Height - textSize.Y * scale) / 2);
+
+					// 绘制文字
+					CacheManager.DrawString(Session.Current.Font, titleText, textPos, textColor, 0f, Vector2.Zero, scale, SpriteEffects.None, 0.196f);
+				}
+
+				// 画称号条边框
+				DrawBorder(titleRect, 1, Color.Gray);
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine($"[TroopDetail] DrawPortraitAndTitle 异常: {ex.Message}");
+			}
+			*/
+		}
+
+		private string GetPersonTitle()
+		{
+			if (this.ShowingTroop?.Leader == null) return "无称号";
+
+			// 优先显示个人称号（非战斗称号）
+			foreach (var title in this.ShowingTroop.Leader.Titles)
+			{
+				if (!title.Kind.Combat) // 非战斗称号就是个人称号
+				{
+					return title.Name;
+				}
+			}
+
+			// 如果没有个人称号，显示战斗称号
+			foreach (var title in this.ShowingTroop.Leader.Titles)
+			{
+				if (title.Kind.Combat)
+				{
+					return title.Name;
+				}
+			}
+
+			return "无称号";
+		}
+
+		private void DrawBorder(Rectangle rect, int thickness, Color color)
+		{
+			var pixelTexture = GetPixelTexture();
+			if (pixelTexture != null)
+			{
+				// 上边框
+				CacheManager.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, rect.Width, thickness), null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.195f);
+				// 下边框
+				CacheManager.Draw(pixelTexture, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.195f);
+				// 左边框
+				CacheManager.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, thickness, rect.Height), null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.195f);
+				// 右边框
+				CacheManager.Draw(pixelTexture, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.195f);
+			}
+		}
+
+		/// <summary>
+		/// 获取像素纹理用于绘制纯色背景和边框
+		/// </summary>
+		private PlatformTexture GetPixelTexture()
+		{
+			// 尝试获取现有的纹理文件
+			try
+			{
+				return CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopDetail\Data\Background.png");
+			}
+			catch
+			{
+				// 如果获取失败，返回null，调用方会处理
+				return null;
 			}
 		}
 
@@ -408,7 +584,7 @@ namespace TroopDetailPlugin
 					{
 						break;
 					}
-					Person person = enumerator1.Current as Person;
+					Person person = enumerator1.Current is Person ? (Person)enumerator1.Current : null;
                     if (person != null)
                     {
                         leader = person != troop.Leader;
@@ -449,6 +625,11 @@ namespace TroopDetailPlugin
 					this.CombatMethodText.AddText(combatMethod.Name, this.CombatMethodText.SubTitleColor2);
 					personCount = combatMethod.Combativity - troop.DecrementOfCombatMethodCombativityConsuming;
 					this.CombatMethodText.AddText(string.Concat(" 战意消耗", personCount.ToString()), this.CombatMethodText.SubTitleColor3);
+					
+					// 🔥 2026-03-18 移除：天气提示应该在选择目标时显示，而不是在详情面板中
+					// 原因：天气判断应该基于目标地块，而不是部队当前位置
+					// 解决：与计略保持一致，只在选择目标时进行天气检查
+					
 					this.CombatMethodText.AddNewLine();
 				}
 			}
@@ -512,3 +693,4 @@ namespace TroopDetailPlugin
 		}
 	}
 }
+

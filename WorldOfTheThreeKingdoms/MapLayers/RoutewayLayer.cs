@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using WorldOfTheThreeKingdoms;
@@ -18,6 +18,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public void Draw(Point viewportSize)
         {
+            // 🛡️ Safety Check: If data failed to load, DO NOT DRAW.
+            if (Session.Current?.Scenario == null) 
+            {
+                return; 
+            }
+
             if (Session.GlobalVariables.LiangdaoXitong == false) return;
 
             if (Session.GlobalVariables.CurrentMapLayer == MapLayerKind.Routeway)

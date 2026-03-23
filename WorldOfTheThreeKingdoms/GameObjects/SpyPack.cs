@@ -9,6 +9,7 @@ namespace GameObjects
         public int Days;
         public Person SpyPerson;
 
+        private SpyPack() { }
         public SpyPack(Person person, int days)
         {
             this.SpyPerson = person;

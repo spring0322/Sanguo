@@ -1,0 +1,428 @@
+using NUnit.Framework;
+using System;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Diagnostics;
+using System.Collections.Generic;
+using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 性能验证测试 - 验证序列化系统的性能指标
+    /// Task 13.3: 性能验证
+    /// Requirements: 3.3, 3.4, 7.1, 7.2, 7.3
+    /// </summary>
+    [TestFixture]
+    public class PerformanceValidationTests : TestBase
+    {
+        private SerializationManager _serializationManager;
+        private string _testDirectory;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            _serializationManager = new SerializationManager();
+            _testDirectory = Path.Combine(Path.GetTempPath(), "WorldOfTheThreeKingdoms_Perf_Tests", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_testDirectory);
+            
+            TestContext.WriteLine($"性能测试目录: {_testDirectory}");
+        }
+
+        [TearDown]
+        public override void TearDown()
+        {
+            try
+            {
+                if (Directory.Exists(_testDirectory))
+                {
+                    Directory.Delete(_testDirectory, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                TestContext.WriteLine($"清理测试目录失败: {ex.Message}");
+            }
+            
+            base.TearDown();
+        }
+
+        /// <summary>
+        /// 测试大型存档的保存性能
+        /// Validates: Requirements 3.3, 7.1, 7.2
+        /// </summary>
+        [Test]
+        public async Task Performance_LargeSave_ShouldMeetTimeRequirements()
+        {
+            // Arrange - 创建大型场景 (1000+ 对象)
+            var scenario = CreateLargeScenario(
+                personCount: 600, 
+                factionCount: 25, 
+                architectureCount: 150);
+            
+            var totalObjects = scenario.Persons.Count + scenario.Factions.Count + 
+                              scenario.Architectures.Count;
+            
+            TestContext.WriteLine($"大型场景: {totalObjects} 个对象");
+            TestContext.WriteLine($"  - 人物: {scenario.Persons.Count}");
+            TestContext.WriteLine($"  - 势力: {scenario.Factions.Count}");
+            TestContext.WriteLine($"  - 建筑: {scenario.Architectures.Count}");
+
+            var savePath = Path.Combine(_testDirectory, "large_perf.sav.gz");
+
+            // Act - 测量保存性能
+            var stopwatch = Stopwatch.StartNew();
+            await Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+            stopwatch.Stop();
+
+            var fileSize = new FileInfo(savePath).Length;
+
+            // Assert - 验证性能要求
+            TestContext.WriteLine($"保存时间: {stopwatch.ElapsedMilliseconds}ms");
+            TestContext.WriteLine($"文件大小: {fileSize / 1024.0:F2} KB");
+            TestContext.WriteLine($"吞吐量: {totalObjects / (stopwatch.ElapsedMilliseconds / 1000.0):F2} 对象/秒");
+            
+            Assert.That(stopwatch.ElapsedMilliseconds, Is.LessThan(10000), 
+                "大型场景保存应该在10秒内完成");
+            Assert.That(fileSize, Is.GreaterThan(0), "文件应该有内容");
+        }
+
+        /// <summary>
+        /// 测试大型存档的加载性能
+        /// Validates: Requirements 3.3, 7.1, 7.3
+        /// </summary>
+        [Test]
+        public async Task Performance_LargeLoad_ShouldMeetTimeRequirements()
+        {
+            // Arrange - 准备大型存档
+            var scenario = CreateLargeScenario(
+                personCount: 600, 
+                factionCount: 25, 
+                architectureCount: 150);
+            
+            var savePath = Path.Combine(_testDirectory, "large_load_perf.sav.gz");
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            var fileSize = new FileInfo(savePath).Length;
+            TestContext.WriteLine($"存档大小: {fileSize / 1024.0:F2} KB");
+
+            // Act - 测量加载性能
+            var stopwatch = Stopwatch.StartNew();
+            var loadedScenario = await Task.Run(() => _serializationManager.LoadGame(savePath));
+            stopwatch.Stop();
+
+            var totalObjects = loadedScenario.Persons.Count + loadedScenario.Factions.Count + 
+                              loadedScenario.Architectures.Count;
+
+            // Assert - 验证性能要求
+            TestContext.WriteLine($"加载时间: {stopwatch.ElapsedMilliseconds}ms");
+            TestContext.WriteLine($"加载对象: {totalObjects}");
+            TestContext.WriteLine($"吞吐量: {totalObjects / (stopwatch.ElapsedMilliseconds / 1000.0):F2} 对象/秒");
+            
+            Assert.That(stopwatch.ElapsedMilliseconds, Is.LessThan(10000), 
+                "大型场景加载应该在10秒内完成");
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(scenario.Persons.Count),
+                "所有对象都应该被加载");
+        }
+
+        /// <summary>
+        /// 测试内存使用情况
+        /// Validates: Requirements 3.4, 7.3
+        /// </summary>
+        [Test]
+        public async Task Performance_MemoryUsage_ShouldBeReasonable()
+        {
+            // Arrange
+            var scenario = CreateLargeScenario(
+                personCount: 400, 
+                factionCount: 20, 
+                architectureCount: 100);
+            
+            var savePath = Path.Combine(_testDirectory, "memory_test.sav.gz");
+
+            // 强制GC以获得基准
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            
+            var memoryBefore = GC.GetTotalMemory(false);
+
+            // Act - 执行保存和加载
+            await Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+            var loadedScenario = await Task.Run(() => _serializationManager.LoadGame(savePath));
+
+            var memoryAfter = GC.GetTotalMemory(false);
+            var memoryUsed = memoryAfter - memoryBefore;
+
+            // Assert - 验证内存使用合理
+            TestContext.WriteLine($"操作前内存: {memoryBefore / 1024.0 / 1024.0:F2} MB");
+            TestContext.WriteLine($"操作后内存: {memoryAfter / 1024.0 / 1024.0:F2} MB");
+            TestContext.WriteLine($"内存增长: {memoryUsed / 1024.0 / 1024.0:F2} MB");
+            
+            // 内存增长应该合理（不超过100MB）
+            Assert.That(memoryUsed, Is.LessThan(100 * 1024 * 1024), 
+                "内存使用应该合理");
+            Assert.That(loadedScenario, Is.Not.Null, "场景应该成功加载");
+        }
+
+        /// <summary>
+        /// 测试压缩效率
+        /// Validates: Requirements 2.2, 7.2
+        /// </summary>
+        [Test]
+        public void Performance_CompressionRatio_ShouldBeEffective()
+        {
+            // Arrange - 创建测试场景
+            var scenario = CreateLargeScenario(
+                personCount: 300, 
+                factionCount: 15, 
+                architectureCount: 80);
+            
+            var compressedPath = Path.Combine(_testDirectory, "compressed.sav.gz");
+            var uncompressedPath = Path.Combine(_testDirectory, "uncompressed.json");
+
+            // Act - 保存压缩和未压缩版本
+            _serializationManager.SaveGame(scenario, compressedPath);
+            
+            // 获取未压缩大小（通过读取压缩文件并解压）
+            using (var fileStream = File.OpenRead(compressedPath))
+            using (var gzipStream = new System.IO.Compression.GZipStream(fileStream, System.IO.Compression.CompressionMode.Decompress))
+            using (var outputStream = File.Create(uncompressedPath))
+            {
+                gzipStream.CopyTo(outputStream);
+            }
+
+            var compressedSize = new FileInfo(compressedPath).Length;
+            var uncompressedSize = new FileInfo(uncompressedPath).Length;
+            var compressionRatio = 1.0 - ((double)compressedSize / uncompressedSize);
+
+            // Assert - 验证压缩效率
+            TestContext.WriteLine($"未压缩大小: {uncompressedSize / 1024.0:F2} KB");
+            TestContext.WriteLine($"压缩后大小: {compressedSize / 1024.0:F2} KB");
+            TestContext.WriteLine($"压缩率: {compressionRatio * 100:F2}%");
+            
+            Assert.That(compressionRatio, Is.GreaterThan(0.3), 
+                "压缩率应该至少达到30%");
+            Assert.That(compressedSize, Is.LessThan(uncompressedSize), 
+                "压缩后文件应该更小");
+        }
+
+        /// <summary>
+        /// 测试List<int>相比String的性能优势
+        /// Validates: Requirements 3.3, 3.4, 7.2, 7.4
+        /// </summary>
+        [Test]
+        public void Performance_ListIntVsString_ShouldShowImprovement()
+        {
+            // Arrange - 创建包含大量集合的场景
+            var scenario = CreateScenarioWithManyCollections(personCount: 200);
+            var savePath = Path.Combine(_testDirectory, "list_int_perf.sav.gz");
+
+            // Act - 测量序列化性能
+            var stopwatch = Stopwatch.StartNew();
+            _serializationManager.SaveGame(scenario, savePath);
+            var saveTime = stopwatch.ElapsedMilliseconds;
+            
+            stopwatch.Restart();
+            var loadedScenario = _serializationManager.LoadGame(savePath);
+            var loadTime = stopwatch.ElapsedMilliseconds;
+            stopwatch.Stop();
+
+            // Assert - 验证性能
+            TestContext.WriteLine($"保存时间: {saveTime}ms");
+            TestContext.WriteLine($"加载时间: {loadTime}ms");
+            TestContext.WriteLine($"总时间: {saveTime + loadTime}ms");
+            
+            // List<int>应该比String快
+            Assert.That(saveTime + loadTime, Is.LessThan(5000), 
+                "使用List<int>的序列化应该很快");
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(scenario.Persons.Count),
+                "数据应该完整");
+        }
+
+        /// <summary>
+        /// 测试并发性能
+        /// Validates: Requirements 7.1, 7.3
+        /// </summary>
+        [Test]
+        public async Task Performance_ConcurrentOperations_ShouldScale()
+        {
+            // Arrange - 创建多个场景
+            var scenarios = Enumerable.Range(0, 5)
+                .Select(i => CreateLargeScenario(
+                    personCount: 200, 
+                    factionCount: 10, 
+                    architectureCount: 50))
+                .ToList();
+            
+            TestContext.WriteLine($"准备并发测试 {scenarios.Count} 个场景");
+
+            // Act - 并发保存
+            var stopwatch = Stopwatch.StartNew();
+            
+            var saveTasks = scenarios.Select((scenario, index) =>
+            {
+                var savePath = Path.Combine(_testDirectory, $"concurrent_{index}.sav.gz");
+                return Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+            }).ToArray();
+            
+            await Task.WhenAll(saveTasks);
+            var saveTime = stopwatch.ElapsedMilliseconds;
+            
+            // 并发加载
+            stopwatch.Restart();
+            
+            var loadTasks = Enumerable.Range(0, scenarios.Count)
+                .Select(index =>
+                {
+                    var savePath = Path.Combine(_testDirectory, $"concurrent_{index}.sav.gz");
+                    return Task.Run(() => _serializationManager.LoadGame(savePath));
+                }).ToArray();
+            
+            var loadedScenarios = await Task.WhenAll(loadTasks);
+            var loadTime = stopwatch.ElapsedMilliseconds;
+            
+            stopwatch.Stop();
+
+            // Assert - 验证并发性能
+            TestContext.WriteLine($"并发保存时间: {saveTime}ms");
+            TestContext.WriteLine($"并发加载时间: {loadTime}ms");
+            TestContext.WriteLine($"平均保存时间: {saveTime / (double)scenarios.Count:F2}ms");
+            TestContext.WriteLine($"平均加载时间: {loadTime / (double)scenarios.Count:F2}ms");
+            
+            Assert.That(loadedScenarios.Length, Is.EqualTo(scenarios.Count), 
+                "所有场景都应该成功加载");
+            Assert.That(saveTime, Is.LessThan(15000), 
+                "并发保存应该在合理时间内完成");
+            Assert.That(loadTime, Is.LessThan(15000), 
+                "并发加载应该在合理时间内完成");
+        }
+
+        /// <summary>
+        /// 测试性能稳定性 - 多次执行
+        /// Validates: Requirements 7.1, 7.3
+        /// </summary>
+        [Test]
+        public async Task Performance_Stability_ShouldBeConsistent()
+        {
+            // Arrange
+            var scenario = CreateLargeScenario(
+                personCount: 300, 
+                factionCount: 15, 
+                architectureCount: 80);
+            
+            var iterations = 10;
+            var saveTimes = new List<long>();
+            var loadTimes = new List<long>();
+            
+            TestContext.WriteLine($"执行 {iterations} 次性能测试");
+
+            // Act - 多次执行
+            for (int i = 0; i < iterations; i++)
+            {
+                var savePath = Path.Combine(_testDirectory, $"stability_{i}.sav.gz");
+                
+                // 保存
+                var saveStopwatch = Stopwatch.StartNew();
+                await Task.Run(() => _serializationManager.SaveGame(scenario, savePath));
+                saveStopwatch.Stop();
+                saveTimes.Add(saveStopwatch.ElapsedMilliseconds);
+                
+                // 加载
+                var loadStopwatch = Stopwatch.StartNew();
+                await Task.Run(() => _serializationManager.LoadGame(savePath));
+                loadStopwatch.Stop();
+                loadTimes.Add(loadStopwatch.ElapsedMilliseconds);
+            }
+
+            // Assert - 验证性能稳定性
+            var avgSaveTime = saveTimes.Average();
+            var avgLoadTime = loadTimes.Average();
+            var maxSaveTime = saveTimes.Max();
+            var maxLoadTime = loadTimes.Max();
+            var minSaveTime = saveTimes.Min();
+            var minLoadTime = loadTimes.Min();
+            
+            TestContext.WriteLine($"保存时间 - 平均: {avgSaveTime:F2}ms, 最小: {minSaveTime}ms, 最大: {maxSaveTime}ms");
+            TestContext.WriteLine($"加载时间 - 平均: {avgLoadTime:F2}ms, 最小: {minLoadTime}ms, 最大: {maxLoadTime}ms");
+            
+            // 性能应该稳定（最大值不应该超过平均值的2倍）
+            Assert.That(maxSaveTime, Is.LessThan(avgSaveTime * 2), 
+                "保存性能应该稳定");
+            Assert.That(maxLoadTime, Is.LessThan(avgLoadTime * 2), 
+                "加载性能应该稳定");
+        }
+
+        #region Helper Methods
+
+        private GameScenario CreateLargeScenario(int personCount, int factionCount, int architectureCount)
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            for (int i = 1; i <= factionCount; i++)
+            {
+                var faction = new Faction { ID = i, Name = $"势力{i}" };
+                scenario.Factions.Add(faction.ID, faction);
+            }
+            
+            // 创建人物
+            for (int i = 1; i <= personCount; i++)
+            {
+                var factionId = ((i - 1) % factionCount) + 1;
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            // 创建建筑
+            for (int i = 1; i <= architectureCount; i++)
+            {
+                var factionId = ((i - 1) % factionCount) + 1;
+                var architecture = new Architecture 
+                { 
+                    ID = i, 
+                    Name = $"城市{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Architectures.Add(architecture.ID, architecture);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateScenarioWithManyCollections(int personCount)
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            var faction = new Faction { ID = 1, Name = "测试势力" };
+            scenario.Factions.Add(faction.ID, faction);
+            
+            // 创建人物，每个人物都有集合引用
+            for (int i = 1; i <= personCount; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = faction
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        #endregion
+    }
+}

@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Influences;
 using Microsoft.Xna.Framework;
@@ -10,6 +10,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind3050 : InfluenceKind
     {
+        [DataMember]
         private int increment = 0;
 
         public override void ApplyInfluenceKind(Architecture architecture)

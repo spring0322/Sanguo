@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using PluginInterface;
@@ -11,6 +11,7 @@ using GameObjects.FactionDetail;
 using GameObjects.TroopDetail;
 using GameObjects.SectionDetail;
 using GameObjects.PersonDetail;
+using GameObjects.MapDetail;
 using GameManager;
 using WorldOfTheThreeKingdoms.GameManager;
 
@@ -43,9 +44,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Architecture_Afterxuanzemeinv() // 纳妃
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
-            if (this.CurrentPerson != null)
+            // AOT修复: 原 as Person 转换
+            if (Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person selectedPerson)
             {
+                this.CurrentPerson = selectedPerson;
                 Person tookSpouse = Session.Current.Scenario.CurrentFaction.Leader.XuanZeMeiNv(this.CurrentPerson);
 
                 String msgKey;
@@ -68,9 +70,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Architecture_chongxingmeinv() // 宠幸
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
-            if (this.CurrentPerson != null)
+            // AOT修复: 原 as Person 转换
+            if (Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person selectedPerson)
             {
+                this.CurrentPerson = selectedPerson;
                 Session.Current.Scenario.CurrentFaction.Leader.GoForHouGong(this.CurrentPerson);
                 String msgKey;
                 TextMessageKind msgKind;
@@ -142,7 +145,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.CurrentGameObject = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as GameObject;
             if (this.CurrentGameObject != null)
             {
-                Treasure currentGameObject = this.CurrentGameObject as Treasure;
+                Treasure currentGameObject = (CurrentGameObject is Treasure ? (Treasure)CurrentGameObject : null);
                 if (currentGameObject.BelongedPerson != null)
                 {
                     currentGameObject.BelongedPerson.ConfiscatedTreasure(currentGameObject);
@@ -159,7 +162,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.CurrentGameObject = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as GameObject;
             if (this.CurrentGameObject != null)
             {
-                Treasure currentGameObject = this.CurrentGameObject as Treasure;
+                Treasure currentGameObject = (CurrentGameObject is Treasure ? (Treasure)CurrentGameObject : null);
                 if (currentGameObject.BelongedPerson != null)
                 {
                     Session.MainGame.mainGameScreen.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetAwardTreasurePerson, false, true, true, false, this.CurrentArchitecture.BelongedFaction.PersonsInArchitecturesExceptLeader, null, "", "");
@@ -172,32 +175,97 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// </summary>
         private void FrameFunction_Architecture_AfterGetAwardTreasurePerson()
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
-            if (this.CurrentPerson != null)
+            // AOT修复: 原 as Person 转换
+            if (Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person selectedPerson)
             {
-                Treasure currentGameObject = this.CurrentGameObject as Treasure;
-                if (currentGameObject.BelongedPerson != null)
+                this.CurrentPerson = selectedPerson;
+                // AOT修复: 原 as Treasure 转换
+                if (this.CurrentGameObject is Treasure currentGameObject)
                 {
-                    this.CurrentArchitecture.BelongedFaction.Leader.LoseTreasure(currentGameObject);
-                    this.CurrentPerson.AwardedTreasure(currentGameObject);
+                    if (currentGameObject.BelongedPerson != null)
+                    {
+                        this.CurrentArchitecture.BelongedFaction.Leader.LoseTreasure(currentGameObject);
+                        this.CurrentPerson.AwardedTreasure(currentGameObject);
+                    }
                 }
             }
         }
 
         /// <summary>
         /// 出售宝物
+        /// 🔥 2026-03-03 修改：添加确认对话框，显示交易信息
+        /// ✅ Anti-Band-Aid: 移除防御性空检查，GetSelectedList() 保证返回非空集合
         /// </summary>
         private void FrameFunction_Architecture_AfterGetSellTreasure()
         {
-            this.CurrentGameObjects = this.CurrentArchitecture.GetTreasureListOfLeader().GetSelectedList();
-            if (this.CurrentGameObjects != null)
+            GameObjectList selectedTreasures = this.CurrentArchitecture.GetTreasureListOfLeader().GetSelectedList();
+            if (selectedTreasures.Count > 0)
             {
-                foreach (Treasure treasure in this.CurrentGameObjects)
+                Treasure treasure = selectedTreasures[0] as Treasure;
+                
+                // 显示确认对话框
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetSimpleTextDialog(
+                    Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin);
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.ClearFunctions();
+                
+                // 设置确认回调：执行出售逻辑
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.AddYesFunction(
+                    new GameDelegates.VoidFunction(() =>
+                    {
+                        // 君主失去宝物
+                        this.CurrentArchitecture.BelongedFaction.Leader.LoseTreasure(treasure);
+                        
+                        // 执行出售（进入市场，不隐藏在建筑中）
+                        this.CurrentArchitecture.SellTreasure(treasure);
+                    }));
+                
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+                
+                // 设置对话框文本（显示宝物名称和获得的资金）
+                Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin.SetGameObjectBranch(
+                    treasure, "SellTreasure");
+                
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.IsShowing = true;
+            }
+        }
+
+        /// <summary>
+        /// 购买宝物
+        /// 🔥 2026-03-03 修改：添加确认对话框，显示交易信息和资金检查
+        /// ✅ Anti-Band-Aid: 移除防御性空检查，GetSelectedList() 保证返回非空集合
+        /// </summary>
+        private void FrameFunction_Architecture_AfterGetBuyTreasure()
+        {
+            GameObjectList selectedTreasures = Session.Current.Scenario.SoldTreasures.GetSelectedList();
+            if (selectedTreasures.Count > 0)
+            {
+                Treasure treasure = selectedTreasures[0] as Treasure;
+                int buyPrice = (int)(treasure.Worth * 1.2f * 1000);
+                
+                // 检查资金是否充足
+                if (this.CurrentArchitecture.Fund >= buyPrice)
                 {
-                    this.CurrentArchitecture.BelongedFaction.Leader.LoseTreasure(treasure);
-                    Session.Current.Scenario.Treasures.Remove(treasure);
-                    this.CurrentArchitecture.IncreaseFund(treasure.Worth * 1000);
+                    // 显示确认对话框
+                    Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetSimpleTextDialog(
+                        Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin);
+                    Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.ClearFunctions();
+                    
+                    // 设置确认回调：执行购买逻辑
+                    Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.AddYesFunction(
+                        new GameDelegates.VoidFunction(() =>
+                        {
+                            this.CurrentArchitecture.BuyTreasure(treasure);
+                        }));
+                    
+                    Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+                    
+                    // 设置对话框文本（显示宝物名称和需要支付的资金）
+                    Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin.SetGameObjectBranch(
+                        treasure, "BuyTreasure");
+                    
+                    Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.IsShowing = true;
                 }
+                // 资金不足时静默失败（保持简洁，符合现有UI模式）
             }
         }
 
@@ -213,24 +281,27 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             
             if ((this.CurrentGameObjects != null) && (this.CurrentGameObjects.Count == 1))
             {
-                Person targetPerson = this.CurrentGameObjects[0] as Person;
-                System.Diagnostics.Debug.WriteLine($"[说服调试] 目标人物: {targetPerson?.Name ?? "null"}");
-                
-                // 尝试显示军师对话
-                if (targetPerson != null && this.CurrentPersons != null && this.CurrentPersons.Count > 0)
+                // AOT修复: 原 as Person 转换
+                if (this.CurrentGameObjects[0] is Person targetPerson)
                 {
-                    System.Diagnostics.Debug.WriteLine("[说服调试] 条件满足，调用ShowSimpleAdvisorDialogue");
-                    ShowSimpleAdvisorDialogue(targetPerson);
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine("[说服调试] 条件不满足，执行原始逻辑");
-                    // 原始逻辑：直接执行说服
-                    foreach (Person person in this.CurrentPersons)
+                    System.Diagnostics.Debug.WriteLine($"[说服调试] 目标人物: {targetPerson?.Name ?? "null"}");
+                    
+                    // 尝试显示军师对话
+                    if (targetPerson != null && this.CurrentPersons != null && this.CurrentPersons.Count > 0)
                     {
-                        person.GoForConvince(this.CurrentGameObjects[0] as Person);
+                        System.Diagnostics.Debug.WriteLine("[说服调试] 条件满足，调用ShowSimpleAdvisorDialogue");
+                        ShowSimpleAdvisorDialogue(targetPerson);
                     }
-                    Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[说服调试] 条件不满足，执行原始逻辑");
+                        // 原始逻辑：直接执行说服
+                        foreach (Person person in this.CurrentPersons)
+                        {
+                            person.GoForConvince(targetPerson);
+                        }
+                        Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
+                    }
                 }
             }
             else
@@ -285,7 +356,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 );
 
                 // 2. 设置确认对话框位置
-                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(GameGlobal.ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(WorldOfTheThreeKingdoms.GameGlobal.ShowPosition.Center);
 
                 // 3. 显示军师头像和对话 - 使用空的图片和音频避免文件异常
                 Session.MainGame.mainGameScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
@@ -452,7 +523,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Person targetPerson = selectedItem as Person;
+                    Person targetPerson = (selectedItem is Person ? (Person)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能说服调试] 选中的目标: {targetPerson?.Name ?? "null"}");
                     
                     if (targetPerson != null)
@@ -493,7 +564,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Architecture targetArchitecture = selectedItem as Architecture;
+                    Architecture targetArchitecture = (selectedItem is Architecture ? (Architecture)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能破坏调试] 选中的目标: {targetArchitecture?.Name ?? "null"}");
                     
                     if (targetArchitecture != null)
@@ -546,7 +617,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Architecture targetArchitecture = selectedItem as Architecture;
+                    Architecture targetArchitecture = (selectedItem is Architecture ? (Architecture)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能煽动调试] 选中的目标: {targetArchitecture?.Name ?? "null"}");
                     
                     if (targetArchitecture != null)
@@ -599,7 +670,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Architecture targetArchitecture = selectedItem as Architecture;
+                    Architecture targetArchitecture = (selectedItem is Architecture ? (Architecture)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能流言调试] 选中的目标: {targetArchitecture?.Name ?? "null"}");
                     
                     if (targetArchitecture != null)
@@ -653,7 +724,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Architecture targetArchitecture = selectedItem as Architecture;
+                    Architecture targetArchitecture = (selectedItem is Architecture ? (Architecture)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能劫牢调试] 选中的目标: {targetArchitecture?.Name ?? "null"}");
                     
                     if (targetArchitecture != null)
@@ -706,7 +777,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Person targetPerson = selectedItem as Person;
+                    Person targetPerson = (selectedItem is Person ? (Person)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能暗杀调试] 选中的目标: {targetPerson?.Name ?? "null"}");
                     
                     if (targetPerson != null)
@@ -825,7 +896,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
                 if (selectedItem != null)
                 {
-                    Treasure cost = selectedItem as Treasure;
+                    Treasure cost = (selectedItem is Treasure ? (Treasure)selectedItem : null);
                     System.Diagnostics.Debug.WriteLine($"[智能亲善调试] 选中的代价: {cost?.Name ?? "null"}");
                     
                     if (cost != null)
@@ -862,6 +933,124 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 System.Diagnostics.Debug.WriteLine($"[智能亲善调试] 堆栈: {ex.StackTrace}");
             }
         }
+
+        private void FrameFunction_Architecture_AfterGetTruceDiplomaticRelationTargetForAnalysis() // 智能停战目标分析
+        {
+            System.Diagnostics.Debug.WriteLine("[智能停战调试] 进入FrameFunction_Architecture_AfterGetTruceDiplomaticRelationTargetForAnalysis");
+            
+            try
+            {
+                // 获取选择的势力目标
+                var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
+                if (selectedItem != null)
+                {
+                    Faction targetFaction = (selectedItem is Faction ? (Faction)selectedItem : null);
+                    System.Diagnostics.Debug.WriteLine($"[智能停战调试] 选中的目标势力: {targetFaction?.Name ?? "null"}");
+                    
+                    if (targetFaction != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[智能停战调试] 调用MainGameScreen的停战分析系统");
+                        
+                        // 调用MainGameScreen中的停战军师分析和对话系统
+                        Session.MainGame.mainGameScreen.PerformTruceDiplomaticAnalysisAndRecommendation(targetFaction);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[智能停战调试] 选择的不是Faction对象");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("[智能停战调试] 没有选择任何目标");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[智能停战调试] 错误: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[智能停战调试] 堆栈: {ex.StackTrace}");
+            }
+        }
+
+        private void FrameFunction_Architecture_AfterGetInduceSurrenderTargetForAnalysis() // 智能劝降目标分析
+        {
+            System.Diagnostics.Debug.WriteLine("[智能劝降调试] 进入FrameFunction_Architecture_AfterGetInduceSurrenderTargetForAnalysis");
+            
+            try
+            {
+                // 获取选择的外交关系目标
+                var selectedItem = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem;
+                if (selectedItem != null)
+                {
+                    DiplomaticRelationDisplay relationDisplay = selectedItem as DiplomaticRelationDisplay;
+                    System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 选中的目标: {relationDisplay?.FactionName ?? "null"}");
+                    
+                    if (relationDisplay != null)
+                    {
+                        // 保存选择的外交关系
+                        this.CurrentDiplomaticRelationDisplay = relationDisplay;
+                        
+                        System.Diagnostics.Debug.WriteLine("[智能劝降调试] 调用MainGameScreen的劝降分析系统");
+                        
+                        // 调用MainGameScreen中的劝降军师分析和对话系统
+                        Session.MainGame.mainGameScreen.PerformInduceSurrenderAnalysisAndRecommendation();
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[智能劝降调试] 选择的不是DiplomaticRelationDisplay对象");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("[智能劝降调试] 没有选择任何目标");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 错误: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 堆栈: {ex.StackTrace}");
+            }
+        }
+
+        private void FrameFunction_Architecture_AfterGetInduceSurrenderPerson() // 智能劝降执行人选择
+        {
+            System.Diagnostics.Debug.WriteLine("[智能劝降调试] 进入FrameFunction_Architecture_AfterGetInduceSurrenderPerson");
+            
+            try
+            {
+                var selectedList = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItemList as GameObjectList;
+                if (selectedList != null && selectedList.Count == 1)
+                {
+                    Person executor = selectedList[0] as Person;
+                    if (executor != null)
+                    {
+                        var relationDisplay = Session.MainGame.mainGameScreen.CurrentInduceSurrenderTarget;
+                        if (relationDisplay != null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 执行人: {executor.Name}, 目标: {relationDisplay.FactionName}");
+                            
+                            // 检查资金并执行劝降逻辑
+                            if (Session.MainGame.mainGameScreen.CurrentArchitecture != null &&
+                                Session.MainGame.mainGameScreen.CurrentArchitecture.Fund >= 50000)
+                            {
+                                Session.MainGame.mainGameScreen.CurrentArchitecture.Fund -= 50000;
+                                executor.GoToQuanXiangDiplomatic(relationDisplay);
+                                Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
+                            }
+                            
+                            // 清理状态
+                            Session.MainGame.mainGameScreen.CurrentInduceSurrenderTarget = null;
+                            Session.MainGame.mainGameScreen.CurrentRecommendedPersonForInduceSurrender = null;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 错误: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[智能劝降调试] 堆栈: {ex.StackTrace}");
+            }
+        }
+
 
         private void FrameFunction_Architecture_AfterGetYearlyTalentRecommendation() // 年度人才举荐选择
         {
@@ -1175,16 +1364,38 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             }
         }
 
-        private void FrameFunction_Architecture_AfterGetAllyDiplomaticRelation()
+        private void FrameFunction_Architecture_AfterGetAllyDiplomaticRelationTargetForAnalysis() // 智能结盟目标分析
         {
-            GameObjectList selectedList = this.CurrentArchitecture.AllyDiplomaticRelationList.GetSelectedList();
-
-            if (selectedList != null && (selectedList.Count == 1))
+            System.Diagnostics.Debug.WriteLine("[智能结盟调试] 进入FrameFunction_Architecture_AfterGetAllyDiplomaticRelationTargetForAnalysis");
+            
+            try
             {
-                this.CurrentDiplomaticRelationDisplay = selectedList[0] as DiplomaticRelationDisplay;
-                //this.CurrentDiplomaticRelationDisplay.Relation = 301;
-                //this.mainGameScreen.xianshishijiantupian(this.CurrentArchitecture.BelongedFaction.Leader, this.CurrentArchitecture.BelongedFaction.Leader.Name, "AllyDiplomaticRelation", "AllyDiplomaticRelation.jpg", "AllyDiplomaticRelation", this.CurrentDiplomaticRelationDisplay.FactionName, true);
-                Session.MainGame.mainGameScreen.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetAllyDiplomaticRelationPerson, true, true, true, true, this.CurrentArchitecture.Persons, null, "外交人员", "Ability");
+                GameObjectList selectedList = this.CurrentArchitecture.AllyDiplomaticRelationList.GetSelectedList();
+
+                if (selectedList != null && selectedList.Count == 1)
+                {
+                    this.CurrentDiplomaticRelationDisplay = selectedList[0] as DiplomaticRelationDisplay;
+                    
+                    if (this.CurrentDiplomaticRelationDisplay != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[智能结盟调试] 选择了目标势力: {this.CurrentDiplomaticRelationDisplay.FactionName}");
+                        
+                        // 调用MainGameScreen中的结盟军师分析和对话系统
+                        Session.MainGame.mainGameScreen.PerformAllyDiplomaticAnalysisAndRecommendation();
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[智能结盟调试] CurrentDiplomaticRelationDisplay 为空");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("[智能结盟调试] 未选择有效的外交关系");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[智能结盟调试] 异常: {ex.Message}");
             }
         }
 
@@ -1251,8 +1462,45 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     if (this.CurrentArchitecture.Fund >= 50000)
                     {
-                        this.CurrentArchitecture.Fund -= 50000;
-                        diplomaticperson.GoToTruceDiplomatic(this.CurrentDiplomaticRelationDisplay);
+                        // 🤖 使用AI命令系统安全执行停战外交
+                        try
+                        {
+                            // 获取目标势力
+                            Faction targetFaction = null;
+                            if (this.CurrentDiplomaticRelationDisplay != null)
+                            {
+                                targetFaction = this.CurrentDiplomaticRelationDisplay.LinkedFaction1 == this.CurrentArchitecture.BelongedFaction 
+                                    ? this.CurrentDiplomaticRelationDisplay.LinkedFaction2 
+                                    : this.CurrentDiplomaticRelationDisplay.LinkedFaction1;
+                            }
+
+                            if (targetFaction != null)
+                            {
+                                // 通过AI命令系统执行外交行动
+                                WorldOfTheThreeKingdoms.GameManager.AISystemIntegrator.RequestDiplomaticAction(
+                                    this.CurrentArchitecture,
+                                    targetFaction,
+                                    "停战",
+                                    diplomaticperson,
+                                    "玩家停战外交"
+                                );
+                                
+                                System.Diagnostics.Debug.WriteLine($"[ScreenManager] 停战外交命令已提交: {diplomaticperson.Name} -> {targetFaction.Name}");
+                            }
+                            else
+                            {
+                                // 回退到原有逻辑
+                                this.CurrentArchitecture.Fund -= 50000;
+                                diplomaticperson.GoToTruceDiplomatic(this.CurrentDiplomaticRelationDisplay);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ScreenManager] AI停战外交执行失败，回退到原有逻辑: {ex.Message}");
+                            // 回退到原有逻辑
+                            this.CurrentArchitecture.Fund -= 50000;
+                            diplomaticperson.GoToTruceDiplomatic(this.CurrentDiplomaticRelationDisplay);
+                        }
                     }
                 }
             }
@@ -1742,6 +1990,55 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private void FrameFunction_Architecture_AfterGetRewardPerson() // 奖赏
         {
             this.CurrentGameObjects = this.CurrentArchitecture.RewardPersonList.GetSelectedList();
+            
+            if (this.CurrentGameObjects.Count > 0)
+            {
+                int rewardCost = Session.Parameters.RewardPersonCost;
+                int totalCost = this.CurrentGameObjects.Count * rewardCost;
+                
+                // 检查资金是否足够
+                if (this.CurrentArchitecture.BelongedFaction.Fund < totalCost)
+                {
+                    // 资金不足，显示提示（可选）
+                    return;
+                }
+                
+                // 🎯 显示确认对话框
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetSimpleTextDialog(
+                    Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin);
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.ClearFunctions();
+                
+                // 设置确认回调：执行褒赏逻辑
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.AddYesFunction(
+                    new GameDelegates.VoidFunction(() =>
+                    {
+                        // 执行褒赏
+                        for (int i = 0; i < this.CurrentGameObjects.Count; i++)
+                        {
+                            Person person = (Person)this.CurrentGameObjects[i];
+                            
+                            // 扣除资金
+                            this.CurrentArchitecture.DecreaseFund(rewardCost);
+                            
+                            // 执行褒赏
+                            int increase = person.ReceiveReward(rewardCost);
+                        }
+                        
+                        // 播放音效
+                        Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
+                    }));
+                
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+                
+                // 设置对话框文本（显示褒赏人数和总花费）
+                // 🎯 临时方案：使用通用分支，后续可在XML中添加专用分支
+                Person firstPerson = (Person)this.CurrentGameObjects[0];
+                firstPerson.TextDestinationString = $"褒赏 {this.CurrentGameObjects.Count} 人，花费 {totalCost} 资金";
+                Session.MainGame.mainGameScreen.Plugins.SimpleTextDialogPlugin.SetGameObjectBranch(
+                    firstPerson, "RewardPerson");
+                
+                Session.MainGame.mainGameScreen.Plugins.ConfirmationDialogPlugin.IsShowing = true;
+            }
         }
 
         private void FrameFunction_Architecture_AfterGetSearchPerson() // 搜索
@@ -1791,6 +2088,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                     section.RefreshSectionName();
                 }
+            }
+        }
+
+        private void FrameFunction_Architecture_AfterGetSection()
+        {
+            // Get the selected section from the list
+            Section selectedSection = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Section;
+            if (selectedSection != null && this.CurrentArchitecture != null && this.CurrentArchitecture.BelongedFaction != null)
+            {
+                // Open the MarshalSectionDialog for the selected section
+                Session.MainGame.mainGameScreen.Plugins.MarshalSectionDialogPlugin.SetFaction(this.CurrentArchitecture.BelongedFaction);
+                Session.MainGame.mainGameScreen.Plugins.MarshalSectionDialogPlugin.SetSection(selectedSection);
+                Session.MainGame.mainGameScreen.Plugins.MarshalSectionDialogPlugin.SetMapPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.MarshalSectionDialogPlugin.IsShowing = true;
             }
         }
 
@@ -2034,7 +2345,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /*
         private void FrameFunction_Faction_ZhaoXianBang_DengYong() //强制登用武将
         {
-            this.CurrentPerson = this.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
+            this.CurrentPerson = this.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)this.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
             {
                 if (this.CurrentPerson != null)
                 {
@@ -2207,6 +2518,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.FrameFunction_Architecture_AfterGetEnhanceDiplomaticRelationCost();
                     break;
 
+                case FrameFunction.GetTruceDiplomaticRelationTargetForAnalysis:
+                    this.FrameFunction_Architecture_AfterGetTruceDiplomaticRelationTargetForAnalysis();
+                    break;
+
+                case FrameFunction.GetInduceSurrenderTargetForAnalysis:
+                    this.FrameFunction_Architecture_AfterGetInduceSurrenderTargetForAnalysis();
+                    break;
+
+                case FrameFunction.GetInduceSurrenderPerson:
+                    this.FrameFunction_Architecture_AfterGetInduceSurrenderPerson();
+                    break;
+
                 case FrameFunction.GetYearlyTalentRecommendation:
                     this.FrameFunction_Architecture_AfterGetYearlyTalentRecommendation();
                     break;
@@ -2331,8 +2654,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.FrameFunction_Architecture_AfterGetFriendlyDiplomaticRelation();
                     break;
 
-                case FrameFunction.GetAllyDiplomaticRelation:
-                    this.FrameFunction_Architecture_AfterGetAllyDiplomaticRelation();
+                case FrameFunction.GetAllyDiplomaticRelationTargetForAnalysis:
+                    this.FrameFunction_Architecture_AfterGetAllyDiplomaticRelationTargetForAnalysis();
                     break;
 
                 case FrameFunction.GetTruceDiplomaticRelation:
@@ -2432,6 +2755,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.FrameFunction_Architecture_AfterGetSectionToDemolish();
                     break;
 
+                case FrameFunction.GetSection:
+                    this.FrameFunction_Architecture_AfterGetSection();
+                    break;
+
                 case FrameFunction.GetShortestRouteway:
                     this.FrameFunction_Architecture_AfterGetShortestRouteway();
                     break;
@@ -2452,6 +2779,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     break;
                 case FrameFunction.GetSellTreasure:
                     this.FrameFunction_Architecture_AfterGetSellTreasure();
+                    break;
+                case FrameFunction.GetBuyTreasure:
+                    this.FrameFunction_Architecture_AfterGetBuyTreasure();
                     break;
                 #endregion
 
@@ -2502,6 +2832,42 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     this.FrameFunction_Faction_PromoteNvGuan();
                     break;
 
+                // 编辑器相关功能
+                case FrameFunction.GetEditArchitecture:
+                    this.FrameFunction_Editor_AfterGetEditArchitecture();
+                    break;
+
+                case FrameFunction.GetEditTroop:
+                    this.FrameFunction_Editor_AfterGetEditTroop();
+                    break;
+
+                case FrameFunction.GetEditFaction:
+                    this.FrameFunction_Editor_AfterGetEditFaction();
+                    break;
+
+                case FrameFunction.GetEditPerson:
+                    this.FrameFunction_Editor_AfterGetEditPerson();
+                    break;
+
+                case FrameFunction.GetEditMilitary:
+                    this.FrameFunction_Editor_AfterGetEditMilitary();
+                    break;
+
+                case FrameFunction.GetEditTreasure:
+                    // this.FrameFunction_Editor_AfterGetEditTreasure();
+                    break;
+
+                case FrameFunction.GetEditTitle:
+                    // this.FrameFunction_Editor_AfterGetEditTitle();
+                    break;
+
+                case FrameFunction.GetEditSkill:
+                // this.FrameFunction_Editor_AfterGetEditSkill();
+                break;
+            case FrameFunction.Editor_SelectInfluence:
+                this.FrameFunction_Editor_SelectInfluence();
+                break;
+
 
             }
             this.lastFrameFunction = function;
@@ -2536,7 +2902,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Architecture_SelectPrince()//立储的作用
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
+            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
             if (this.CurrentPerson != null)
             {
                 this.CurrentArchitecture.BelongedFaction.PrinceID = this.CurrentPerson.ID;
@@ -2549,7 +2915,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Architecture_AppointMayor()  //太守
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
+            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
             if (this.CurrentPerson != null)
             {
                 this.CurrentArchitecture.MayorID = this.CurrentPerson.ID;
@@ -2561,10 +2927,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Faction_AppointAdvisor()  //军师
         {
-            System.Diagnostics.Debug.WriteLine("[AppointAdvisor] 开始执行任命军师逻辑");
+            System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ========== 开始执行任命军师逻辑 ==========");
             
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
-            System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 选中的人物: {this.CurrentPerson?.Name}");
+            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 选中的人物: {this.CurrentPerson?.Name ?? "null"}");
             
             if (this.CurrentPerson != null)
             {
@@ -2572,7 +2938,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 Faction faction = this.CurrentFaction ?? 
                                  this.CurrentArchitecture?.BelongedFaction ?? 
                                  Session.Current.Scenario.CurrentPlayer;
-                System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 目标势力: {faction?.Name}");
+                System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 目标势力: {faction?.Name ?? "null"}");
+                System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 势力君主: {faction?.Leader?.Name ?? "null"}");
+                System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 当前军师: {faction?.Advisor?.Name ?? "无"}");
+                System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 当前军师ID: {faction?.AdvisorID ?? -999}");
                 
                 if (faction != null && faction.Leader != null)
                 {
@@ -2580,42 +2949,49 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     if (faction.AdvisorID > 0 && faction.Advisor != null)
                     {
                         System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 当前军师: {faction.Advisor.Name}，将被替换");
-                        faction.AdvisorID = -1;
-                        faction.Advisor = null;
+                        faction.Advisor = null;  // 使用Advisor属性清空，会同时清空AdvisorID和缓存
+                        System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 清空后军师: {faction.Advisor?.Name ?? "无"}");
+                        System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 清空后军师ID: {faction.AdvisorID}");
                     }
                     
                     System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 使用AdvisorAppointmentSystem任命军师: {this.CurrentPerson.Name}");
                     
-                    // 新代码 - 使用AdvisorAppointmentSystem，显示轮流对话
+                    // 使用AdvisorAppointmentSystem，显示轮流对话
                     bool success = WorldOfTheThreeKingdoms.GameManager.AdvisorAppointmentSystem.TryAppointAdvisor(
                         faction.Leader, 
                         this.CurrentPerson, 
                         faction
                     );
                     
+                    System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 任命结果: {(success ? "成功" : "失败")}");
+                    System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 任命后军师: {faction.Advisor?.Name ?? "无"}");
+                    System.Diagnostics.Debug.WriteLine($"[AppointAdvisor] 任命后军师ID: {faction.AdvisorID}");
+                    
                     if (success)
                     {
-                        System.Diagnostics.Debug.WriteLine("[AppointAdvisor] 任命成功");
+                        System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ✅ 任命成功");
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("[AppointAdvisor] 任命被拒绝");
+                        System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ❌ 任命被拒绝");
                     }
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine("[AppointAdvisor] 错误：目标势力或君主为空");
+                    System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ❌ 错误：目标势力或君主为空");
                 }
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("[AppointAdvisor] 错误：未选中任何人物");
+                System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ❌ 错误：未选中任何人物");
             }
+            
+            System.Diagnostics.Debug.WriteLine("[AppointAdvisor] ========== 任命军师逻辑结束 ==========");
         }
 
         private void FrameFunction_Architecture_ReleaseSelfPerson()
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
+            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
             if (this.CurrentPerson != null)
             {
                 Session.MainGame.mainGameScreen.xianshishijiantupian(this.CurrentPerson.BelongedFaction.Leader, this.CurrentPerson.Name, TextMessageKind.ReleaseSelfPerson, "ReleaseSelfPerson", "", "", false );
@@ -2638,7 +3014,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void FrameFunction_Architecture_KillPerson()
         {
-            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Person;
+            this.CurrentPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
             if (this.CurrentPerson != null)
             {
                 Session.MainGame.mainGameScreen.xianshishijiantupian(Session.Current.Scenario.NeutralPerson, this.CurrentPerson.BelongedFaction.Leader.Name, "KillSelfPerson", "chuzhan.jpg", "chuzhan", this.CurrentPerson.Name, true);
@@ -2689,7 +3065,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                     Point point = Session.Current.Scenario.GetClosestPoint(this.CurrentArchitecture.GetAllAvailableArea(false),position);
 
-                    this.CurrentTroop = this.CurrentArchitecture.CreateTroop(persons, leader, military, this.CurrentArchitecture.Food>military.FoodMax? military.FoodMax:0, point);
+                    // 🔧 修复：传入-1触发自动粮食分配，或传入具体数值
+                    int troopFood = this.CurrentArchitecture.Food > military.FoodMax ? military.FoodMax : -1;
+                    this.CurrentTroop = this.CurrentArchitecture.CreateTroop(persons, leader, military, troopFood, point);
                     
                     // Skip if troop creation failed
                     if (this.CurrentTroop == null)
@@ -2766,7 +3144,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         public void SetCreatingTroopPosition(Point position)
         {
-            this.CurrentTroop = this.CurrentArchitecture.CreateTroop(this.CurrentGameObjects, this.CurrentPerson, this.CurrentMilitary, this.CurrentNumber, position);
+            // 🔥 修复：玩家手动创建部队，传入 playerManual=true
+            this.CurrentTroop = this.CurrentArchitecture.CreateTroop(this.CurrentGameObjects, this.CurrentPerson, this.CurrentMilitary, this.CurrentNumber, position, assignedLegion: null, silent: false, playerManual: true);
             
             // If troop creation failed (e.g., no valid persons), abort gracefully
             if (this.CurrentTroop == null)
@@ -2776,13 +3155,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             }
             
             this.CurrentTroop.zijin = this.Currentzijin;
-            this.CurrentTroop.ManualControl = true;
+            // 🔥 修复：不再需要手动设置 ManualControl，Troop.Create 已经处理
+            // this.CurrentTroop.ManualControl = true;
             this.CurrentArchitecture.DecreaseFund(this.CurrentTroop.zijin);
-            if ((this.CurrentArchitecture.DefensiveLegion == null) || (this.CurrentArchitecture.DefensiveLegion.Troops.Count == 0))
-            {
-                this.CurrentArchitecture.CreateDefensiveLegion();
-            }
-            this.CurrentArchitecture.DefensiveLegion.AddTroop(this.CurrentTroop);
+            
+            // 🔥 修复：不再手动加入防守军团，Troop.Create 已经分配到玩家手动控制军团
+            // if ((this.CurrentArchitecture.DefensiveLegion == null) || (this.CurrentArchitecture.DefensiveLegion.Troops.Count == 0))
+            // {
+            //     this.CurrentArchitecture.CreateDefensiveLegion();
+            // }
+            // this.CurrentArchitecture.DefensiveLegion.AddTroop(this.CurrentTroop);
+            
             // this.CurrentArchitecture.PostCreateTroop(this.CurrentTroop, true);
             Session.MainGame.mainGameScreen.Plugins.PersonBubblePlugin.AddPerson(this.CurrentPerson, this.CurrentTroop.Position, TextMessageKind.StartCampaign, "Campaign");
             //this.mainGameScreen.Plugins.AirViewPlugin.ReloadTroopView();
@@ -2793,6 +3176,143 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.CurrentArchitecture.Expand();
         }
 
+        #region 编辑器相关功能
+
+        /// <summary>
+        /// 处理选择城池进行编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditArchitecture()
+        {
+            var selectedArchitecture = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Architecture ? (Architecture)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedArchitecture != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetEditTarget(selectedArchitecture);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.IsShowing = true;
+            }
+        }
+
+        /// <summary>
+        /// 处理选择部队进行编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditTroop()
+        {
+            var selectedTroop = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Troop ? (Troop)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedTroop != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetEditTarget(selectedTroop);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.IsShowing = true;
+            }
+        }
+
+        /// <summary>
+        /// 处理选择势力进行编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditFaction()
+        {
+            var selectedFaction = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Faction ? (Faction)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedFaction != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetEditTarget(selectedFaction);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.IsShowing = true;
+            }
+        }
+
+        /// <summary>
+        /// 处理选择武将进行编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditPerson()
+        {
+            var selectedPerson = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Person ? (Person)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedPerson != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetEditTarget(selectedPerson);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.IsShowing = true;
+            }
+        }
+
+        /// <summary>
+        /// 处理选择编队进行编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditMilitary()
+        {
+            var selectedMilitary = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Military ? (Military)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedMilitary != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetEditTarget(selectedMilitary);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.SetPosition(ShowPosition.Center);
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.IsShowing = true;
+            }
+        }
+
+        /*
+        /// <summary>
+        /// 处理选择宝物编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditTreasure()
+        {
+            var selectedTreasure = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem is Treasure ? (Treasure)Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem : null;
+            if (selectedTreasure != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.ShowGlobalTreasureEditMenu(selectedTreasure);
+            }
+        }
+
+        /// <summary>
+        /// 处理选择称号编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditTitle()
+        {
+            var selectedTitle = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Title;
+            if (selectedTitle != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.ShowGlobalTitleEditMenu(selectedTitle);
+            }
+        }
+
+        /// <summary>
+        /// 处理选择特技编辑
+        /// </summary>
+        private void FrameFunction_Editor_AfterGetEditSkill()
+        {
+            var selectedSkill = Session.MainGame.mainGameScreen.Plugins.TabListPlugin.SelectedItem as Skill;
+            if (selectedSkill != null && Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.ShowGlobalSkillEditMenu(selectedSkill);
+            }
+        }
+        */
+
+        private void FrameFunction_Editor_SelectInfluence()
+        {
+            if (Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin != null)
+            {
+                 var items = new System.Collections.Generic.List<object>();
+                 var tabPlugin = Session.MainGame.mainGameScreen.Plugins.TabListPlugin;
+
+                 // TabListPlugin.SelectedItemList is usually GameObjectList, which is not List<object> but is IEnumerable
+                 if (tabPlugin.SelectedItemList is System.Collections.IEnumerable list)
+                 {
+                     foreach (var item in list)
+                     {
+                         items.Add(item);
+                     }
+                 }
+                 // If SelectedItemList is null or empty, try single selection
+                 if (items.Count == 0 && tabPlugin.SelectedItem != null)
+                 {
+                     items.Add(tabPlugin.SelectedItem);
+                 }
+
+                 Session.MainGame.mainGameScreen.Plugins.InGameEditorPlugin.FinishInfluenceSelection(items);
+            }
+        }
+
+        #endregion
+
         
         
     }
@@ -2800,3 +3320,4 @@ namespace WorldOfTheThreeKingdoms.GameScreens
  
 
 }
+

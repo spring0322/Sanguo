@@ -8,8 +8,11 @@ namespace GameObjects.Influences
     [DataContract]
     public class InfluenceKindTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, InfluenceKind> InfluenceKinds = new Dictionary<int, InfluenceKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, InfluenceKind>))]
+        public Dictionary<int, InfluenceKind> InfluenceKinds = [];
 
         public bool AddInfluenceKind(InfluenceKind ik)
         {
@@ -50,6 +53,9 @@ namespace GameObjects.Influences
 
         public void LoadFromString(InfluenceKindTable allInfluenceKinds, string influenceIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(influenceIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = influenceIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             InfluenceKind kind = null;

@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
@@ -82,7 +82,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public override void ArchitectureFacilityCompleted(Architecture architecture, Facility facility)
         {
             if (Session.Current.Scenario.CurrentPlayer == null || 
-                (Session.Current.Scenario.IsCurrentPlayer(architecture.BelongedFaction) && !architecture.BelongedSection.AIDetail.AutoRun) || 
+                (Session.Current.Scenario.IsCurrentPlayer(architecture.BelongedFaction) && architecture.BelongedSection != null && !architecture.BelongedSection.AIDetail.AutoRun) || 
                 Session.GlobalVariables.SkyEye)
             {
                 architecture.TextDestinationString = facility.Name;
@@ -262,8 +262,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.Plugins.GameRecordPlugin.AddBranch(faction, "FactionForcedChangeCapital", newCapital.Position);
         }
 
-        public override void FactionGetControl(Faction faction)
+        private Faction pendingControlFaction = null;
+
+        public void PerformFactionGetControl(Faction faction)
         {
+            System.Diagnostics.Debug.WriteLine($"[PerformFactionGetControl] 执行玩家控制权处理: {faction.Name}");
             Session.Current.Scenario.CurrentPlayer = faction;
             //this.Plugins.AirViewPlugin.ReloadTroopView();
             this.gengxinyoucelan();
@@ -279,6 +282,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 this.Plugins.PersonBubblePlugin.AddPerson(faction.Leader, faction.Leader.Position, TextMessageKind.GetTurn, "GetControl");
             }
             base.PlayNormalSound("Content/Sound/Control/Control");
+            System.Diagnostics.Debug.WriteLine($"[PerformFactionGetControl] 玩家控制权处理完成: {faction.Name}");
+        }
+
+        public override void FactionGetControl(Faction faction)
+        {
+            // 🔥 Thread Safety Fix:
+            // This method is called from Faction.Run(), which executes on the background AI thread.
+            // Direct UI updates (gengxinyoucelan, PlayNormalSound) from a background thread can fail or cause crashes.
+            // We defer execution to MainGameScreen.Update() which runs on the main thread.
+            System.Diagnostics.Debug.WriteLine($"[FactionGetControl] 玩家势力 {faction.Name} 获得控制权，推迟到主线程处理");
+            this.pendingControlFaction = faction;
         }
 
         public override void FactionInitialtiveChangeCapital(Faction faction, Architecture oldCapital, Architecture newCapital)
@@ -497,6 +511,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             }
             if ((zongshixianshi) || p.BelongedFaction == Session.Current.Scenario.CurrentPlayer)
             {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[xianshishijiantupian] 人物={p.Name}(ID:{p.ID}), TextResultString={TextResultString}, 分支={shijian}");
+                #endif
+                
                 p.TextResultString = TextResultString;
                 //p.TextDestinationString = architecture.BelongedFaction.LeaderName;
                 this.Plugins.tupianwenziPlugin.SetGameObjectBranch(p, p, shijian, tupian, shengyin);
@@ -1282,18 +1300,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.Plugins.GameRecordPlugin.AddBranch(f, "TechniqueComplete", f.Capital.Position);
         }
 
-        public override void xiejinxingjilu(string shijian, string TextResultString, string TextDestinationString,Point point)
+        public override void xiejinxingjilu(Person person, string shijian, string TextResultString, string TextDestinationString, Point point)
         {
-            Person p = new Person();
-            p.TextResultString = TextResultString;
-            p.TextDestinationString = TextDestinationString;
-            this.Plugins.GameRecordPlugin.AddBranch(p, shijian, point );
+            // 🔥 关键修复：使用实际的 Person 对象，不要创建临时对象
+            // 日期：2026-03-23
+            // 原因：临时对象会导致简报系统显示错误的人物（传令官）
+            if (person == null)
+            {
+                throw new ArgumentNullException(nameof(person), "简报记录必须有有效的 Person 对象");
+            }
+            
+            person.TextResultString = TextResultString;
+            person.TextDestinationString = TextDestinationString;
+            this.Plugins.GameRecordPlugin.AddBranch(person, shijian, point);
         }
 
         public override void AskWhenTransportArrived(Troop transport, Architecture destination)
         {
             if ((Session.Current.Scenario.CurrentPlayer == null) || (Session.Current.Scenario.IsCurrentPlayer(transport.BelongedFaction) &&
-                transport.BelongedFaction == transport.StartingArchitecture.BelongedFaction && !transport.StartingArchitecture.BelongedSection.AIDetail.AutoRun))
+                transport.BelongedFaction == transport.StartingArchitecture.BelongedFaction && transport.StartingArchitecture.BelongedSection != null && !transport.StartingArchitecture.BelongedSection.AIDetail.AutoRun))
             {
                 transport.transportReturningTo = destination;
                 this.Plugins.tupianwenziPlugin.SetConfirmationDialog(this.Plugins.ConfirmationDialogPlugin, new GameDelegates.VoidFunction(transport.TransportReturn), new GameDelegates.VoidFunction(transport.TransportEnter));
@@ -1376,6 +1401,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             if ((Session.Current.Scenario.IsCurrentPlayer(p.BelongedFaction)) && Session.Current.Scenario.IsCurrentPlayer(q.BelongedFaction) && 
                 p.BelongedArchitecture != null && p.BelongedArchitecture.BelongedSection != null &&
+                p.BelongedArchitecture.BelongedSection != null &&
                 !p.BelongedArchitecture.BelongedSection.AIDetail.AutoRun)
             {
                 p.TextResultString = q.Name;

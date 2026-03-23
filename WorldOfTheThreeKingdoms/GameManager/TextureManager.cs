@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Platforms;
 using Tools;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameManager
 {
@@ -91,9 +91,17 @@ namespace GameManager
         /// <returns></returns>
         public static Texture2D GetPortraitTexture(int portraitId, PortraitSize size = PortraitSize.Medium)
         {
-            // 直接使用原有系统，完全避免新的纹理管理代码
             try
             {
+                // 使用PortraitManager进行缓存管理
+                // 首先检查PortraitManager是否已初始化
+                var portrait = WorldOfTheThreeKingdoms.GameGlobal.PortraitManager.Instance.GetPortrait(portraitId);
+                if (portrait != null)
+                {
+                    return portrait;
+                }
+                
+                // 如果PortraitManager没有返回（可能未初始化或路径不对），回退到原有系统
                 var path = CacheManager.GetPersonPortraitPath(portraitId, null, size);
                 if (!string.IsNullOrEmpty(path))
                 {

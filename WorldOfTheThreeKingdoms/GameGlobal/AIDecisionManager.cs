@@ -2,8 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
+using GameObjects.PersonDetail;
+using GameObjects.TroopDetail;
+using Microsoft.Xna.Framework;
+using GameManager;
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     /// <summary>
     /// AI决策管理器：整合战术评估器，为AI提供智能决策
@@ -13,6 +17,8 @@ namespace GameGlobal
         private readonly Dictionary<int, AIDecisionCache> _decisionCache;
         private readonly Random _random;
         
+        public static AIDecisionManager Instance { get; } = new AIDecisionManager();
+
         public AIDecisionManager()
         {
             _decisionCache = new Dictionary<int, AIDecisionCache>();
@@ -26,24 +32,14 @@ namespace GameGlobal
         {
             // 检查缓存
             var cacheKey = GenerateCacheKey(troop, scenario);
-            if (_decisionCache.ContainsKey(cacheKey))
+            if (_decisionCache.TryGetValue(troop.ID, out var cachedDecision))
             {
-                var cached = _decisionCache[cacheKey];
-                if (cached.IsValid())
-                    return cached.Decision;
+                if (cachedDecision.IsValid(GetDayCount(scenario.Date)))
+                {
+                    return cachedDecision.Decision;
+                }
             }
 
-            // 计算新决策
-            var decision = CalculateBestDecision(troop, scenario);
-            
-            // 缓存决策
-            _decisionCache[cacheKey] = new AIDecisionCache(decision, DateTime.Now);
-            
-            return decision;
-        }
-
-        private AIDecision CalculateBestDecision(Troop troop, GameScenario scenario)
-        {
             var bestDecision = new AIDecision
             {
                 Action = AIActionType.Wait,
@@ -52,29 +48,39 @@ namespace GameGlobal
                 Target = null
             };
 
-            // 1. 评估所有可用技能
-            foreach (var skill in troop.AvailableSkills)
+            // 1. 评估所有可用战法 (CombatMethods)
+            if (troop.CombatMethods != null)
             {
-                // 跳过消耗过大的技能
-                if (troop.CurrentPrestige < skill.Cost)
-                    continue;
-
-                // 评估所有可能的目标
-                var potentialTargets = GetPotentialTargets(troop, skill, scenario);
-                
-                foreach (var target in potentialTargets)
+                foreach (var combatMethod in troop.CombatMethods.GetCombatMethodList())
                 {
-                    float score = CombatEvaluator.EvaluateSkill(troop, skill, target, scenario);
+                    var cm = combatMethod as CombatMethod;
+                    if (cm == null) continue;
+
+                    // 检查士气/战意消耗 (Combativity)
+                    if (troop.Combativity < cm.Combativity)
+                        continue;
+
+                    // 检查施展条件
+                    if (!cm.IsCastable(troop))
+                        continue;
+
+                    // 评估所有可能的目标
+                    var potentialTargets = GetPotentialTargets(troop, cm, scenario);
                     
-                    // 添加随机性，避免AI过于机械
-                    score += _random.Next(-20, 21);
-                    
-                    if (score > bestDecision.Score)
+                    foreach (var target in potentialTargets)
                     {
-                        bestDecision.Action = AIActionType.UseSkill;
-                        bestDecision.Score = score;
-                        bestDecision.Skill = skill;
-                        bestDecision.Target = target;
+                        float score = EvaluateCombatMethod(troop, cm, target, scenario);
+                        
+                        // 添加随机性，避免AI过于机械
+                        score += _random.Next(-20, 21);
+                        
+                        if (score > bestDecision.Score)
+                        {
+                            bestDecision.Action = AIActionType.UseSkill; 
+                            bestDecision.Score = score;
+                            bestDecision.Skill = null; 
+                            bestDecision.Target = target;
+                        }
                     }
                 }
             }
@@ -93,28 +99,56 @@ namespace GameGlobal
                 bestDecision = defendDecision;
             }
 
+            // 更新缓存
+            _decisionCache[troop.ID] = new AIDecisionCache
+            {
+                Decision = bestDecision,
+                Timestamp = GetDayCount(scenario.Date)
+            };
+
             return bestDecision;
         }
 
-        private List<Troop> GetPotentialTargets(Troop source, Skill skill, GameScenario scenario)
+        private int GetDayCount(GameDate date)
+        {
+            return date.Year * 360 + date.Month * 30 + date.Day;
+        }
+
+        private List<Troop> GetPotentialTargets(Troop source, CombatMethod cm, GameScenario scenario)
         {
             var targets = new List<Troop>();
-
-            if (skill.IsDamage || skill.IsControl)
+            int range = 1; // Default range
+            
+            if (cm.ViewingHostile)
             {
                 // 攻击性技能：寻找敌军目标
-                targets.AddRange(scenario.GetEnemyTroops(source.BelongedFaction)
-                    .Where(t => IsInRange(source, t, skill.Range)));
+                targets.AddRange(GetEnemyTroops(scenario, source.BelongedFaction)
+                    .Where(t => IsInRange(source, t, range)));
             }
-            
-            if (skill.IsHealing || skill.IsBuff)
+            else
             {
                 // 支援性技能：寻找友军目标
-                targets.AddRange(scenario.GetFriendlyTroops(source.BelongedFaction)
-                    .Where(t => IsInRange(source, t, skill.Range)));
+                targets.AddRange(GetFriendlyTroops(scenario, source.BelongedFaction)
+                    .Where(t => IsInRange(source, t, range)));
             }
 
             return targets;
+        }
+
+        private float EvaluateCombatMethod(Troop source, CombatMethod cm, Troop target, GameScenario scenario)
+        {
+            float score = 0;
+            if (cm.ViewingHostile)
+            {
+                score += cm.Combativity * 2;
+                if (target.Quantity < 5000) score += 50; 
+            }
+            else
+            {
+                score += cm.Combativity;
+                if (target.Quantity < 5000) score += 50;
+            }
+            return score;
         }
 
         private AIDecision EvaluateMovement(Troop troop, GameScenario scenario)
@@ -125,17 +159,19 @@ namespace GameGlobal
                 Score = 0
             };
 
-            // 简化的移动评估：向最近的敌人移动
-            var nearestEnemy = scenario.GetNearestEnemy(troop);
+            var nearestEnemy = GetNearestEnemy(scenario, troop);
             if (nearestEnemy != null)
             {
-                var distance = CalculateDistance(troop.Position, nearestEnemy.Position);
-                
-                // 如果距离适中，移动有价值
-                if (distance > 2 && distance < 10)
+                float distance = GetDistance(troop.Position, nearestEnemy.Position);
+                // Simple score: closer to enemy is better if healthy
+                if (troop.Quantity > 5000)
                 {
-                    decision.Score = 50 - distance * 5;
-                    decision.TargetPosition = GetOptimalMovePosition(troop, nearestEnemy, scenario);
+                    decision.Score = 100 - distance;
+                }
+                else
+                {
+                    // Retreat if weak
+                    decision.Score = distance * 2;
                 }
             }
 
@@ -144,117 +180,85 @@ namespace GameGlobal
 
         private AIDecision EvaluateDefense(Troop troop, GameScenario scenario)
         {
-            var decision = new AIDecision
-            {
-                Action = AIActionType.Defend,
-                Score = 0
-            };
-
-            // 如果血量较低且有敌人接近，考虑防御
-            if (troop.HpRatio < 0.4f)
-            {
-                var nearbyEnemies = scenario.GetTroopsInRadius(troop.Position, 3)
-                    .Where(t => troop.IsEnemy(t))
-                    .Count();
-
-                if (nearbyEnemies > 0)
-                {
-                    decision.Score = 100 + nearbyEnemies * 20;
-                }
-            }
-
-            return decision;
+            return new AIDecision { Action = AIActionType.Wait, Score = 10 };
         }
 
-        private bool IsInRange(Troop source, Troop target, int range)
+        private bool IsInRange(Troop a, Troop b, int range)
         {
-            return CalculateDistance(source.Position, target.Position) <= range;
-        }
-
-        private int CalculateDistance(Point pos1, Point pos2)
-        {
-            return Math.Abs(pos1.X - pos2.X) + Math.Abs(pos1.Y - pos2.Y);
-        }
-
-        private Point GetOptimalMovePosition(Troop troop, Troop target, GameScenario scenario)
-        {
-            // 简化实现：向目标方向移动一格
-            var dx = Math.Sign(target.Position.X - troop.Position.X);
-            var dy = Math.Sign(target.Position.Y - troop.Position.Y);
-            
-            return new Point(troop.Position.X + dx, troop.Position.Y + dy);
+            return GetDistance(a.Position, b.Position) <= range;
         }
 
         private int GenerateCacheKey(Troop troop, GameScenario scenario)
         {
-            // 简化的缓存键生成
-            return HashCode.Combine(
-                troop.ID,
-                troop.Position.GetHashCode(),
-                troop.CurrentHP,
-                scenario.CurrentTurn
-            );
+            return troop.ID ^ GetDayCount(scenario.Date);
         }
 
-        /// <summary>
-        /// 清理过期的缓存
-        /// </summary>
-        public void CleanupCache()
+        private IEnumerable<Troop> GetEnemyTroops(GameScenario scenario, Faction faction)
         {
-            var expiredKeys = _decisionCache
-                .Where(kvp => !kvp.Value.IsValid())
-                .Select(kvp => kvp.Key)
-                .ToList();
-
-            foreach (var key in expiredKeys)
+            foreach (Troop t in scenario.Troops)
             {
-                _decisionCache.Remove(key);
+                if (t.BelongedFaction != faction) yield return t;
             }
         }
+
+        private IEnumerable<Troop> GetFriendlyTroops(GameScenario scenario, Faction faction)
+        {
+            foreach (Troop t in scenario.Troops)
+            {
+                if (t.BelongedFaction == faction) yield return t;
+            }
+        }
+
+        private Troop GetNearestEnemy(GameScenario scenario, Troop source)
+        {
+            Troop nearest = null;
+            double minDist = double.MaxValue;
+            foreach (Troop t in GetEnemyTroops(scenario, source.BelongedFaction))
+            {
+                double dist = GetDistance(source.Position, t.Position);
+                if (dist < minDist)
+                {
+                    minDist = dist;
+                    nearest = t;
+                }
+            }
+            return nearest;
+        }
+
+        private float GetDistance(Point p1, Point p2)
+        {
+            int dx = p1.X - p2.X;
+            int dy = p1.Y - p2.Y;
+            return (float)Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        public float CalculateThreat(Troop me, Point pos, int difficulty)
+        {
+             return 0.0f;
+        }
     }
 
-    /// <summary>
-    /// AI决策结果
-    /// </summary>
-    public class AIDecision
+    public struct AIDecision
     {
-        public AIActionType Action { get; set; }
-        public float Score { get; set; }
-        public Skill Skill { get; set; }
-        public Troop Target { get; set; }
-        public Point? TargetPosition { get; set; }
+        public AIActionType Action;
+        public float Score;
+        public Skill Skill;
+        public object Target;
     }
 
-    /// <summary>
-    /// AI行动类型
-    /// </summary>
     public enum AIActionType
     {
-        Wait,       // 等待
-        Move,       // 移动
-        UseSkill,   // 使用技能
-        Defend,     // 防御
-        Retreat     // 撤退
+        Wait,
+        Move,
+        UseSkill,
+        Defend,
+        Retreat
     }
 
-    /// <summary>
-    /// AI决策缓存
-    /// </summary>
-    internal class AIDecisionCache
+    public class AIDecisionCache
     {
-        public AIDecision Decision { get; }
-        public DateTime CreatedTime { get; }
-        private static readonly TimeSpan CacheExpiry = TimeSpan.FromSeconds(5);
-
-        public AIDecisionCache(AIDecision decision, DateTime createdTime)
-        {
-            Decision = decision;
-            CreatedTime = createdTime;
-        }
-
-        public bool IsValid()
-        {
-            return DateTime.Now - CreatedTime < CacheExpiry;
-        }
+        public AIDecision Decision;
+        public int Timestamp;
+        public bool IsValid(int currentTimestamp) => Timestamp == currentTimestamp;
     }
 }

@@ -6,7 +6,7 @@ using System.Runtime.Serialization;
 namespace GameObjects.PersonDetail
 {
     [DataContract]
-    public class Biography : GameObject
+    public partial class Biography : GameObject
     {
         private string brief = "";
         private int factionColor;

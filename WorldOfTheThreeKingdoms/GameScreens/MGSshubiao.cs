@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
@@ -59,6 +59,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public override void EarlyMouseRightDown()
         {
             base.EarlyMouseRightDown();
+            
+            // 🎯 右键菜单必须在 Early 阶段处理，因为 Later 阶段鼠标状态已经更新
+            if (!this.editMode)
+            {
+                this.ContextMenuRightClick();
+            }
         }
 
         public override void EarlyMouseRightUp()
@@ -111,8 +117,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     int x = (InputManager.PoX - this.mainMapLayer.LeftEdge) / Session.Current.Scenario.ScenarioMap.TileWidth;
                     int y = (InputManager.PoY - this.mainMapLayer.TopEdge) / Session.Current.Scenario.ScenarioMap.TileHeight;
-                    Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
-                    this.mainMapLayer.chongsheditukuaitupian(x, y);
+                    
+                    // 添加边界检查
+                    if (x >= 0 && y >= 0 && 
+                        x < Session.Current.Scenario.ScenarioMap.MapDimensions.X && 
+                        y < Session.Current.Scenario.ScenarioMap.MapDimensions.Y)
+                    {
+                        // System.Diagnostics.Debug.WriteLine($"[TerrainEdit] 左键点击 - 位置({x},{y}), 地形类型: {this.ditukuaidezhi}");
+                        Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
+                        this.mainMapLayer.chongsheditukuaitupian(x, y);
+                    }
+                    else
+                    {
+                        // System.Diagnostics.Debug.WriteLine($"[TerrainEdit] 左键点击越界 - 位置({x},{y}), 地图大小({Session.Current.Scenario.ScenarioMap.MapDimensions.X},{Session.Current.Scenario.ScenarioMap.MapDimensions.Y})");
+                    }
                 } 
                 else if (Session.Current.Scenario.CurrentPlayer != null && 
                     this.PeekUndoneWork().Kind == UndoneWorkKind.None && Session.Current.Scenario.CurrentPlayer == Session.Current.Scenario.CurrentFaction)
@@ -154,10 +172,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         int x = (InputManager.PoX - this.mainMapLayer.LeftEdge) / Session.Current.Scenario.ScenarioMap.TileWidth;
                         int y = (InputManager.PoY - this.mainMapLayer.TopEdge) / Session.Current.Scenario.ScenarioMap.TileHeight;
-                        if (Session.Current.Scenario.ScenarioMap.MapData[x, y] != this.ditukuaidezhi)
+                        
+                        // 添加边界检查
+                        if (x >= 0 && y >= 0 && 
+                            x < Session.Current.Scenario.ScenarioMap.MapDimensions.X && 
+                            y < Session.Current.Scenario.ScenarioMap.MapDimensions.Y)
                         {
-                            Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
-                            this.mainMapLayer.chongsheditukuaitupian(x, y);
+                            if (Session.Current.Scenario.ScenarioMap.MapData[x, y] != this.ditukuaidezhi)
+                            {
+                                Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
+                                this.mainMapLayer.chongsheditukuaitupian(x, y);
+                                // System.Diagnostics.Debug.WriteLine($"[TerrainEdit] 拖拽绘制 - 位置({x},{y}), 地形类型: {this.ditukuaidezhi}");
+                            }
                         }
                     }
 
@@ -165,10 +191,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         int x = (InputManager.PoX - this.mainMapLayer.LeftEdge) / Session.Current.Scenario.ScenarioMap.TileWidth;
                         int y = (InputManager.PoY - this.mainMapLayer.TopEdge) / Session.Current.Scenario.ScenarioMap.TileHeight;
-                        if (Session.Current.Scenario.ScenarioMap.MapData[x, y] != 0)
+                        
+                        // 添加边界检查
+                        if (x >= 0 && y >= 0 && 
+                            x < Session.Current.Scenario.ScenarioMap.MapDimensions.X && 
+                            y < Session.Current.Scenario.ScenarioMap.MapDimensions.Y)
                         {
-                            Session.Current.Scenario.ScenarioMap.MapData[x, y] = 0;
-                            this.mainMapLayer.chongsheditukuaitupian(x, y);
+                            if (Session.Current.Scenario.ScenarioMap.MapData[x, y] != this.ditukuaidezhi)
+                            {
+                                Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
+                                this.mainMapLayer.chongsheditukuaitupian(x, y);
+                                // System.Diagnostics.Debug.WriteLine($"[TerrainEdit] 右键拖拽绘制 - 位置({x},{y}), 地形类型: {this.ditukuaidezhi}");
+                            }
                         }
                     }
                 }
@@ -177,23 +211,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void HandleLaterMouseRightDown()
         {
+            // ✅ 修复：只保留编辑模式的处理，非编辑模式的右键已在 EarlyMouseRightDown 处理
             if (this.editMode)
             {
                 if ((InputManager.MouseStatePre.RightButton == ButtonState.Released) && (InputManager.NowMouse.RightButton == ButtonState.Pressed))
                 {
                     int x = (InputManager.NowMouse.X - this.mainMapLayer.LeftEdge) / Session.Current.Scenario.ScenarioMap.TileWidth;
                     int y = (InputManager.NowMouse.Y - this.mainMapLayer.TopEdge) / Session.Current.Scenario.ScenarioMap.TileHeight;
-                    Session.Current.Scenario.ScenarioMap.MapData[x, y] = 0;
-                    this.mainMapLayer.chongsheditukuaitupian(x, y);
+                    
+                    // 添加边界检查
+                    if (x >= 0 && y >= 0 && 
+                        x < Session.Current.Scenario.ScenarioMap.MapDimensions.X && 
+                        y < Session.Current.Scenario.ScenarioMap.MapDimensions.Y)
+                    {
+                        Session.Current.Scenario.ScenarioMap.MapData[x, y] = this.ditukuaidezhi;
+                        this.mainMapLayer.chongsheditukuaitupian(x, y);
+                    }
                 }
             }
-            else
-            {
-                if ((InputManager.MouseStatePre.RightButton == ButtonState.Released) && (InputManager.NowMouse.RightButton == ButtonState.Pressed))
-                {
-                    this.ContextMenuRightClick();
-                }
-            }
+            // ✅ 删除了 else 分支，避免重复调用 ContextMenuRightClick()
         }
 
         private void HandleLaterMouseRightUp()

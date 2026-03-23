@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using GameObjects;
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     // 对话类型枚举
     public enum DialogueType
@@ -51,7 +51,7 @@ namespace GameGlobal
 
         // 新增匹配条件
         [XmlAttribute]
-        public int MaxLoyalty { get; set; } = 100; // 默认100，即不限制低忠诚
+        public int MaxLoyalty { get; set; } = 999; // 修改为更大默认值
 
         [XmlAttribute]
         public int MinLoyalty { get; set; } = 0; // 最小忠诚度
@@ -81,6 +81,32 @@ namespace GameGlobal
         // 对话内容
         public string LeaderText { get; set; }
         public string AdvisorText { get; set; }
+
+        public static string Replace(string text, Person leader, Person advisor)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            string result = text;
+            result = result.Replace("{}", advisor.Name);
+            result = result.Replace("{0}", advisor.Name);
+            result = result.Replace("{1}", leader.Name);
+            
+            // Use AppellationSettings to get proper addresses
+            var leaderCallings = WorldOfTheThreeKingdoms.GameManager.AppellationSettings.GetCallings(
+                leader.BelongedFaction, advisor, leader);
+            var advisorCallings = WorldOfTheThreeKingdoms.GameManager.AppellationSettings.GetCallings(
+                leader.BelongedFaction, leader, advisor);
+            
+            result = result.Replace("{2}", leaderCallings.Address ?? leader.Name);
+            result = result.Replace("{3}", advisorCallings.Address ?? advisor.Name);
+            result = result.Replace("{SelfName}", leader.Name);
+            result = result.Replace("{TargetName}", advisor.Name);
+            result = result.Replace("{SelfAddress}", leaderCallings.SelfAddress ?? "我");
+            result = result.Replace("{TargetAddress}", advisorCallings.Address ?? advisor.Name);
+
+            return result;
+        }
+
 
         /// <summary>
         /// 计算匹配权重 (用于排序，越具体的匹配权重越高)
@@ -117,114 +143,113 @@ namespace GameGlobal
                 return -1; // 不匹配
             }
 
-            // --- 3. 罢免对话检查 (Recall) ---
-            if (Type == DialogueType.Recall)
+            // --- 3. 匹配人物ID (如果是指定人物但不是Bond) ---
+            if (LeaderID != -1)
             {
-                // 如果 XML 里配置了 Type="Recall"，就只匹配 Recall 的请求
-                // 逻辑与 Personality 类似，检查智力或关系
-                
-                // 优先匹配关系好的 (Relation="Love")
-                if (Relation == RelationType.Love)
-                {
-                    if (advisor.CheckRelation(leader) == 1) return 500;
-                    return -1;
-                }
-                
-                // 其次匹配智力低的 (MaxIntelligence)
-                if (MaxIntelligence < 999)
-                {
-                    if (advisor.Intelligence <= MaxIntelligence) return 200;
-                    return -1;
-                }
-                
-                // 通用保底
-                return 10;
+                if (leader.ID != LeaderID) return -1;
+                score += 800;
+            }
+            if (AdvisorID != -1)
+            {
+                if (advisor.ID != AdvisorID) return -1;
+                score += 800;
             }
 
             // --- 4. 性格/属性检查 ---
-            if (Type == DialogueType.Personality)
+            // 检查君主性格
+            if (LeaderKind != -1)
             {
-                bool conditionMet = false;
+                if (leader.Character == null || leader.Character.ID != LeaderKind) return -1;
+                score += 100;
+            }
 
-                // 检查君主性格
-                if (LeaderKind != -1)
-                {
-                    if (leader.Character.ID != LeaderKind) return -1;
-                    score += 100;
-                    conditionMet = true;
-                }
+            // 检查军师性格
+            if (AdvisorKind != -1)
+            {
+                if (advisor.Character == null || advisor.Character.ID != AdvisorKind) return -1;
+                score += 80;
+            }
 
-                // 检查军师性格
-                if (AdvisorKind != -1)
-                {
-                    if (advisor.Character.ID != AdvisorKind) return -1;
-                    score += 80;
-                    conditionMet = true;
-                }
+            // 检查军师智力
+            if (advisor.Intelligence < MinIntelligence || advisor.Intelligence > MaxIntelligence) return -1;
+            if (MinIntelligence > 0 || MaxIntelligence < 999)
+            {
+                score += 50;
+            }
 
-                // 检查军师智力
-                if (advisor.Intelligence < MinIntelligence || advisor.Intelligence > MaxIntelligence) return -1;
-                if (MinIntelligence > 0 || MaxIntelligence < 999)
-                {
-                    score += 50;
-                    conditionMet = true;
-                }
+            // 检查忠诚度
+            if (advisor.Loyalty < MinLoyalty || advisor.Loyalty > MaxLoyalty) return -1;
+            if (MinLoyalty > 0 || MaxLoyalty < 100)
+            {
+                score += 40;
+            }
 
-                // 检查忠诚度
-                if (advisor.Loyalty < MinLoyalty || advisor.Loyalty > MaxLoyalty) return -1;
-                if (MinLoyalty > 0 || MaxLoyalty < 100)
-                {
-                    score += 40;
-                    conditionMet = true;
-                }
+            // 检查野心 (假设 Ambition > 80 算高野心，与 AdvisorAppointmentDialogueManager 保持一致)
+            if (HighAmbition && advisor.Ambition <= 80) return -1;
+            if (HighAmbition)
+            {
+                score += 30;
+            }
 
-                // 检查野心 (假设 Ambition > 60 算高野心)
-                if (HighAmbition && advisor.Ambition <= 60) return -1;
-                if (HighAmbition)
-                {
-                    score += 30;
-                    conditionMet = true;
-                }
+            // 检查年龄
+            if (advisor.Age < MinAge || advisor.Age > MaxAge) return -1;
+            if (MinAge > 0 || MaxAge < 999)
+            {
+                score += 20;
+            }
 
-                // 检查年龄
-                if (advisor.Age < MinAge || advisor.Age > MaxAge) return -1;
-                if (MinAge > 0 || MaxAge < 999)
-                {
-                    score += 20;
-                    conditionMet = true;
-                }
+            // 检查统率
+            if (advisor.Command < MinCommand) return -1;
+            if (MinCommand > 0)
+            {
+                score += 25;
+            }
 
-                // 检查统率
-                if (advisor.Command < MinCommand) return -1;
-                if (MinCommand > 0)
-                {
-                    score += 25;
-                    conditionMet = true;
-                }
-
-                // 检查政治
-                if (advisor.Politics < MinPolitics) return -1;
-                if (MinPolitics > 0)
-                {
-                    score += 25;
-                    conditionMet = true;
-                }
-
-                // 如果没有任何具体条件限制 (纯泛型Personality)，权重较低
-                return conditionMet ? score : -1;
+            // 检查政治
+            if (advisor.Politics < MinPolitics) return -1;
+            if (MinPolitics > 0)
+            {
+                score += 25;
             }
 
             // Default
-            return 1 + score;
+            return Math.Max(1 + score, 1);
         }
+    }
+
+    /// <summary>
+    /// 对话条目集合，对应 XML 中的 <Entries>
+    /// </summary>
+    public class DialogueEntries
+    {
+        [XmlAttribute("Type")]
+        public string Type { get; set; } = "";
+
+        [XmlElement("Entry")]
+        public List<DialogueEntry> Entries { get; set; } = new List<DialogueEntry>();
     }
 
     // 对应 XML 中的根节点 <DialogueConfig>
     [XmlRoot("DialogueConfig")]
     public class DialogueConfig
     {
+        [XmlElement("Entries")]
+        public List<DialogueEntries> EntriesGroups { get; set; } = new List<DialogueEntries>();
+
         [XmlElement("Entry")]
         public List<DialogueEntry> Entries { get; set; } = new List<DialogueEntry>();
+        
+        /// <summary>
+        /// 获取指定类型的对话条目列表
+        /// </summary>
+        public List<DialogueEntry> GetEntriesByType(string type)
+        {
+            var group = EntriesGroups.FirstOrDefault(g => g.Type.Equals(type, StringComparison.OrdinalIgnoreCase));
+            if (group != null) return group.Entries;
+            
+            // 如果没有匹配的分组，则在主列表中查找
+            return Entries; 
+        }
     }
 
     // 【新增】任命军师对话配置类
@@ -259,7 +284,7 @@ namespace GameGlobal
         {
             if (_appointmentConfig == null)
             {
-                _appointmentConfig = LoadAppointmentDialogueConfig("Content/Data/AppointmentDialogues.xml");
+                _appointmentConfig = LoadAppointmentDialogueConfig("Content/Data/Plugins/AppointmentDialogues.xml");
             }
             return _appointmentConfig;
         }
@@ -271,7 +296,7 @@ namespace GameGlobal
         {
             if (_recallConfig == null)
             {
-                _recallConfig = LoadRecallDialogueConfig("Content/Data/RecallDialogues.xml");
+                _recallConfig = LoadRecallDialogueConfig("Content/Data/Plugins/RecallDialogues.xml");
             }
             return _recallConfig;
         }

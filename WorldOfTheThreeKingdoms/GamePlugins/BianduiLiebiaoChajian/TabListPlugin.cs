@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -162,7 +162,7 @@ namespace BianduiLiebiaoChajian
             this.tabList.TabTextBuilder.SetFreeTextBuilder(font);
 
             this.tabList.TabTextColor = color;
-            this.tabList.TabTextAlign = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.tabList.TabTextAlign = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(16);
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
 
@@ -170,7 +170,7 @@ namespace BianduiLiebiaoChajian
 
 
             this.tabList.ColumnTextColor = color;
-            this.tabList.ColumnTextAlign = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.tabList.ColumnTextAlign = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(17);
             this.tabList.SelectSoundFile = @"Content\Sound\" + node.Attributes.GetNamedItem("Select").Value;
             node = nextSibling.ChildNodes.Item(18);

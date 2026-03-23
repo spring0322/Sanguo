@@ -20,7 +20,7 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
 
             if (person.LocationArchitecture != null)
             {
-                Faction faction = person.LocationArchitecture.BelongedFaction as Faction;
+                Faction faction = person.LocationArchitecture.BelongedFaction is Faction ? (Faction)person.LocationArchitecture.BelongedFaction : null;
 
                 if (person.BelongedFaction == faction )
                 {
@@ -33,3 +33,4 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
         
     }
 }
+

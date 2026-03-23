@@ -8,8 +8,11 @@ namespace GameObjects.TroopDetail
     [DataContract]
     public class StratagemTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, Stratagem> Stratagems = new Dictionary<int, Stratagem>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, Stratagem>))]
+        public Dictionary<int, Stratagem> Stratagems = [];
 
         public bool AddStratagem(Stratagem Stratagem)
         {

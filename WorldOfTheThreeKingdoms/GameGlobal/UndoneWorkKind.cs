@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum UndoneWorkKind
     {
-        None,
+        None = 0,
         ContextMenu,
         Frame,
         Dialog,

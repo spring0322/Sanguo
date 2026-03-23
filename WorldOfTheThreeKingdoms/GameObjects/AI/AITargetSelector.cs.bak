@@ -1,0 +1,245 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using GameObjects;
+using WorldOfTheThreeKingdoms.GameGlobal;
+
+namespace GameObjects.AI;
+
+/// <summary>
+/// AI 目标选择、集火与行动顺序协同系统
+/// 🔥 Cold Path：AI 决策阶段调用
+/// </summary>
+public static class AITargetSelector
+{
+    // ================= 1. 行动顺序重排 =================
+    
+    /// <summary>
+    /// 对回合内所有可行动�?AI 部队进行重排�?
+    /// 战术逻辑：辅�?Buff) -> 法师(控制) -> 肉盾(卡位) -> DPS(收割)
+    /// </summary>
+    public static void SortActionOrder(List<Troop> activeTroops)
+    {
+        // 🔥 使用原地 Sort 避免创建新列表，传入静态方法引用避免闭包的堆分�?
+        activeTroops.Sort(CompareRolePriority);
+    }
+
+    private static int CompareRolePriority(Troop a, Troop b)
+    {
+        int priorityA = GetRolePriority(a.CurrentRole);
+        int priorityB = GetRolePriority(b.CurrentRole);
+        return priorityA.CompareTo(priorityB);
+    }
+
+    private static int GetRolePriority(TroopRole role)
+    {
+        var config = AITacticalConfigManager.Config.TacticalPositioning;
+        
+        if (config?.ActionPriority == null)
+        {
+            // 默认优先�?
+            return role switch
+            {
+                TroopRole.Support => 1,
+                TroopRole.Mage => 2,
+                TroopRole.Tank => 3,
+                TroopRole.DPS => 4,
+                TroopRole.Logistics => 5,
+                _ => 99
+            };
+        }
+
+        string roleName = role.ToString();
+        if (config.ActionPriority.TryGetValue(roleName, out int priority))
+        {
+            return priority;
+        }
+
+        return 99;
+    }
+
+    // ================= 2. 仇恨与集火系�?=================
+    
+    /// <summary>
+    /// 获取当前部队的最佳攻击目�?
+    /// </summary>
+    public static Troop SelectBestTarget(
+        Troop attacker, 
+        IReadOnlyList<Troop> enemies, 
+        IReadOnlyList<Troop> allies)
+    {
+        Troop bestTarget = null;
+        float highestScore = float.MinValue;
+
+        // 🔥 避免 LINQ 遍历，保�?AOT 极速执�?
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            Troop target = enemies[i];
+
+            // 基础校验：是否在真实攻击范围�?
+            if (!IsInRange(attacker, target))
+                continue;
+
+            float score = CalculateAggroScore(attacker, target, allies);
+
+            if (score > highestScore)
+            {
+                highestScore = score;
+                bestTarget = target;
+            }
+        }
+
+        return bestTarget;
+    }
+
+    private static float CalculateAggroScore(
+        Troop attacker, 
+        Troop target, 
+        IReadOnlyList<Troop> allies)
+    {
+        var config = AITacticalConfigManager.Config.TacticalPositioning?.TargetSelection;
+        
+        float score = 0;
+
+        // 1. 基础斩杀线逻辑（优先消灭残编部队）
+        float expectedDamage = EstimateExpectedDamage(attacker, target);
+        int targetQuantity = Math.Max(1, target.Quantity);
+        
+        float executionThreshold = config?.ExecutionThresholdBonus ?? 500f;
+        score += (expectedDamage / targetQuantity) * executionThreshold;
+
+        // 2. 状态异常集火（核心仇恨机制�?
+        bool isConfused = target.Status == TroopStatus.混乱;
+        bool isOnFire = HasInfluence(target, 392); // 着火状�?ID
+
+        if (isConfused || isOnFire)
+        {
+            float statusBonus = config?.StatusAbnormalBonus ?? 2000f;
+            score += statusBonus; // 痛打落水狗，绝对优先集火
+        }
+
+        // 3. 基于自身 Role 的特定战术判�?
+        switch (attacker.CurrentRole)
+        {
+            case TroopRole.DPS:
+                // DPS 战术：优先攻击被我方 Tank 死死卡住的单位，实现"关门打狗"
+                if (IsBlockedByAllyTank(target, allies))
+                {
+                    float blockedBonus = config?.BlockedByTankBonus ?? 1500f;
+                    score += blockedBonus;
+                }
+                break;
+
+            case TroopRole.Mage:
+                // 法师战术：优先控制没有处于混乱状态且智力偏低的单�?
+                if (!isConfused)
+                {
+                    // 智力越低，越容易被控，分数越�?
+                    float intMultiplier = config?.LowIntelligenceMultiplier ?? 10f;
+                    score += (100 - target.Leader.Intelligence) * intMultiplier;
+                }
+                else
+                {
+                    // 严禁法师把宝贵的控制技能浪费在已经混乱的单位身�?
+                    float confusedPenalty = config?.AlreadyConfusedPenalty ?? -5000f;
+                    score += confusedPenalty;
+                }
+                break;
+
+            case TroopRole.Support:
+                // 辅助单位如果能攻击，通常是为了补最后一刀，否则仇恨值极�?
+                float supportPenalty = config?.SupportAttackPenalty ?? -1000f;
+                score += supportPenalty;
+                break;
+        }
+
+        return score;
+    }
+
+    // ================= 辅助验证方法 =================
+    
+    /// <summary>
+    /// 检查部队是否有特定影响（Influence�?
+    /// </summary>
+    private static bool HasInfluence(Troop troop, int influenceId)
+    {
+        // 🔥 数据契约：InfluencesApplying 应该在部队初始化时创�?
+        if (troop.InfluencesApplying == null)
+        {
+            System.Diagnostics.Debug.WriteLine($"[目标选择] 警告：部�?{troop.ID} �?InfluencesApplying �?null");
+            return false;
+        }
+
+        // 🔥 使用 for 循环避免迭代器分�?
+        for (int i = 0; i < troop.InfluencesApplying.Count; i++)
+        {
+            var influence = troop.InfluencesApplying[i];
+            if (influence?.Kind?.ID == influenceId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 检查敌军是否被我方 Tank 卡住
+    /// </summary>
+    private static bool IsBlockedByAllyTank(Troop enemy, IReadOnlyList<Troop> allies)
+    {
+        Point enemyPos = enemy.Position;
+
+        for (int i = 0; i < allies.Count; i++)
+        {
+            var ally = allies[i];
+            
+            if (ally.CurrentRole == TroopRole.Tank)
+            {
+                Point allyPos = ally.Position;
+                
+                // 如果敌方被我�?Tank 贴脸，判定为被卡住（ZOC 规则�?
+                if (enemyPos.ManhattanDistance(allyPos) == 1)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 检查是否在攻击范围�?
+    /// </summary>
+    private static bool IsInRange(Troop attacker, Troop target)
+    {
+        // 🔥 使用项目实际的攻击范围属�?
+        int attackRange = attacker.OffenceRadius;
+        Point attackerPos = attacker.Position;
+        Point targetPos = target.Position;
+
+        int distance = attackerPos.ManhattanDistance(targetPos);
+        return distance <= attackRange;
+    }
+
+    /// <summary>
+    /// 估算预期伤害（简化版本）
+    /// </summary>
+    private static float EstimateExpectedDamage(Troop attacker, Troop target)
+    {
+        // 🔥 简化计算：基于攻击力和防御力的差�?
+        // 实际使用时可以接入更复杂的伤害计算公�?
+        
+        int attackPower = attacker.Offence;
+        int defensePower = target.Defence;
+
+        float baseDamage = Math.Max(1, attackPower - defensePower * 0.5f);
+        
+        // 考虑部队规模影响
+        float scaleFactor = attacker.Quantity / 1000f;
+        
+        return baseDamage * scaleFactor;
+    }
+}
+#endif

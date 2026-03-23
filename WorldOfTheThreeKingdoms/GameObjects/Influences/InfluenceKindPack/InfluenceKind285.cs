@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using GameObjects.Conditions;
 using System;
@@ -12,6 +12,7 @@ namespace GameObjects.Influences.InfluenceKindPack
 
     [DataContract]public class InfluenceKind285 : InfluenceKind
     {
+        [DataMember]
         private int conditionID;
 
        

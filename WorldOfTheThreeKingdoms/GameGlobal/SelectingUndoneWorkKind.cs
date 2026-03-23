@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum SelectingUndoneWorkKind
     {
-        None,
+        None = 0,
         ArchitectureAvailableContactArea,
         ConvincePersonPosition,
         AssassinatePosition,

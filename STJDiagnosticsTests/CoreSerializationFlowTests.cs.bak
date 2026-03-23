@@ -1,0 +1,362 @@
+using NUnit.Framework;
+using System;
+using System.IO;
+using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization;
+using WorldOfTheThreeKingdoms.Serialization.DTOs;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Task 7.1: Manual test for core serialization flow
+    /// Tests the complete save/load cycle with a simple GameScenario
+    /// Requirements: 1.1, 1.2, 1.3
+    /// </summary>
+    [TestFixture]
+    public class CoreSerializationFlowTests
+    {
+        private string _testDirectory;
+        private SerializationManager _serializationManager;
+        
+        [SetUp]
+        public void Setup()
+        {
+            // Create a temporary directory for test files
+            _testDirectory = Path.Combine(Path.GetTempPath(), "SerializationTests_" + Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_testDirectory);
+            
+            // Initialize serialization manager
+            _serializationManager = new SerializationManager();
+            
+            Console.WriteLine($"Test directory: {_testDirectory}");
+        }
+        
+        [TearDown]
+        public void TearDown()
+        {
+            // Clean up test directory
+            if (Directory.Exists(_testDirectory))
+            {
+                try
+                {
+                    Directory.Delete(_testDirectory, recursive: true);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Warning: Failed to delete test directory: {ex.Message}");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Test 7.1: Complete save/load cycle with simple GameScenario
+        /// Creates a simple scenario with Persons, Factions, and Architectures
+        /// Saves it, loads it back, and verifies all objects and references are correct
+        /// </summary>
+        [Test]
+        public void Test_CompleteSaveLoadCycle_WithSimpleScenario()
+        {
+            Console.WriteLine("=== Starting Core Serialization Flow Test ===");
+            
+            // ===== STEP 1: Create a simple GameScenario =====
+            Console.WriteLine("\n[STEP 1] Creating simple GameScenario...");
+            GameScenario originalScenario = CreateSimpleTestScenario();
+            
+            // Verify original scenario
+            Console.WriteLine($"  - Created {originalScenario.Persons.Count} persons");
+            Console.WriteLine($"  - Created {originalScenario.Factions.Count} factions");
+            Console.WriteLine($"  - Created {originalScenario.Architectures.Count} architectures");
+            
+            Assert.That(originalScenario.Persons.Count, Is.EqualTo(3), "Should have 3 persons");
+            Assert.That(originalScenario.Factions.Count, Is.EqualTo(2), "Should have 2 factions");
+            Assert.That(originalScenario.Architectures.Count, Is.EqualTo(2), "Should have 2 architectures");
+            
+            // ===== STEP 2: Save the scenario =====
+            Console.WriteLine("\n[STEP 2] Saving GameScenario...");
+            string savePath = Path.Combine(_testDirectory, "test_save.sav.gz");
+            string metaPath = savePath + ".meta";
+            
+            _serializationManager.SaveGame(originalScenario, savePath);
+            Console.WriteLine($"  - Saved to: {savePath}");
+            
+            // ===== STEP 3: Verify files were created =====
+            Console.WriteLine("\n[STEP 3] Verifying files were created...");
+            
+            Assert.That(File.Exists(savePath), Is.True, ".sav.gz file should exist");
+            Console.WriteLine($"  ✓ .sav.gz file exists: {savePath}");
+            
+            Assert.That(File.Exists(metaPath), Is.True, ".meta file should exist");
+            Console.WriteLine($"  ✓ .meta file exists: {metaPath}");
+            
+            // Check file sizes
+            FileInfo saveFileInfo = new FileInfo(savePath);
+            FileInfo metaFileInfo = new FileInfo(metaPath);
+            
+            Console.WriteLine($"  - .sav.gz file size: {saveFileInfo.Length} bytes");
+            Console.WriteLine($"  - .meta file size: {metaFileInfo.Length} bytes");
+            
+            Assert.That(saveFileInfo.Length, Is.GreaterThan(0), ".sav.gz file should not be empty");
+            Assert.That(metaFileInfo.Length, Is.GreaterThan(0), ".meta file should not be empty");
+            Assert.That(metaFileInfo.Length, Is.LessThan(1024), ".meta file should be < 1KB");
+            
+            // ===== STEP 4: Load the scenario =====
+            Console.WriteLine("\n[STEP 4] Loading GameScenario...");
+            GameScenario loadedScenario = _serializationManager.LoadGame(savePath);
+            Console.WriteLine($"  - Loaded from: {savePath}");
+            
+            Assert.That(loadedScenario, Is.Not.Null, "Loaded scenario should not be null");
+            
+            // ===== STEP 5: Verify all objects were restored =====
+            Console.WriteLine("\n[STEP 5] Verifying objects were restored...");
+            
+            Assert.That(loadedScenario.Persons.Count, Is.EqualTo(originalScenario.Persons.Count), 
+                "Person count should match");
+            Console.WriteLine($"  ✓ Person count matches: {loadedScenario.Persons.Count}");
+            
+            Assert.That(loadedScenario.Factions.Count, Is.EqualTo(originalScenario.Factions.Count), 
+                "Faction count should match");
+            Console.WriteLine($"  ✓ Faction count matches: {loadedScenario.Factions.Count}");
+            
+            Assert.That(loadedScenario.Architectures.Count, Is.EqualTo(originalScenario.Architectures.Count), 
+                "Architecture count should match");
+            Console.WriteLine($"  ✓ Architecture count matches: {loadedScenario.Architectures.Count}");
+            
+            // ===== STEP 6: Verify object references were correctly restored =====
+            Console.WriteLine("\n[STEP 6] Verifying object references...");
+            
+            // Get persons from both scenarios
+            Person originalPerson1 = originalScenario.Persons.GetGameObject(1) as Person;
+            Person loadedPerson1 = loadedScenario.Persons.GetGameObject(1) as Person;
+            
+            Assert.That(loadedPerson1, Is.Not.Null, "Person 1 should exist in loaded scenario");
+            Assert.That(loadedPerson1.Name, Is.EqualTo(originalPerson1.Name), "Person name should match");
+            Console.WriteLine($"  ✓ Person 1 name matches: {loadedPerson1.Name}");
+            
+            // Verify faction reference
+            Assert.That(loadedPerson1.BelongedFaction, Is.Not.Null, "Person 1 should have a faction");
+            Assert.That(loadedPerson1.BelongedFaction.ID, Is.EqualTo(originalPerson1.BelongedFaction.ID), 
+                "Faction ID should match");
+            Console.WriteLine($"  ✓ Person 1 faction reference restored: Faction {loadedPerson1.BelongedFaction.ID}");
+            
+            // Verify faction name
+            Assert.That(loadedPerson1.BelongedFaction.Name, Is.EqualTo(originalPerson1.BelongedFaction.Name), 
+                "Faction name should match");
+            Console.WriteLine($"  ✓ Faction name matches: {loadedPerson1.BelongedFaction.Name}");
+            
+            // Verify person without faction
+            Person originalPerson3 = originalScenario.Persons.GetGameObject(3) as Person;
+            Person loadedPerson3 = loadedScenario.Persons.GetGameObject(3) as Person;
+            
+            Assert.That(loadedPerson3, Is.Not.Null, "Person 3 should exist in loaded scenario");
+            Assert.That(loadedPerson3.BelongedFaction, Is.Null, "Person 3 should have no faction");
+            Console.WriteLine($"  ✓ Person 3 has no faction (as expected)");
+            
+            // Verify faction's architecture collection
+            Faction originalFaction1 = originalScenario.Factions.GetGameObject(1) as Faction;
+            Faction loadedFaction1 = loadedScenario.Factions.GetGameObject(1) as Faction;
+            
+            Assert.That(loadedFaction1, Is.Not.Null, "Faction 1 should exist in loaded scenario");
+            Assert.That(loadedFaction1.Architectures, Is.Not.Null, "Faction 1 should have architectures collection");
+            Assert.That(loadedFaction1.Architectures.Count, Is.EqualTo(originalFaction1.Architectures.Count), 
+                "Architecture count should match");
+            Console.WriteLine($"  ✓ Faction 1 has {loadedFaction1.Architectures.Count} architectures");
+            
+            // Verify architecture references
+            if (loadedFaction1.Architectures.Count > 0)
+            {
+                Architecture firstArch = loadedFaction1.Architectures[0];
+                Assert.That(firstArch, Is.Not.Null, "First architecture should not be null");
+                Assert.That(firstArch.BelongedFaction, Is.Not.Null, "Architecture should have faction reference");
+                Assert.That(firstArch.BelongedFaction.ID, Is.EqualTo(loadedFaction1.ID), 
+                    "Architecture's faction should point back to Faction 1");
+                Console.WriteLine($"  ✓ Architecture {firstArch.ID} correctly references Faction {loadedFaction1.ID}");
+            }
+            
+            // ===== STEP 7: Verify basic properties =====
+            Console.WriteLine("\n[STEP 7] Verifying basic properties...");
+            
+            Assert.That(loadedScenario.ScenarioTitle, Is.EqualTo(originalScenario.ScenarioTitle), 
+                "Scenario title should match");
+            Console.WriteLine($"  ✓ Scenario title matches: {loadedScenario.ScenarioTitle}");
+            
+            Assert.That(loadedScenario.DaySince, Is.EqualTo(originalScenario.DaySince), 
+                "Day count should match");
+            Console.WriteLine($"  ✓ Day count matches: {loadedScenario.DaySince}");
+            
+            Assert.That(loadedScenario.CurrentPlayerID, Is.EqualTo(originalScenario.CurrentPlayerID), 
+                "Player ID should match");
+            Console.WriteLine($"  ✓ Player ID matches: {loadedScenario.CurrentPlayerID}");
+            
+            // ===== SUCCESS =====
+            Console.WriteLine("\n=== ✓ Core Serialization Flow Test PASSED ===");
+            Console.WriteLine("All objects and references were correctly saved and restored!");
+        }
+        
+        /// <summary>
+        /// Helper method to create a simple test scenario
+        /// Creates:
+        /// - 3 Persons (2 with factions, 1 without)
+        /// - 2 Factions
+        /// - 2 Architectures (both belonging to Faction 1)
+        /// </summary>
+        private GameScenario CreateSimpleTestScenario()
+        {
+            GameScenario scenario = new GameScenario();
+            
+            // Set basic scenario properties
+            scenario.ScenarioTitle = "Test Scenario";
+            scenario.DaySince = 100;
+            scenario.CurrentPlayerID = 1;
+            scenario.MOD = "TestMOD";
+            
+            // Initialize collections
+            scenario.Persons = new GameObjectList();
+            scenario.Factions = new GameObjectList();
+            scenario.Architectures = new GameObjectList();
+            
+            // Create Faction 1
+            Faction faction1 = new Faction();
+            faction1.ID = 1;
+            faction1.Name = "Wei";
+            faction1.Architectures = new ArchitectureList();
+            scenario.Factions.AddGameObject(faction1);
+            
+            // Create Faction 2
+            Faction faction2 = new Faction();
+            faction2.ID = 2;
+            faction2.Name = "Shu";
+            faction2.Architectures = new ArchitectureList();
+            scenario.Factions.AddGameObject(faction2);
+            
+            // Create Person 1 (belongs to Faction 1)
+            Person person1 = new Person();
+            person1.ID = 1;
+            person1.Name = "Cao Cao";
+            person1.BelongedFaction = faction1;
+            person1.BelongedFactionID = faction1.ID;
+            scenario.Persons.AddGameObject(person1);
+            
+            // Create Person 2 (belongs to Faction 2)
+            Person person2 = new Person();
+            person2.ID = 2;
+            person2.Name = "Liu Bei";
+            person2.BelongedFaction = faction2;
+            person2.BelongedFactionID = faction2.ID;
+            scenario.Persons.AddGameObject(person2);
+            
+            // Create Person 3 (no faction)
+            Person person3 = new Person();
+            person3.ID = 3;
+            person3.Name = "Lu Bu";
+            person3.BelongedFaction = null;
+            person3.BelongedFactionID = -1;
+            scenario.Persons.AddGameObject(person3);
+            
+            // Create Architecture 1 (belongs to Faction 1)
+            Architecture arch1 = new Architecture();
+            arch1.ID = 1;
+            arch1.Name = "Xu Chang";
+            arch1.BelongedFaction = faction1;
+            arch1.BelongedFactionID = faction1.ID;
+            scenario.Architectures.AddGameObject(arch1);
+            faction1.Architectures.Add(arch1);
+            
+            // Create Architecture 2 (belongs to Faction 1)
+            Architecture arch2 = new Architecture();
+            arch2.ID = 2;
+            arch2.Name = "Luo Yang";
+            arch2.BelongedFaction = faction1;
+            arch2.BelongedFactionID = faction1.ID;
+            scenario.Architectures.AddGameObject(arch2);
+            faction1.Architectures.Add(arch2);
+            
+            return scenario;
+        }
+        
+        /// <summary>
+        /// Additional test: Verify metadata file content
+        /// </summary>
+        [Test]
+        public void Test_MetadataFileContent()
+        {
+            Console.WriteLine("=== Testing Metadata File Content ===");
+            
+            // Create and save scenario
+            GameScenario scenario = CreateSimpleTestScenario();
+            string savePath = Path.Combine(_testDirectory, "test_metadata.sav.gz");
+            string metaPath = savePath + ".meta";
+            
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            // Read and verify metadata
+            Assert.That(File.Exists(metaPath), Is.True, "Metadata file should exist");
+            
+            string metadataJson = File.ReadAllText(metaPath);
+            Console.WriteLine($"Metadata content:\n{metadataJson}");
+            
+            // Verify metadata contains expected fields
+            Assert.That(metadataJson, Does.Contain("scenarioName"), "Should contain scenarioName");
+            Assert.That(metadataJson, Does.Contain("saveTime"), "Should contain saveTime");
+            Assert.That(metadataJson, Does.Contain("currentTurn"), "Should contain currentTurn");
+            Assert.That(metadataJson, Does.Contain("gameVersion"), "Should contain gameVersion");
+            Assert.That(metadataJson, Does.Contain("playerFactionID"), "Should contain playerFactionID");
+            
+            // Verify metadata values
+            Assert.That(metadataJson, Does.Contain("Test Scenario"), "Should contain scenario title");
+            Assert.That(metadataJson, Does.Contain("100"), "Should contain turn number");
+            
+            Console.WriteLine("✓ Metadata file content is correct");
+        }
+        
+        /// <summary>
+        /// Additional test: Verify file format detection
+        /// </summary>
+        [Test]
+        public void Test_FileFormatDetection()
+        {
+            Console.WriteLine("=== Testing File Format Detection ===");
+            
+            // Create and save scenario
+            GameScenario scenario = CreateSimpleTestScenario();
+            string savePath = Path.Combine(_testDirectory, "test_format.sav.gz");
+            
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            // Load should succeed with .sav.gz extension
+            GameScenario loaded = _serializationManager.LoadGame(savePath);
+            Assert.That(loaded, Is.Not.Null, "Should load .sav.gz file");
+            
+            Console.WriteLine("✓ File format detection works correctly");
+        }
+        
+        /// <summary>
+        /// Additional test: Verify GZip compression is applied
+        /// </summary>
+        [Test]
+        public void Test_GZipCompressionApplied()
+        {
+            Console.WriteLine("=== Testing GZip Compression ===");
+            
+            // Create and save scenario
+            GameScenario scenario = CreateSimpleTestScenario();
+            string savePath = Path.Combine(_testDirectory, "test_compression.sav.gz");
+            
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            // Try to decompress the file manually
+            using (FileStream fileStream = File.OpenRead(savePath))
+            using (System.IO.Compression.GZipStream gzipStream = new System.IO.Compression.GZipStream(
+                fileStream, System.IO.Compression.CompressionMode.Decompress))
+            using (StreamReader reader = new StreamReader(gzipStream))
+            {
+                string json = reader.ReadToEnd();
+                
+                Assert.That(json, Is.Not.Empty, "Decompressed content should not be empty");
+                Assert.That(json, Does.Contain("scenarioTitle"), "Should contain JSON data");
+                
+                Console.WriteLine($"Decompressed JSON length: {json.Length} characters");
+                Console.WriteLine("✓ GZip compression is correctly applied");
+            }
+        }
+    }
+}

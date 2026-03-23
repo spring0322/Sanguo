@@ -157,7 +157,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                         }
                         else
                         {
-                            Session.MainGame.mainGameScreen.dantiaoLayer = new DantiaoLayer(DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 2], DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 1]);
+                            // 🔥 安全修复：避免IndexOutOfRangeException
+                            if (DantiaoLayer.Persons != null && DantiaoLayer.Persons.Count >= 2)
+                            {
+                                Session.MainGame.mainGameScreen.dantiaoLayer = new DantiaoLayer(DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 2], DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 1]);
+                            }
                         }
                     }
 

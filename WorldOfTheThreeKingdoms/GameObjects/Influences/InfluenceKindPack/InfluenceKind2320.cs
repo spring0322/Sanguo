@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.Influences;
 using System;
@@ -9,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind2320 : InfluenceKind
     {
+        [DataMember]
         private int increment;
 
         public override void ApplyInfluenceKind(Faction faction)

@@ -2,7 +2,7 @@
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum ShowPosition
     {

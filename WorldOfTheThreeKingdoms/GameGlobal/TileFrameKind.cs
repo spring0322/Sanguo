@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum TileFrameKind
     {

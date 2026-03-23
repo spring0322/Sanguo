@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Runtime.CompilerServices;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using Microsoft.Xna.Framework;
 using System.Runtime.Serialization;
 using GameManager;
@@ -8,7 +8,8 @@ using GameManager;
 namespace GameObjects
 {
     [DataContract]
-    public class Captive : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持俘虏列表和右键菜单访问
+    public partial class Captive : GameObject
     {
         private Faction captiveFaction;
         public Faction CaptiveFaction

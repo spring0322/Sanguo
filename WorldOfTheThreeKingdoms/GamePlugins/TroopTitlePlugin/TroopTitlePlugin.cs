@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using		GameFreeText;
-using		GameGlobal;
+using		WorldOfTheThreeKingdoms.GameGlobal;
 using		GameObjects;
 using		Microsoft.Xna.Framework;
 using		PluginInterface;
@@ -15,6 +15,7 @@ using PluginInterface.BaseInterface;
 using WorldOfTheThreeKingdoms;
 using Platforms;
 using GameManager;
+using static WorldOfTheThreeKingdoms.GameGlobal.StaticMethods;
 
 namespace TroopTitlePlugin
 {
@@ -42,7 +43,7 @@ namespace TroopTitlePlugin
         {
             if (this.IsShowing)
             {
-                this.troopTitle.DrawTroop( troop as Troop, playerControlling);
+                this.troopTitle.DrawTroop( (troop is Troop ? (Troop)troop : null), playerControlling);
                 /*
                 if (troopTitle.Switch11 == "on" && this.troopTitle.HasPersonPicture == true)
                 {
@@ -86,7 +87,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.NameText = new FreeText(font, color);
             this.troopTitle.NameText.Position = rectangle;
-            this.troopTitle.NameText.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.NameText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             node = nextSibling.ChildNodes.Item(4);
             this.troopTitle.ActionDoneTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopTitle\Data\" + node.Attributes.GetNamedItem("Done").Value);
             this.troopTitle.ActionUndoneTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopTitle\Data\" + node.Attributes.GetNamedItem("Undone").Value);
@@ -111,7 +112,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.binglitext = new FreeText(font, color);
             this.troopTitle.binglitext.Position = rectangle1;
-            this.troopTitle.binglitext.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.binglitext.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(9);
             this.troopTitle.shiqicaotupian  = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopTitle\Data\" + node.Attributes.GetNamedItem("FileName").Value);
@@ -150,7 +151,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.FactionName1Text = new FreeText(font, color);
             this.troopTitle.FactionName1Text.Position = rectangle;
-            this.troopTitle.FactionName1Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.FactionName1Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             this.troopTitle.FactionName1Position.X = int.Parse(node.Attributes.GetNamedItem("X").Value);
             this.troopTitle.FactionName1Position.Y = int.Parse(node.Attributes.GetNamedItem("Y").Value);
             this.troopTitle.FactionName1Position.Width = int.Parse(node.Attributes.GetNamedItem("Width").Value);
@@ -167,7 +168,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.TroopName1Text = new FreeText(font, color);
             this.troopTitle.TroopName1Text.Position = rectangle;
-            this.troopTitle.TroopName1Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.TroopName1Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(36);
             this.troopTitle.TheTroopKind1Position = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -182,7 +183,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.Thebingli1Text = new FreeText(font, color);
             this.troopTitle.Thebingli1Text.Position = rectangle;
-            this.troopTitle.Thebingli1Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.Thebingli1Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(41);
             this.troopTitle.TheActionIcon1Position = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -224,7 +225,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.FactionName2Text = new FreeText(font, color);
             this.troopTitle.FactionName2Text.Position = rectangle;
-            this.troopTitle.FactionName2Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.FactionName2Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
             this.troopTitle.FactionName2Position.X = int.Parse(node.Attributes.GetNamedItem("X").Value);
             this.troopTitle.FactionName2Position.Y = int.Parse(node.Attributes.GetNamedItem("Y").Value);
             this.troopTitle.FactionName2Position.Width = int.Parse(node.Attributes.GetNamedItem("Width").Value);
@@ -241,7 +242,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.TroopName2Text = new FreeText(font, color);
             this.troopTitle.TroopName2Text.Position = rectangle;
-            this.troopTitle.TroopName2Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.TroopName2Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(66);
             this.troopTitle.TheTroopKind2Position = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -256,7 +257,7 @@ namespace TroopTitlePlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.troopTitle.Thebingli2Text = new FreeText(font, color);
             this.troopTitle.Thebingli2Text.Position = rectangle;
-            this.troopTitle.Thebingli2Text.Align = (TextAlign)Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.troopTitle.Thebingli2Text.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
 
             node = nextSibling.ChildNodes.Item(71);
             this.troopTitle.TheActionIcon2Position = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -352,3 +353,4 @@ namespace TroopTitlePlugin
  
 
 }
+

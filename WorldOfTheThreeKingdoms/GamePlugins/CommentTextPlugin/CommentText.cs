@@ -67,6 +67,10 @@ namespace CommentTextPlugin
 
         public void Draw()
         {
+            // 🔥 HOT PATH：移除所有诊断代码
+            // CommentText 显示的是地形信息（峻岭、坐标等），不是游戏事件消息
+            // 用户反馈的重复显示问题不在这里
+            
             this.FirstText.Draw(0.05f);
             this.SecondText.Draw(0.05f);
             this.ThirdText.Draw(0.05f);

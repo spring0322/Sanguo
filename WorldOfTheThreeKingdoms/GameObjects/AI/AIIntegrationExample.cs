@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using GameObjects;
 using GameObjects.AI;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
@@ -223,7 +224,7 @@ namespace GameObjects.AI
         /// <param name="troops">部队列表</param>
         private static void PrintFactionRoleDistribution(List<Troop> troops)
         {
-            var roleCount = new Dictionary<AIRole, int>();
+            var roleCount = new Dictionary<TroopRole, int>();
 
             foreach (var troop in troops)
             {
@@ -243,15 +244,15 @@ namespace GameObjects.AI
         /// <summary>
         /// 获取角色的中文描述
         /// </summary>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case TroopRole.Tank: return "肉盾";
+                case TroopRole.DPS: return "输出";
+                case TroopRole.Mage: return "法师";
+                case TroopRole.Support: return "辅助";
+                case TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }

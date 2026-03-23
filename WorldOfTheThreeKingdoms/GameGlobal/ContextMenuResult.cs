@@ -2,7 +2,7 @@
 
 
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public enum ContextMenuResult
     {
@@ -156,6 +156,11 @@ namespace GameGlobal
         /// 势力-宝物-出售
         /// </summary>
         Faction_Treasure_Sell,
+        /// <summary>
+        /// 势力-宝物-购买
+        /// 🔥 2026-03-03 新增
+        /// </summary>
+        Faction_Treasure_Buy,
         Section_New,
         Section_Regroup,
         Section_Disband,
@@ -264,7 +269,33 @@ namespace GameGlobal
         YearTable_Year5,
         YearTable_OwnFaction,
         ChangeFaction,
-        Switch_SkyEyeSimpleNotification
+        Switch_SkyEyeSimpleNotification,
+        
+        // 编辑器功能 (威力加强版风格)
+        Edit_Person,          // 编辑武将
+        Edit_Architecture,    // 编辑城池
+        Edit_Faction,         // 编辑势力
+        Edit_Military,        // 编辑编队
+        Edit_Troop,           // 编辑部队
+        
+        // 编辑器二级菜单
+        EditData,             // 数据编辑总入口
+        EditData_Architecture, // 城池编辑
+        EditData_Troop,       // 部队编辑
+        EditData_Faction,     // 势力编辑
+        EditData_Person,      // 武将编辑
+        EditData_Military,    // 编队编辑
+        EditData_Terrain,     // 地形编辑
+        EditData_Treasure,    // 宝物编辑
+        EditData_Title,       // 称号编辑
+        EditData_Skill,       // 特技编辑
+        
+        // 缓冲区编辑器菜单
+        EditData_BufferedArchitecture, // 城池缓冲编辑
+        EditData_BufferedTroop,        // 部队缓冲编辑
+        EditData_BufferedFaction,      // 势力缓冲编辑
+        EditData_BufferedPerson,       // 武将缓冲编辑
+        EditData_BufferedTerrain       // 地形缓冲编辑
     }
 }
 

@@ -11,6 +11,7 @@ namespace GameObjects
         [DataMember]
         public int Food;
 
+        private FoodPack() { }
         public FoodPack(int food, int days)
         {
             this.Food = food;

@@ -1,0 +1,164 @@
+using NUnit.Framework;
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using GameObjects.ArchitectureDetail.EventEffect;
+using GameObjects.TroopDetail.EventEffect;
+using WorldOfTheThreeKingdoms.Serialization;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 测试 EventEffectKindTable 反序列化修复
+    /// 实现任务 10.2：修复 EventEffectKindTable 反序列化问题
+    /// </summary>
+    [TestFixture]
+    public class EventEffectKindTableDeserializationTest
+    {
+        private JsonSerializerOptions _options;
+
+        [SetUp]
+        public void Setup()
+        {
+            _options = GameJsonContext.GetDefaultOptions();
+        }
+
+        [Test]
+        public void DeserializeArchitectureEventEffectKindTable_ShouldSucceed()
+        {
+            // Arrange - 创建一个简单的 ArchitectureDetail EventEffectKindTable JSON
+            var json = @"{
+                ""EventEffectKinds"": {
+                    ""0"": {
+                        ""$type"": ""GameObjects.ArchitectureDetail.EventEffect.EventEffect0, WorldOfTheThreeKingdoms"",
+                        ""ID"": 0,
+                        ""Name"": ""Test EventEffect0""
+                    },
+                    ""10"": {
+                        ""$type"": ""GameObjects.ArchitectureDetail.EventEffect.EventEffect10, WorldOfTheThreeKingdoms"",
+                        ""ID"": 10,
+                        ""Name"": ""Test EventEffect10""
+                    }
+                }
+            }";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() =>
+            {
+                var table = JsonSerializer.Deserialize<GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable>(json, _options);
+                Assert.IsNotNull(table, "EventEffectKindTable 不应为空");
+                Assert.IsNotNull(table.EventEffectKinds, "EventEffectKinds 字典不应为空");
+                Console.WriteLine($"成功反序列化 ArchitectureDetail EventEffectKindTable，包含 {table.EventEffectKinds.Count} 个条目");
+            }, "ArchitectureDetail EventEffectKindTable 反序列化应该成功");
+        }
+
+        [Test]
+        public void DeserializeTroopEventEffectKindTable_ShouldSucceed()
+        {
+            // Arrange - 创建一个简单的 TroopDetail EventEffectKindTable JSON
+            var json = @"{
+                ""EventEffectKinds"": {
+                    ""0"": {
+                        ""$type"": ""GameObjects.TroopDetail.EventEffect.EventEffectKindPack.EventEffectKind0, WorldOfTheThreeKingdoms"",
+                        ""ID"": 0,
+                        ""Name"": ""Test TroopEventEffectKind0""
+                    },
+                    ""1"": {
+                        ""$type"": ""GameObjects.TroopDetail.EventEffect.EventEffectKindPack.EventEffectKind1, WorldOfTheThreeKingdoms"",
+                        ""ID"": 1,
+                        ""Name"": ""Test TroopEventEffectKind1""
+                    }
+                }
+            }";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() =>
+            {
+                var table = JsonSerializer.Deserialize<GameObjects.TroopDetail.EventEffect.EventEffectKindTable>(json, _options);
+                Assert.IsNotNull(table, "TroopDetail EventEffectKindTable 不应为空");
+                Assert.IsNotNull(table.EventEffectKinds, "EventEffectKinds 字典不应为空");
+                Console.WriteLine($"成功反序列化 TroopDetail EventEffectKindTable，包含 {table.EventEffectKinds.Count} 个条目");
+            }, "TroopDetail EventEffectKindTable 反序列化应该成功");
+        }
+
+        [Test]
+        public void DeserializeEventEffectKindDictionary_ShouldSucceed()
+        {
+            // Arrange - 测试直接反序列化字典类型
+            var json = @"{
+                ""0"": {
+                    ""$type"": ""GameObjects.ArchitectureDetail.EventEffect.EventEffect0, WorldOfTheThreeKingdoms"",
+                    ""ID"": 0,
+                    ""Name"": ""Direct Dictionary Test""
+                }
+            }";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() =>
+            {
+                var dict = JsonSerializer.Deserialize<Dictionary<int, GameObjects.ArchitectureDetail.EventEffect.EventEffectKind>>(json, _options);
+                Assert.IsNotNull(dict, "EventEffectKind 字典不应为空");
+                Assert.AreEqual(1, dict.Count, "字典应包含一个条目");
+                Console.WriteLine($"成功反序列化 EventEffectKind 字典，包含 {dict.Count} 个条目");
+            }, "EventEffectKind 字典反序列化应该成功");
+        }
+
+        [Test]
+        public void SerializeAndDeserializeRoundTrip_ShouldSucceed()
+        {
+            // Arrange - 创建一个 EventEffectKindTable 实例
+            var originalTable = new GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable();
+            
+            // 创建一些 EventEffectKind 实例（使用反射或工厂方法）
+            var eventEffect0 = new GameObjects.ArchitectureDetail.EventEffect.EventEffect0();
+            eventEffect0.ID = 0;
+            eventEffect0.Name = "Test EventEffect0";
+            
+            originalTable.AddEventEffectKind(eventEffect0);
+
+            // Act - 序列化然后反序列化
+            string json = null;
+            GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable deserializedTable = null;
+            
+            Assert.DoesNotThrow(() =>
+            {
+                json = JsonSerializer.Serialize(originalTable, _options);
+                Console.WriteLine($"序列化结果: {json}");
+            }, "序列化应该成功");
+
+            Assert.DoesNotThrow(() =>
+            {
+                deserializedTable = JsonSerializer.Deserialize<GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable>(json, _options);
+            }, "反序列化应该成功");
+
+            // Assert
+            Assert.IsNotNull(deserializedTable, "反序列化的表不应为空");
+            Assert.AreEqual(originalTable.Count, deserializedTable.Count, "反序列化后的条目数量应该相同");
+            Console.WriteLine($"往返序列化成功，原始: {originalTable.Count} 条目，反序列化: {deserializedTable.Count} 条目");
+        }
+
+        [Test]
+        public void TestLooseOptionsCompatibility_ShouldSucceed()
+        {
+            // Arrange - 使用宽松选项测试兼容性
+            var looseOptions = GameJsonContext.GetLooseOptions();
+            var json = @"{
+                ""EventEffectKinds"": {
+                    ""0"": {
+                        ""$type"": ""GameObjects.ArchitectureDetail.EventEffect.EventEffect0, WorldOfTheThreeKingdoms"",
+                        ""ID"": 0,
+                        ""Name"": ""Loose Options Test""
+                    }
+                }
+            }";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() =>
+            {
+                var table = JsonSerializer.Deserialize<GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable>(json, looseOptions);
+                Assert.IsNotNull(table, "使用宽松选项的反序列化不应为空");
+                Console.WriteLine($"宽松选项反序列化成功，包含 {table.EventEffectKinds.Count} 个条目");
+            }, "使用宽松选项的反序列化应该成功");
+        }
+    }
+}

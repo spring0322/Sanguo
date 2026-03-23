@@ -9,6 +9,7 @@ namespace GameObjects
         public int Days;
         public int Fund;
 
+        private FundPack() { }
         public FundPack(int fund, int days)
         {
             this.Fund = fund;

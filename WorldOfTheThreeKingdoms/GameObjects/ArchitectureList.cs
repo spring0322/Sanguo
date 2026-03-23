@@ -4,7 +4,8 @@ using System.Runtime.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 根本修复：移除 [DataContract]，添加 [JsonConverter]
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class ArchitectureList : GameObjectList
     {
         public void AddArchitectureWithEvent(Architecture architecture, bool add = true)
@@ -46,9 +47,40 @@ namespace GameObjects
 
         public void ApplyInfluences()
         {
-            foreach (Architecture architecture in base.GameObjects)
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Architecture architecture = base.GameObjects[i] as Architecture;
+                if (architecture == null)
+                {
+                    throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
                 architecture.ApplyInfluences();
+            }
+        }
+        
+        /// <summary>
+        /// 🆕 批量应用势力范围增益到所有城池
+        /// 🧊 Cold Path：势力范围更新或读档后调用
+        /// 日期：2026-03-16
+        /// </summary>
+        public void ApplyInfluenceBuff()
+        {
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
+            {
+                Architecture architecture = base.GameObjects[i] as Architecture;
+                if (architecture == null)
+                {
+                    throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                architecture.ApplyInfluenceBuff();
             }
         }
 
@@ -99,8 +131,19 @@ namespace GameObjects
         {
             int endurance = -1;
             Architecture architecture = null;
-            foreach (Architecture architecture2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Architecture architecture2 = base.GameObjects[i] as Architecture;
+                if (architecture2 == null)
+                {
+                    throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (architecture2 == target)
                 {
                     return architecture2;
@@ -118,8 +161,19 @@ namespace GameObjects
         {
             int endurance = 0x7fffffff;
             Architecture architecture = null;
-            foreach (Architecture architecture2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Architecture architecture2 = base.GameObjects[i] as Architecture;
+                if (architecture2 == null)
+                {
+                    throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (architecture2 == target)
                 {
                     return architecture2;
@@ -135,8 +189,18 @@ namespace GameObjects
 
         public void NoFactionDevelop()
         {
-            foreach (Architecture architecture in base.GameObjects)
+            // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
+            // 解决：使用 for 循环 + as 类型转换 + Fail Fast
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Architecture architecture = base.GameObjects[i] as Architecture;
+                if (architecture == null)
+                {
+                    throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (architecture.BelongedFaction == null)
                 {
                     architecture.DevelopDayNoFaction();

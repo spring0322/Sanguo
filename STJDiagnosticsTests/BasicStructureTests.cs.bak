@@ -1,0 +1,74 @@
+using NUnit.Framework;
+using STJDiagnosticsTests.Infrastructure;
+using DiagnosticTestResult = WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models.TestResult;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Basic tests to verify the diagnostic system structure is properly set up
+    /// </summary>
+    [TestFixture]
+    public class BasicStructureTests : TestBase
+    {
+        [Test]
+        public void DiagnosticModels_ShouldBeInstantiable()
+        {
+            // Test that all core models can be instantiated
+            var diagnosticResult = new DiagnosticResult();
+            var typeRegistrationReport = new TypeRegistrationReport();
+            var namespaceConflictReport = new NamespaceConflictReport();
+            var structuralMismatchReport = new StructuralMismatchReport();
+            var validationResult = new ValidationResult();
+            var fixRecommendation = new FixRecommendation();
+            var testResult = new DiagnosticTestResult();
+            var systemHealthReport = new SystemHealthReport();
+            var errorContext = new ErrorContext();
+
+            Assert.That(diagnosticResult, Is.Not.Null);
+            Assert.That(typeRegistrationReport, Is.Not.Null);
+            Assert.That(namespaceConflictReport, Is.Not.Null);
+            Assert.That(structuralMismatchReport, Is.Not.Null);
+            Assert.That(validationResult, Is.Not.Null);
+            Assert.That(fixRecommendation, Is.Not.Null);
+            Assert.That(testResult, Is.Not.Null);
+            Assert.That(systemHealthReport, Is.Not.Null);
+            Assert.That(errorContext, Is.Not.Null);
+        }
+
+        [Test]
+        public void TestInfrastructure_ShouldWork()
+        {
+            // Test that the test infrastructure is working
+            var testData = new Dictionary<string, object>
+            {
+                ["key1"] = "value1",
+                ["key2"] = 42
+            };
+
+            var jsonData = CreateTestJsonData(testData);
+            
+            Assert.That(jsonData, Is.Not.Null);
+            Assert.That(jsonData, Does.Contain("key1"));
+            Assert.That(jsonData, Does.Contain("value1"));
+        }
+
+        [Test]
+        public void DiagnosticSystem_DirectoryStructure_ShouldExist()
+        {
+            // This test verifies that the diagnostic system structure was created correctly
+            // The fact that we can reference the interfaces and models means the structure is correct
+            
+            // Test interface types exist
+            Assert.That(typeof(IRootCauseAnalyzer), Is.Not.Null);
+            Assert.That(typeof(ITypeRegistrationValidator), Is.Not.Null);
+            Assert.That(typeof(IDeserializationTester), Is.Not.Null);
+            Assert.That(typeof(IFallbackHandler), Is.Not.Null);
+            Assert.That(typeof(IDiagnosticSystem), Is.Not.Null);
+            
+            // Test model types exist
+            Assert.That(typeof(DiagnosticResult), Is.Not.Null);
+            Assert.That(typeof(ValidationResult), Is.Not.Null);
+            Assert.That(typeof(DiagnosticTestResult), Is.Not.Null);
+        }
+    }
+}

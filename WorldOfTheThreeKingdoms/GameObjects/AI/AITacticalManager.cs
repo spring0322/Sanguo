@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using GameObjects;
 using GameObjects.AI;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
@@ -64,9 +65,9 @@ namespace GameObjects.AI
         /// </summary>
         private static void EnsureRoleAssigned(Troop troop)
         {
-            if (troop.CurrentRole == AIRole.None)
+            if (troop.CurrentRole == TroopRole.None)
             {
-                troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                troop.CurrentRole = AIRoleSelector.DetermineRole(troop);
                 Console.WriteLine($"为部队 {troop.ID} ({troop.Leader?.Name ?? "无名"}) 分配角色: {GetRoleDescription(troop.CurrentRole)}");
             }
         }
@@ -122,25 +123,25 @@ namespace GameObjects.AI
             // 角色针对性
             switch (attacker.CurrentRole)
             {
-                case AIRole.Tank:
+                case TroopRole.Tank:
                     // 坦克优先攻击远程单位，限制其输出
-                    if (target.CurrentRole == AIRole.DPS || target.CurrentRole == AIRole.Mage)
+                    if (target.CurrentRole == TroopRole.DPS || target.CurrentRole == TroopRole.Mage)
                         score += 150;
                     break;
 
-                case AIRole.DPS:
+                case TroopRole.DPS:
                     // DPS优先攻击脆皮目标
-                    if (target.CurrentRole == AIRole.Support || target.CurrentRole == AIRole.Mage)
+                    if (target.CurrentRole == TroopRole.Support || target.CurrentRole == TroopRole.Mage)
                         score += 100;
                     break;
 
-                case AIRole.Mage:
+                case TroopRole.Mage:
                     // 法师优先控制关键目标
-                    if (target.CurrentRole == AIRole.Tank) // 控制坦克，让队友输出
+                    if (target.CurrentRole == TroopRole.Tank) // 控制坦克，让队友输出
                         score += 120;
                     break;
 
-                case AIRole.Support:
+                case TroopRole.Support:
                     // 辅助一般不主动攻击，但如果必须攻击，选择最近的
                     score -= 50; // 降低攻击倾向
                     break;
@@ -189,15 +190,15 @@ namespace GameObjects.AI
         /// <summary>
         /// 获取角色的中文描述
         /// </summary>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case TroopRole.Tank: return "肉盾";
+                case TroopRole.DPS: return "输出";
+                case TroopRole.Mage: return "法师";
+                case TroopRole.Support: return "辅助";
+                case TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }
@@ -254,21 +255,21 @@ namespace GameObjects.AI
             // 战术建议
             report.AppendLine("战术建议:");
             
-            int friendlyTanks = friendlyRoles.ContainsKey(AIRole.Tank) ? friendlyRoles[AIRole.Tank] : 0;
-            int enemyDPS = enemyRoles.ContainsKey(AIRole.DPS) ? enemyRoles[AIRole.DPS] : 0;
+            int friendlyTanks = friendlyRoles.ContainsKey(TroopRole.Tank) ? friendlyRoles[TroopRole.Tank] : 0;
+            int enemyDPS = enemyRoles.ContainsKey(TroopRole.DPS) ? enemyRoles[TroopRole.DPS] : 0;
             
             if (friendlyTanks < enemyDPS)
             {
                 report.AppendLine("  - 肉盾不足，注意保护脆皮单位");
             }
 
-            if (friendlyRoles.ContainsKey(AIRole.Support) && friendlyRoles[AIRole.Support] > 0)
+            if (friendlyRoles.ContainsKey(TroopRole.Support) && friendlyRoles[TroopRole.Support] > 0)
             {
                 report.AppendLine("  - 有辅助单位，注意保持阵型完整");
             }
 
-            int enemyMages = enemyRoles.ContainsKey(AIRole.Mage) ? enemyRoles[AIRole.Mage] : 0;
-            int friendlyMages = friendlyRoles.ContainsKey(AIRole.Mage) ? friendlyRoles[AIRole.Mage] : 0;
+            int enemyMages = enemyRoles.ContainsKey(TroopRole.Mage) ? enemyRoles[TroopRole.Mage] : 0;
+            int friendlyMages = friendlyRoles.ContainsKey(TroopRole.Mage) ? friendlyRoles[TroopRole.Mage] : 0;
             
             if (enemyMages > friendlyMages)
             {
@@ -281,18 +282,18 @@ namespace GameObjects.AI
         /// <summary>
         /// 统计角色分布
         /// </summary>
-        private static Dictionary<AIRole, int> CountRoleDistribution(List<Troop> troops)
+        private static Dictionary<TroopRole, int> CountRoleDistribution(List<Troop> troops)
         {
-            var distribution = new Dictionary<AIRole, int>();
+            var distribution = new Dictionary<TroopRole, int>();
 
             foreach (var troop in troops)
             {
                 if (troop != null && !troop.Destroyed)
                 {
-                    AIRole role = troop.CurrentRole;
-                    if (role == AIRole.None)
+                    TroopRole role = troop.CurrentRole;
+                    if (role == TroopRole.None)
                     {
-                        role = AIRoleSelector.GetBestRole(troop);
+                        role = AIRoleSelector.DetermineRole(troop);
                     }
 
                     distribution[role] = distribution.ContainsKey(role) ? distribution[role] + 1 : 1;

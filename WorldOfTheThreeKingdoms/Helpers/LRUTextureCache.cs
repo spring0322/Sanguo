@@ -197,7 +197,7 @@ namespace WorldOfTheThreeKingdoms.Helpers
             if (temp.Texture != null && !temp.Texture.IsDisposed)
             {
                 temp.Texture.Dispose();
-                System.Diagnostics.Debug.WriteLine($"[LRU GC] 释放资源: {temp.Key}, 释放显存: {temp.SizeInBytes / 1024 / 1024} MB");
+                // System.Diagnostics.Debug.WriteLine($"[LRU GC] 释放资源: {temp.Key}, 释放显存: {temp.SizeInBytes / 1024 / 1024} MB");
             }
         }
 

@@ -1,4 +1,5 @@
-﻿using GameManager;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 添加：用于 GenerateUIAccessor 特性
+using GameManager;
 using GameObjects.ArchitectureDetail;
 using GameObjects.Influences;
 using System;
@@ -7,7 +8,8 @@ using System.Runtime.Serialization;
 namespace GameObjects
 {
     [DataContract]
-    public class Facility : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持设施列表和右键菜单访问
+    public partial class Facility : GameObject
     {
         private int endurance;
         private FacilityKind kind;

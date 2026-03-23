@@ -3,8 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using GameObjects;
-using GameObjects.AI;
+
+namespace GameObjects.AI;
+
+#if false
 using GameObjects.AI.Helper;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
@@ -27,9 +31,9 @@ namespace GameObjects.AI
                 Console.WriteLine($"=== 开始为部队 {troop.ID} 执行AI战术决策 ===");
 
                 // 1. 确保部队有分配的战术角色
-                if (troop.CurrentRole == AIRole.None)
+                if (troop.CurrentRole == TroopRole.None)
                 {
-                    troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                    troop.CurrentRole = AIRoleSelector.DetermineRole(troop);
                     Console.WriteLine($"为部队 {troop.ID} 分配角色: {GetRoleDescription(troop.CurrentRole)}");
                 }
 
@@ -40,19 +44,19 @@ namespace GameObjects.AI
                 // 3. 根据角色执行相应的战术行为
                 switch (troop.CurrentRole)
                 {
-                    case AIRole.Tank:
+                    case TroopRole.Tank:
                         ExecuteTankTactics(troop, battlefieldAnalysis);
                         break;
-                    case AIRole.DPS:
+                    case TroopRole.DPS:
                         ExecuteDPSTactics(troop, battlefieldAnalysis);
                         break;
-                    case AIRole.Mage:
+                    case TroopRole.Mage:
                         ExecuteMageTactics(troop, battlefieldAnalysis);
                         break;
-                    case AIRole.Support:
+                    case TroopRole.Support:
                         ExecuteSupportTactics(troop, battlefieldAnalysis);
                         break;
-                    case AIRole.Logistics:
+                    case TroopRole.Logistics:
                         ExecuteLogisticsTactics(troop, battlefieldAnalysis);
                         break;
                     default:
@@ -114,7 +118,7 @@ namespace GameObjects.AI
 
                 // 找到最脆弱的友军（需要保护的）
                 analysis.MostVulnerableAlly = analysis.Allies
-                    .Where(a => a.CurrentRole == AIRole.Mage || a.CurrentRole == AIRole.Support)
+                    .Where(a => a.CurrentRole == TroopRole.Mage || a.CurrentRole == TroopRole.Support)
                     .OrderBy(a => a.Quantity) // 兵力最少的最脆弱
                     .FirstOrDefault();
 
@@ -444,11 +448,11 @@ namespace GameObjects.AI
                 // 根据角色返回默认值
                 switch (troop.CurrentRole)
                 {
-                    case AIRole.Mage:
+                    case TroopRole.Mage:
                         return 3;
-                    case AIRole.DPS:
+                    case TroopRole.DPS:
                         return 2;
-                    case AIRole.Tank:
+                    case TroopRole.Tank:
                         return 1;
                     default:
                         return 2;
@@ -472,15 +476,15 @@ namespace GameObjects.AI
         /// <summary>
         /// 获取角色的中文描述
         /// </summary>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case TroopRole.Tank: return "肉盾";
+                case TroopRole.DPS: return "输出";
+                case TroopRole.Mage: return "法师";
+                case TroopRole.Support: return "辅助";
+                case TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }
@@ -701,3 +705,5 @@ namespace GameObjects.AI
         }
     }
 }
+
+#endif

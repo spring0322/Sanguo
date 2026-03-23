@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -9,6 +9,7 @@ using GameManager;
 using Platforms;
 using FontStashSharp;
 using GamePanels.Scrollbar;
+using Bounds = GameManager.Bounds;
 
 namespace GamePanels
 {
@@ -455,10 +456,13 @@ namespace GamePanels
             bounds.Add(new Bounds() { X = OffsetPos.X, Y = OffsetPos.Y, X2 = OffsetPos.X + ((Rectangle)cbRectangle).Width, Y2 = OffsetPos.Y + ((Rectangle)cbRectangle).Height });//加上复选框的范围
             Width = 0;
             bounds.ForEach(b => Width = Width > b.Width ? Width : b.Width);
+            // 🔥 技术性修复：避免IndexOutOfRangeException
             if (bounds.Count > 1)
                 Height = bounds[bounds.Count - 2].Y2 - bounds[0].Y;//倒数第二行才是最后一行文字
-            else
+            else if (bounds.Count > 0)
                 Height = bounds[bounds.Count - 1].Y2 - bounds[0].Y;
+            else
+                Height = 0; // 默认高度
 
             //计算可对齐文本的范围
             if (AlignTexts.Count > 0)

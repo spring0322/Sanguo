@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Influences;
 using System;
@@ -9,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind650 : InfluenceKind
     {
+        [DataMember]
         private int increment;
 
 

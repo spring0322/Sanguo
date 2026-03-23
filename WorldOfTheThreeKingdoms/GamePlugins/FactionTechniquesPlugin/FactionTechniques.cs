@@ -1,5 +1,5 @@
-﻿using GameFreeText;
-using GameGlobal;
+using GameFreeText;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using GameObjects.FactionDetail;
 using GameObjects.Conditions;
@@ -134,6 +134,20 @@ namespace FactionTechniquesPlugin
                         this.CommentsText.AddText(item.LinkedTechnique.Name, this.CommentsText.TitleColor);
                         this.CommentsText.AddNewLine();
                         this.CommentsText.AddText(item.LinkedTechnique.Description, this.CommentsText.DefaultColor);
+                        this.CommentsText.AddNewLine();
+                        
+                        // 显示技巧效果（Influences 在 Init() 中保证非 null）
+                        if (item.LinkedTechnique.Influences.Count > 0)
+                        {
+                            this.CommentsText.AddNewLine();
+                            this.CommentsText.AddText("效果：", this.CommentsText.SubTitleColor);
+                            this.CommentsText.AddNewLine();
+                            foreach (var influence in item.LinkedTechnique.Influences.Influences.Values)
+                            {
+                                this.CommentsText.AddText("• " + influence.Description, this.CommentsText.PositiveColor);
+                                this.CommentsText.AddNewLine();
+                            }
+                        }
                         this.CommentsText.AddNewLine();
                         if (this.Control)
                         {
@@ -272,6 +286,12 @@ namespace FactionTechniquesPlugin
                 text.Text.Text = StaticMethods.GetPropertyValue(this, text.PropertyName).ToString();
             }
             this.AllTechniques.Clear();
+
+            // 🔥 诊断：检查技巧数据源
+            System.Diagnostics.Debug.WriteLine($"[FactionTechniques.SetFaction] 开始加载技巧");
+            System.Diagnostics.Debug.WriteLine($"  - GameCommonData: {(Session.Current.Scenario.GameCommonData != null ? "存在" : "null")}");
+            System.Diagnostics.Debug.WriteLine($"  - AllTechniques: {(Session.Current.Scenario.GameCommonData?.AllTechniques != null ? "存在" : "null")}");
+            System.Diagnostics.Debug.WriteLine($"  - 技巧总数: {Session.Current.Scenario.GameCommonData?.AllTechniques?.Count ?? 0}");
 
             Dictionary<Microsoft.Xna.Framework.Point, Technique> showTechniques = new Dictionary<Microsoft.Xna.Framework.Point, Technique>();
             foreach (Technique technique in Session.Current.Scenario.GameCommonData.AllTechniques.Techniques.Values)

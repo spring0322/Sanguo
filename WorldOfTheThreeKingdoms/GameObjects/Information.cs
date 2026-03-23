@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using Microsoft.Xna.Framework;
 using System;
@@ -7,7 +7,8 @@ using System.Runtime.Serialization;
 namespace GameObjects
 {
     [DataContract]
-    public class Information : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持情报列表和右键菜单访问
+    public partial class Information : GameObject
     {
         private GameArea area;
         public Faction BelongedFaction; // informations belonging to faction will naturally expire
@@ -19,6 +20,11 @@ namespace GameObjects
         private int dayCost;
         private int daysLeft;
         private int daysStarted = 0;
+        
+        // 🔥 2026-03-07 修复：添加序列化用的ID属性
+        // 用于在序列化时保存引用ID，在反序列化后通过LinkReferencesPhase恢复引用
+        public int BelongedFactionID { get; set; } = -1;
+        public int BelongedArchitectureID { get; set; } = -1;
 
         public void Apply()
         {

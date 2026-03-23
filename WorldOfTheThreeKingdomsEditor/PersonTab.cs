@@ -124,7 +124,7 @@ namespace WorldOfTheThreeKingdomsEditor
                 { "huaiyun", "怀孕" },
                 { "huaiyuntianshu", "怀孕天数" },
                 { "Ideal", "志向" },
-                { "IdealTendencyIDString", "出仕志向考虑" },
+                { "IdealTendencyString", "出仕志向考虑" },
                 { "lmmortal", "不死" },
                 { "InformationKindID", "情报种类" },
                 { "InjureRate", "负伤" },
@@ -221,7 +221,8 @@ namespace WorldOfTheThreeKingdomsEditor
                 { "waitForFeiziId", "-1" },
                 { "InjureRate", "1" },
                 { "Generation", "1" },
-                { "InformationKindID", "-1" }
+                { "InformationKindID", "-1" },
+                { "IdealTendencyIDString", "-1" }
             };
         }
 

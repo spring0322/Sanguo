@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -91,7 +91,7 @@ namespace OptionDialogPlugin
             for (int i = 0; i < this.OptionTextures.Count; i++)
             {
                 n++;
-                this.OptionTextList[i].Position = new Rectangle(0, n * this.ItemHeight, this.ItemWidth, this.ItemHeight);
+                this.OptionTextList[i].Position = new Rectangle(0, n * this.ItemHeight - 3, this.ItemWidth, this.ItemHeight);
                 if (n % pageitems == 0)
                 {
                     n = 0;

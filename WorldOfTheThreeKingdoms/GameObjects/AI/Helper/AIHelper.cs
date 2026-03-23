@@ -1,4 +1,4 @@
-using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -59,7 +59,7 @@ namespace GameObjects.AI.Helper
                 {
                     foreach (GameObject obj in gList.GameObjects)
                     {
-                        if (obj is Troop) result.Add(obj as Troop);
+                        if (obj is Troop) result.Add((obj is Troop ? (Troop)obj : null));
                     }
                 }
             }
@@ -77,7 +77,7 @@ namespace GameObjects.AI.Helper
                 {
                     foreach (GameObject obj in gList.GameObjects)
                     {
-                        if (obj is Architecture) result.Add(obj as Architecture);
+                        if (obj is Architecture) result.Add((obj is Architecture ? (Architecture)obj : null));
                     }
                 }
             }

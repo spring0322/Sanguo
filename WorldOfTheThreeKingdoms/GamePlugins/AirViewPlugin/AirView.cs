@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -65,6 +65,27 @@ namespace AirViewPlugin
         // 记录鼠标上一帧的状态，用于判断滚轮滚动
         private int _previousScrollValue;
 
+        // 🎯 新增：小地图更新频率控制
+        private int _frameCounter = 0;
+        private int _lastArchitectureUpdateFrame = -1;
+        private const int ARCHITECTURE_UPDATE_INTERVAL = 60; // 建筑每60帧更新一次（约1秒）
+        
+        // 🎯 新增：建筑绘制缓存
+        private List<ArchitectureDrawInfo> _cachedArchitectures = [];
+        private bool _architectureCacheDirty = true;
+        
+        // 建筑绘制信息缓存结构
+        private struct ArchitectureDrawInfo
+        {
+            public Rectangle DrawRect;
+            public Color FactionColor;
+            public string Name;
+            public int FactionId;
+        }
+        
+        // 🔥 调试标志：避免每帧输出日志（2026-03-18）
+        private bool _textureErrorLogged = false;
+
         internal void AddDisableRects()
         {
             Session.MainGame.mainGameScreen.AddDisableRectangle(Session.MainGame.mainGameScreen.LaterMouseEventDisableRects, this.MapPosition);
@@ -73,103 +94,124 @@ namespace AirViewPlugin
 
         public override void Draw(GameTime gameTime)
         {
-            // 每一帧都重新计算位置，虽然有一点点点点性能损耗(几乎不计)，
-            // 但能保证小地图永远贴在边框上，不会跑偏。
-            UpdateDisplayRect();
-
-            Rectangle? sourceRectangle = null;
-            CacheManager.Draw(this.ToolDisplayTexture, this.ToolDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.099f);
-            if (this.IsMapShowing)
+            try
             {
-                CacheManager.Draw(this.TroopToolDisplayTexture, this.TroopToolDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.099f);
+                // 每一帧都重新计算位置，虽然有一点点点点性能损耗(几乎不计)，
+                // 但能保证小地图永远贴在边框上，不会跑偏。
+                UpdateDisplayRect();
 
-                // --- 修复问题1：防丢失保险机制 ---
-                // 如果发现图片没了，或者被释放了，立刻重新生成
-                if (this.MapTexture == null || (this.MapTexture.Name != null && !CacheManager.TextureTempDics.ContainsKey(this.MapTexture.Name)))
+                Rectangle? sourceRectangle = null;
+                // 🔥 修复：调整小地图层级，避免被水墨渲染遮挡（2026-03-17）
+                // layerDepth 越小越靠前，0.01f 确保在水墨叠加层之上
+                CacheManager.Draw(this.ToolDisplayTexture, this.ToolDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.01f);
+                if (this.IsMapShowing)
                 {
-                    System.Diagnostics.Debug.WriteLine("[AirView] 检测到小地图纹理丢失，正在重新生成...");
-                    
-                    // 通过插件重新生成战略小地图
-                    if (Session.Current?.Scenario != null && Session.MainGame?.mainGameScreen?.Plugins?.AirViewPlugin != null)
+                    CacheManager.Draw(this.TroopToolDisplayTexture, this.TroopToolDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.01f);
+
+                    // 🔥 修复：纹理丢失检测（2026-03-17）
+                    // 原因：避免在 Draw 循环中重复生成纹理导致卡顿
+                    // 方案：只检测一次，标记为需要重新生成，在下一帧之前由外部重新生成
+                    if (this.MapTexture == null)
                     {
-                        var airViewPlugin = Session.MainGame.mainGameScreen.Plugins.AirViewPlugin as global::AirViewPlugin.AirViewPlugin;
-                        airViewPlugin?.CreateStrategicMinimap(Session.Current.Scenario);
-                        System.Diagnostics.Debug.WriteLine("[AirView] 小地图重新生成完成");
-                    }
-                    
-                    // 如果生成失败，直接返回，避免报错
-                    if (this.MapTexture == null) 
-                    {
-                        System.Diagnostics.Debug.WriteLine("[AirView] 小地图生成失败，跳过绘制");
+                        if (!_textureErrorLogged)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[AirView] ⚠️ MapTexture 为 null，跳过绘制");
+                            _textureErrorLogged = true;
+                        }
                         return;
                     }
-                }
+                    
+                    // 🔥 修复：检查纹理是否在永久缓存中（2026-03-18）
+                    // 原因：小地图纹理现在存储在 TextureDics（永久缓存）中，避免被 Clear(CacheType.Page) 清理
+                    if (this.MapTexture.Name != null && !CacheManager.TextureDics.ContainsKey(this.MapTexture.Name))
+                    {
+                        if (!_textureErrorLogged)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[AirView] ⚠️ 纹理 {this.MapTexture.Name} 不在永久缓存中，跳过绘制");
+                            System.Diagnostics.Debug.WriteLine($"[AirView] MapTexture.Name={this.MapTexture.Name}");
+                            System.Diagnostics.Debug.WriteLine($"[AirView] MapTexture.Texture={this.MapTexture.Texture}");
+                            System.Diagnostics.Debug.WriteLine($"[AirView] 永久缓存中的纹理数量: {CacheManager.TextureDics.Count}");
+                            System.Diagnostics.Debug.WriteLine($"[AirView] 临时缓存中的纹理数量: {CacheManager.TextureTempDics.Count}");
+                            
+                            // 🔥 调试：列出缓存中的所有纹理名称（2026-03-18）
+                            System.Diagnostics.Debug.WriteLine("[AirView] 永久缓存中的纹理列表:");
+                            foreach (var key in CacheManager.TextureDics.Keys)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"  - {key}");
+                            }
+                            _textureErrorLogged = true;
+                        }
+                        return;
+                    }
+                    
+                    // 🔥 检查纹理是否已释放（2026-03-18）
+                    if (this.MapTexture.Texture != null && this.MapTexture.Texture.IsDisposed)
+                    {
+                        if (!_textureErrorLogged)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[AirView] ⚠️ 纹理 {this.MapTexture.Name} 已被释放，跳过绘制");
+                            _textureErrorLogged = true;
+                        }
+                        return;
+                    }
+                    
+                    // 🔥 重置错误标志（2026-03-18）
+                    // 如果纹理正常，重置标志，以便下次出错时能再次输出日志
+                    _textureErrorLogged = false;
 
-                if (this.MapTexture != null)
-                {
-                    sourceRectangle = null;
-                    // 确保 Alpha 值不为 0 (Color.White 表示完全不透明)
-                    CacheManager.Draw(this.MapTexture, this.MapPosition, sourceRectangle, new Color(1f, 1f, 1f, this.Transparent), 0f, Vector2.Zero, SpriteEffects.None, 0.1f);
-                }
-                /*
-                if (this.TroopTexture != null)
-                {
-                    sourceRectangle = null;
-                    CacheManager.Draw(this.TroopTexture, this.MapPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.09999f);
-                }
-                */
-                if (this.showTroop)
-                {
-                    timeSinceLastFrame += gameTime.ElapsedGameTime.Milliseconds;
-                    if (timeSinceLastFrame > millisecondsPerFrame)
+                    if (this.MapTexture != null)
                     {
-                        //timeSinceLastFrame -= millisecondsPerFrame;
-                        timeSinceLastFrame = 0;
-                        this.drawTroopFlag = !this.drawTroopFlag;
-                    }
-                    if (this.drawTroopFlag)
-                    {
-                        this.drawTroop( gameTime);
-                    }
-                }
-                foreach (Architecture architecture in Session.Current.Scenario.Architectures)
-                {
-                    Color white = Color.White;
-                    if (architecture.BelongedFaction != null)
-                    {
-                        white = architecture.BelongedFaction.FactionColor;
-                    }
-                    foreach (Point point in architecture.ArchitectureArea.Area)
-                    {
-                        // 【核心修复】计算坐标并限制范围 (Clamping)
-                        // 1. 原始计算：将大地图坐标转为屏幕坐标
-                        float xRatio = (float)point.X / Session.Current.Scenario.ScenarioMap.MapDimensions.X;
-                        float yRatio = (float)point.Y / Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
-                        
-                        // 加上 MapDisplayOffset 是因为小地图不一定在 (0,0)
-                        float drawX = this.MapDisplayOffset.X + (xRatio * this.mapSize.X);
-                        float drawY = this.MapDisplayOffset.Y + (yRatio * this.mapSize.Y);
-                        
-                        // 2. 限制坐标范围 (Clamping)
-                        int dotSize = this.TileLength + 2; // 城市点的大小
-                        drawX = MathHelper.Clamp(drawX, this.MapDisplayOffset.X, this.MapDisplayOffset.X + this.mapSize.X - dotSize);
-                        drawY = MathHelper.Clamp(drawY, this.MapDisplayOffset.Y, this.MapDisplayOffset.Y + this.mapSize.Y - dotSize);
-                        
                         sourceRectangle = null;
-                        CacheManager.Draw(this.ArchitectureUnitTexture, new Rectangle((int)drawX - 1, (int)drawY - 1, this.TileLength + 2, this.TileLength + 2), sourceRectangle, white, 0f, Vector2.Zero, SpriteEffects.None, 0.09999f);
+                        // 🔥 修复：调整小地图层级，避免被水墨渲染遮挡（2026-03-17）
+                        // 确保 Alpha 值不为 0 (Color.White 表示完全不透明)
+                        CacheManager.Draw(this.MapTexture, this.MapPosition, sourceRectangle, new Color(1f, 1f, 1f, this.Transparent), 0f, Vector2.Zero, SpriteEffects.None, 0.02f);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("[AirView] ⚠️ MapTexture 为 null");
+                    }
+                    /*
+                    if (this.TroopTexture != null)
+                    {
+                        sourceRectangle = null;
+                        CacheManager.Draw(this.TroopTexture, this.MapPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.09999f);
+                    }
+                    */
+                    if (this.showTroop)
+                    {
+                        timeSinceLastFrame += gameTime.ElapsedGameTime.Milliseconds;
+                        if (timeSinceLastFrame > millisecondsPerFrame)
+                        {
+                            //timeSinceLastFrame -= millisecondsPerFrame;
+                            timeSinceLastFrame = 0;
+                            this.drawTroopFlag = !this.drawTroopFlag;
+                        }
+                        if (this.drawTroopFlag)
+                        {
+                            this.drawTroop( gameTime);
+                        }
+                    }
+                    
+                    // 🎯 优化：建筑绘制频率控制和缓存
+                    this.DrawArchitecturesOptimized();
+                    
+                    sourceRectangle = null;
+                    // 🔥 修复：调整小地图边框层级，避免被水墨渲染遮挡（2026-03-17）
+                    //CacheManager.Draw(this.FrameTexture, this.FrameDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
+                    CacheManager.Draw(this.FrameTexture, this.frameTopPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.015f);
+                    CacheManager.Draw(this.FrameTexture, this.frameLeftPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.015f);
+                    CacheManager.Draw(this.FrameTexture, this.frameBottomPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.015f);
+                    CacheManager.Draw(this.FrameTexture, this.frameRightPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.015f);
+                    if (this.Conment.Text != "")
+                    {
+                        CacheManager.Draw(this.ConmentBackgroundTexture, this.Conment.AlignedPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.01f);
+                        this.Conment.Draw(0.01f);
                     }
                 }
-                sourceRectangle = null;
-                //CacheManager.Draw(this.FrameTexture, this.FrameDisplayPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
-                CacheManager.Draw(this.FrameTexture, this.frameTopPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
-                CacheManager.Draw(this.FrameTexture, this.frameLeftPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
-                CacheManager.Draw(this.FrameTexture, this.frameBottomPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
-                CacheManager.Draw(this.FrameTexture, this.frameRightPosition, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.0998f);
-                if (this.Conment.Text != "")
-                {
-                    CacheManager.Draw(this.ConmentBackgroundTexture, this.Conment.AlignedPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.09999f);
-                    this.Conment.Draw(0.0999f);
-                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AirView] Draw Exception: {ex.Message}");
             }
         }
 
@@ -206,7 +248,8 @@ namespace AirViewPlugin
             Rectangle clipRect = Rectangle.Intersect(destRect, this.MapPosition);
             if (clipRect.Width > 0 && clipRect.Height > 0)
             {
-                CacheManager.Draw(TroopFactionColorTexture, clipRect, null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.09998f);
+                // 🔥 修复：调整小地图部队层级，避免被水墨渲染遮挡（2026-03-17）
+                CacheManager.Draw(TroopFactionColorTexture, clipRect, null, color, 0f, Vector2.Zero, SpriteEffects.None, 0.016f);
             }
         }
 
@@ -523,15 +566,19 @@ namespace AirViewPlugin
 
         public override void Update()
         {
-            // 获取鼠标状态
-            MouseState mouse = Mouse.GetState();
-
-            // 1. 判断鼠标是否悬停在小地图上 (可选：只有鼠标指着小地图时才缩放)
-            bool isHovering = this.MapPosition.Contains(mouse.Position);
+            // 🔥 移除：不在 Hot Path 中检查升级（2026-03-17）
+            // 原因：违反 Hot Path 规范，应该在初始化完成时主动触发升级
+            // 升级逻辑已移至 TerritoryManager 初始化完成后的回调
+            
+            // 🎯 优化：增加帧计数器
+            _frameCounter++;
+            
+            // ✅ 修复：使用 InputManager 的缓存状态，确保帧内同步
+            bool isHovering = this.MapPosition.Contains(InputManager.Position);
             if (isHovering)
             {
-                // 2. 检测滚轮变化
-                int delta = mouse.ScrollWheelValue - _previousScrollValue;
+                // 检测滚轮变化
+                int delta = InputManager.NowMouse.ScrollWheelValue - _previousScrollValue;
                 if (delta != 0)
                 {
                     if (delta > 0)
@@ -542,13 +589,100 @@ namespace AirViewPlugin
                     // 限制缩放范围
                     _currentScale = MathHelper.Clamp(_currentScale, MIN_SCALE, MAX_SCALE);
 
-                    // 3. 应用新大小
+                    // 应用新大小
                     UpdateDisplayRect();
+                    
+                    // 🎯 优化：缩放时标记建筑缓存需要更新
+                    _architectureCacheDirty = true;
                 }
             }
 
             // 更新滚轮记录
-            _previousScrollValue = mouse.ScrollWheelValue;
+            _previousScrollValue = InputManager.NowMouse.ScrollWheelValue;
+        }
+        
+        // 🔥 新增：主动触发升级（2026-03-17）
+        // 由 TerritoryManager 初始化完成后调用，避免在 Update() 中每帧检查
+        internal void TryUpgradeFromFallback()
+        {
+            if (Session.Current?.Scenario != null && Session.MainGame?.mainGameScreen?.Plugins?.AirViewPlugin != null)
+            {
+                var airViewPlugin = Session.MainGame.mainGameScreen.Plugins.AirViewPlugin as global::AirViewPlugin.AirViewPlugin;
+                if (airViewPlugin != null && airViewPlugin.IsUsingFallbackMinimap())
+                {
+                    System.Diagnostics.Debug.WriteLine("[AirView] 🔄 TerritoryManager 已初始化，升级为完整小地图");
+                    airViewPlugin.CreateStrategicMinimap(Session.Current.Scenario);
+                }
+            }
+        }
+
+        // 🎯 新增：优化的建筑绘制方法
+        private void DrawArchitecturesOptimized()
+        {
+            // 检查是否需要更新建筑缓存
+            if (_architectureCacheDirty || _frameCounter - _lastArchitectureUpdateFrame >= ARCHITECTURE_UPDATE_INTERVAL)
+            {
+                UpdateArchitectureCache();
+                _lastArchitectureUpdateFrame = _frameCounter;
+                _architectureCacheDirty = false;
+            }
+            
+            // 使用缓存的建筑信息进行绘制
+            Rectangle? sourceRectangle = null;
+            foreach (var archInfo in _cachedArchitectures)
+            {
+                // 🔥 修复：调整小地图建筑层级，避免被水墨渲染遮挡（2026-03-17）
+                CacheManager.Draw(this.ArchitectureUnitTexture, archInfo.DrawRect, sourceRectangle, archInfo.FactionColor, 0f, Vector2.Zero, SpriteEffects.None, 0.018f);
+            }
+        }
+        
+        // 🎯 新增：更新建筑缓存
+        private void UpdateArchitectureCache()
+        {
+            _cachedArchitectures.Clear();
+            
+            if (Session.Current?.Scenario?.Architectures == null) return;
+            
+            foreach (Architecture architecture in Session.Current.Scenario.Architectures)
+            {
+                Color factionColor = Color.White;
+                if (architecture.BelongedFaction != null)
+                {
+                    factionColor = architecture.BelongedFaction.FactionColor;
+                }
+                
+                foreach (Point point in architecture.ArchitectureArea.Area)
+                {
+                    // 计算坐标并限制范围 (Clamping)
+                    float xRatio = (float)point.X / Session.Current.Scenario.ScenarioMap.MapDimensions.X;
+                    float yRatio = (float)point.Y / Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
+                    
+                    float drawX = this.MapDisplayOffset.X + (xRatio * this.mapSize.X);
+                    float drawY = this.MapDisplayOffset.Y + (yRatio * this.mapSize.Y);
+                    
+                    int dotSize = this.TileLength + 2;
+                    drawX = MathHelper.Clamp(drawX, this.MapDisplayOffset.X, this.MapDisplayOffset.X + this.mapSize.X - dotSize);
+                    drawY = MathHelper.Clamp(drawY, this.MapDisplayOffset.Y, this.MapDisplayOffset.Y + this.mapSize.Y - dotSize);
+                    
+                    var archInfo = new ArchitectureDrawInfo
+                    {
+                        DrawRect = new Rectangle((int)drawX - 1, (int)drawY - 1, this.TileLength + 2, this.TileLength + 2),
+                        FactionColor = factionColor,
+                        Name = architecture.Name,
+                        FactionId = architecture.BelongedFaction?.ID ?? -1
+                    };
+                    
+                    _cachedArchitectures.Add(archInfo);
+                }
+            }
+            
+            // System.Diagnostics.Debug.WriteLine($"[AirView] 建筑缓存已更新，共 {_cachedArchitectures.Count} 个建筑点");
+        }
+        
+        // 🎯 新增：标记建筑缓存需要更新的公共方法
+        public void MarkArchitectureCacheDirty()
+        {
+            _architectureCacheDirty = true;
         }
 
         // 专门用来计算显示区域的方法

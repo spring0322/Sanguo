@@ -5,8 +5,9 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
+using GameObjects.Events;  // 🔥 新增：ScenarioEvents
 using GameObjects.FactionDetail;
 using GameObjects.PersonDetail;
 using GameObjects.SectionDetail;
@@ -17,9 +18,10 @@ using Microsoft.Xna.Framework.Input;
 using PluginInterface;
 using WorldOfTheThreeKingdoms.GameLogic;
 using WorldOfTheThreeKingdoms.GameScreens;
+using GameManager;  // 🔥 TurnManager
 using WorldOfTheThreeKingdoms.GameScreens.ScreenLayers;
 using WorldOfTheThreeKingdoms.Resources;
-using GameManager;
+using WorldOfTheThreeKingdoms.GameManager;  // 🔥 YearlyRecommendationManager
 //using GameObjects.PersonDetail.PersonMessages;
 
 namespace WorldOfTheThreeKingdoms.GameScreens
@@ -33,55 +35,246 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private bool AfterDayStarting(GameTime gameTime)
         {
-
-            return this.MoveTheTroops(gameTime);
+            bool result = this.MoveTheTroops(gameTime);
+            
+            // 🔥 2026-03-16 阶段 3.1：并行运行 WegoEngine（测试模式）
+            // 仅在开关打开时运行，不修改游戏状态，只记录对比日志
+            if (Session.GlobalVariables.EnableWegoEngine && Session.Current?.WegoEngine != null)
+            {
+                try
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine("[AfterDayStarting] 🔥 开始 WegoEngine.Update()（测试模式）");
+                    #endif
+                    
+                    Session.Current.WegoEngine.Update();
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] ✅ WegoEngine 完成: 移动={Session.Current.WegoEngine.ProcessedMoveCommands}, 战斗={Session.Current.WegoEngine.ProcessedAttackCommands}, 计略={Session.Current.WegoEngine.ProcessedStratagemCommands}, 攻城={Session.Current.WegoEngine.ProcessedSiegeCommands}");
+                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] 📊 对比: 现有逻辑返回={result} (false=全部移完, true=还在移动)");
+                    #endif
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] ❌ WegoEngine 异常: {ex.Message}\n{ex.StackTrace}");
+                }
+            }
+            
+            return result;
         }
 
 
-        private bool Date_OnDayPassed()
+        // ==================== 新事件系统处理器（ScenarioEvents） ====================
+        
+        /// <summary>
+        /// 日事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnDayPassed(GameScenario scenario)
         {
-            if (!Session.Current.Scenario.Threading)
+            try
             {
-                Session.Current.Scenario.DayPassedEvent();
-                //Session.Current.Scenario.CheckRepeatedPerson();
-                //this.Plugins.AirViewPlugin.ReloadTroopView();
-
+                // 🔥 注意：阻塞逻辑已移至 GameDate.EndRunning()
+                // 这里只处理 UI 更新和自动存档
+                
                 this.gengxinyoucelan();
-                //this.DrawAutoSavePicture();
-
-                /*
-                if (Session.Current.Scenario.Date.Day == 29 && Session.GlobalVariables.doAutoSave)
-                {
-                    this.SaveGameAutoPosition();
-                    shangciCundangShijian = DateTime.Now;
-                }
-                */
-
-
-
-                cundangShijianJiange = Session.Current.Scenario.DaySince - shangciCundangShijian;
-
+                
+                // 自动存档检查
+                cundangShijianJiange = scenario.DaySince - shangciCundangShijian;
                 if (cundangShijianJiange >= Setting.Current.GlobalVariables.AutoSaveFrequency)
                 {
                     if (Setting.Current.GlobalVariables.doAutoSave)
                     {
-                        Session.Current.Scenario.needAutoSave = true;
+                        scenario.needAutoSave = true;
                     }
-                    shangciCundangShijian = Session.Current.Scenario.DaySince;
+                    shangciCundangShijian = scenario.DaySince;
                 }
-
-                return true;
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scenario_OnDayPassed] 异常: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// 月事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnMonthPassed(GameScenario scenario)
+        {
+            try
+            {
+                // 🎯 优化：每年2月自动清理年度推荐缓存
+                if (scenario.Date.Month == 2)
+                {
+                    YearlyRecommendationManager.Instance.ClearYearlyRecords();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scenario_OnMonthPassed] 异常: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// 季节事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnSeasonPassed(GameScenario scenario)
+        {
+            try
+            {
+                // 季节变化时切换音乐
+                if (scenario.CurrentPlayer == null || scenario.CurrentPlayer.BattleState == ZhandouZhuangtai.和平)
+                {
+                    this.SwichMusic(scenario.Date.Season);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scenario_OnSeasonPassed] 异常: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// 年事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnYearPassed(GameScenario scenario)
+        {
+            try
+            {
+                // 🔥 关键修复：恢复玩家势力推荐
+                if (scenario.CurrentPlayer != null)
+                {
+                    YearlyRecommendationManager.Instance.OnTurnStart(scenario.CurrentPlayer);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scenario_OnYearPassed] 异常: {ex.Message}");
+            }
+        }
+        
+        // ==================== 旧事件系统处理器（保留用于兼容） ====================
+
+        private bool Date_OnDayPassed()
+        {
+            try
+            {
+                // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] 被调用，Threading={Session.Current.Scenario.Threading}");
+                
+                // ----------------------------------------------------------------
+                // 正常的推进逻辑（状态为 false 时允许通过）
+                if (!Session.Current.Scenario.Threading)
+                {
+                    // 🔥 Critical Fix: Check if CurrentPlayer has passed.
+                    // Even if Threading is false (AI done), we must NOT advance the day if the player is currently controlling and hasn't passed the turn.
+                    if (Session.Current.Scenario.CurrentPlayer != null && !Session.Current.Scenario.CurrentPlayer.Passed)
+                    {
+                        // 🔥 Deadlock Fix: If player hasn't passed but also doesn't have control, they can never pass.
+                        // This creates an infinite loop where the date system waits for the player, but the player is disabled.
+                        // We must force-grant control here to break the deadlock.
+                        if (!Session.Current.Scenario.CurrentPlayer.Controlling)
+                        {
+                             // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] 玩家未Passed且未Controlling，强制设置Controlling=true: {Session.Current.Scenario.CurrentPlayer.Name}");
+                             Session.Current.Scenario.CurrentPlayer.Controlling = true;
+                             // We return false to allow the UI to refresh in the next frame with control enabled.
+                             return false;
+                        }
+
+                         // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] 玩家未Passed，阻止推进: {Session.Current.Scenario.CurrentPlayer.Name}, Controlling={Session.Current.Scenario.CurrentPlayer.Controlling}");
+                         return false;
+                    }
+
+                    // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] 执行DayPassedEvent");
+                    Session.Current.Scenario.DayPassedEvent();
+                    //Session.Current.Scenario.CheckRepeatedPerson(); // 原有注释保持不动
+                    //this.Plugins.AirViewPlugin.ReloadTroopView(); // 原有注释保持不动
+
+                    this.gengxinyoucelan();
+                    //this.DrawAutoSavePicture(); // 原有注释保持不动
+
+                    cundangShijianJiange = Session.Current.Scenario.DaySince - shangciCundangShijian;
+                    if (cundangShijianJiange >= Setting.Current.GlobalVariables.AutoSaveFrequency)
+                    {
+                        if (Setting.Current.GlobalVariables.doAutoSave)
+                        {
+                            Session.Current.Scenario.needAutoSave = true;
+                        }
+                        shangciCundangShijian = Session.Current.Scenario.DaySince;
+                    }
+                    
+                    // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] 成功，返回true");
+                    return true;
+                }
+                
+                // 还在忙，返回 false 阻止日期推进
+                // System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] Threading=true，返回false");
+                return false;
+            }
+            catch (Exception ex2)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Date_OnDayPassed] DayStartingEvent异常: {ex2.Message}");
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 每日开始前事件处理器（新事件系统）
+        /// </summary>
+        private bool Scenario_OnDayStarting(GameScenario scenario)
+        {
+            try
+            {
+                if (!scenario.Threading)
+                {
+                    Session.Current.OnTurnStart(); // 创建异步寻路的地图快照
+                    scenario.DayStartingEvent();
+                    
+                    // 🔥 新增：触发回合开始事件（包括军师风险扫描）
+                    if (scenario.CurrentPlayer != null)
+                    {
+                        var turnManager = new TurnManager();
+                        turnManager.OnTurnStart(scenario.CurrentPlayer);
+                    }
+                    
+                    return true;
+                }
+                else
+                {
+                    // 检查是否所有AI都已完成
+                    bool allAiDone = true;
+                    foreach (Faction faction in scenario.Factions)
+                    {
+                        if (faction.Controlling && !faction.Passed)
+                        {
+                            allAiDone = false;
+                            break;
+                        }
+                    }
+
+                    if (allAiDone)
+                    {
+                        scenario.Threading = false;
+                        return true;
+                    }
+
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scenario_OnDayStarting] 异常: {ex.Message}");
+            }
+
             return false;
         }
 
-        private bool Date_OnDayStarting()
+        /// <summary>
+        /// 每月开始前事件处理器（新事件系统）
+        /// </summary>
+        private bool Scenario_OnMonthStarting(GameScenario scenario)
         {
-
-            if (!Session.Current.Scenario.Threading)
+            if (!scenario.Threading)
             {
-                Session.Current.Scenario.DayStartingEvent();
-
+                // 月初逻辑（如果需要）
                 return true;
             }
             return false;
@@ -92,6 +285,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             if (!Session.Current.Scenario.Threading)
             {
                 Session.Current.Scenario.MonthPassedEvent();
+                
+                // 🎯 优化：每年2月自动清理年度推荐缓存
+                if (Session.Current.Scenario.Date.Month == 2)
+                {
+                    WorldOfTheThreeKingdoms.GameManager.YearlyRecommendationManager.Instance.ClearYearlyRecords();
+                }
+                
                 return true;
             }
             return false;
@@ -105,173 +305,43 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     if (Session.Current.Scenario.CurrentPlayer != null && Session.Current.Scenario.CurrentPlayer.BattleState != ZhandouZhuangtai.和平)
                     {
-                        if (Session.Current.Scenario.CurrentPlayer.BattleState == ZhandouZhuangtai.进攻)
-                        {
-                            Session.PlayMusic("Attack");
-                            //Player.currentPlaylist.clear();
-                            //WMPLib.IWMPMedia media5;
-                            //string[] filePaths5 = Directory.GetFiles("GameMusic/Attack/", "*.mp3");
-                            //int index5 = GameObject.Random(filePaths5.Length);
-                            //string path5 = filePaths5[index5];
-                            //foreach (String s in filePaths5)
-                            //{
-                            //    media5 = Player.newMedia(s);
-                            //    Player.currentPlaylist.appendItem(media5);
-                            //}
-                            //media5 = Player.newMedia(path5);
-                            //Player.currentPlaylist.appendItem(media5);
-                            //Player.currentItem = media5;
-                            //Player.play();
-                            //Player.settings.setMode("loop", true);
-                            //this.PlayMusic("GameMusic/Attack.mp3");
-                        }
-                        else if (Session.Current.Scenario.CurrentPlayer.BattleState == ZhandouZhuangtai.防守)
-                        {
-                            Session.PlayMusic("Defend");
-                            //Player.currentPlaylist.clear();
-                            //WMPLib.IWMPMedia media6;
-                            //string[] filePaths6 = Directory.GetFiles("GameMusic/Defend/", "*.mp3");
-                            //int index6 = GameObject.Random(filePaths6.Length);
-                            //string path6 = filePaths6[index6];
-                            //foreach (String s in filePaths6)
-                            //{
-                            //    media6 = Player.newMedia(s);
-                            //    Player.currentPlaylist.appendItem(media6);
-                            //}
-                            //media6 = Player.newMedia(path6);
-                            //Player.currentPlaylist.appendItem(media6);
-                            //Player.currentItem = media6;
-                            //Player.play();
-                            //Player.settings.setMode("loop", true);
-                            // this.PlayMusic("GameMusic/Defend.mp3");
-                        }
-                        else
-                        {
-                            Session.PlayMusic("Battle");
-                            //Player.currentPlaylist.clear();
-                            //WMPLib.IWMPMedia media7;
-                            //string[] filePaths7 = Directory.GetFiles("GameMusic/Battle/", "*.mp3");
-                            //int index7 = GameObject.Random(filePaths7.Length);
-                            //string path7 = filePaths7[index7];
-                            //foreach (String s in filePaths7)
-                            //{
-                            //    media7 = Player.newMedia(s);
-                            //    Player.currentPlaylist.appendItem(media7);
-                            //}
-                            //media7 = Player.newMedia(path7);
-                            //Player.currentPlaylist.appendItem(media7);
-                            //Player.currentItem = media7;
-                            //Player.play();
-                            //Player.settings.setMode("loop", true);
-                            //this.PlayMusic("GameMusic/Battle.mp3");
-                        }
+                        // 使用新的AudioManager播放战斗音乐
+                        AudioManager.Instance?.PlayBattleMusic(Session.Current.Scenario.CurrentPlayer.BattleState);
                     }
                     else
                     {
-                        switch (season)
-                        {
-                            case GameSeason.春:
-                                Session.PlayMusic("Spring");
-                                //Player.currentPlaylist.clear();
-                                //WMPLib.IWMPMedia media;
-                                //string[] filePaths = Directory.GetFiles("GameMusic/Spring/", "*.mp3");
-                                //int index = GameObject.Random(filePaths.Length);
-                                //string path = filePaths[index];
-                                //foreach (String s in filePaths)
-                                //{
-                                //    media = Player.newMedia(s);
-                                //    Player.currentPlaylist.appendItem(media);
-                                //}
-                                //media = Player.newMedia(path);
-                                //Player.currentPlaylist.appendItem(media);
-                                //Player.currentItem = media;
-                                //Player.play();
-                                //Player.settings.setMode("loop", true);
-                                //this.PlayMusic("GameMusic/Spring.mp3");
-                                break;
-                            case GameSeason.夏:
-                                Session.PlayMusic("Summer");
-                                //Player.currentPlaylist.clear();
-                                //WMPLib.IWMPMedia media2;
-                                //string[] filePaths2 = Directory.GetFiles("GameMusic/Summer/", "*.mp3");
-                                //int index2 = GameObject.Random(filePaths2.Length);
-                                //string path2 = filePaths2[index2];
-                                //foreach (String s in filePaths2)
-                                //{
-                                //    media2 = Player.newMedia(s);
-                                //    Player.currentPlaylist.appendItem(media2);
-                                //}
-                                //media2 = Player.newMedia(path2);
-                                //Player.currentPlaylist.appendItem(media2);
-                                //Player.currentItem = media2;
-                                //Player.play();
-                                //Player.settings.setMode("loop", true);
-                                // this.PlayMusic("GameMusic/Summer.mp3");
-                                break;
-
-                            case GameSeason.秋:
-                                Session.PlayMusic("Autumn");
-                                //Player.currentPlaylist.clear();
-                                //WMPLib.IWMPMedia media3;
-                                //string[] filePaths3 = Directory.GetFiles("GameMusic/Autumn/", "*.mp3");
-                                //int index3 = GameObject.Random(filePaths3.Length);
-                                //string path3 = filePaths3[index3];
-                                //foreach (String s in filePaths3)
-                                //{
-                                //    media3 = Player.newMedia(s);
-                                //    Player.currentPlaylist.appendItem(media3);
-                                //}
-                                //media3 = Player.newMedia(path3);
-                                //Player.currentPlaylist.appendItem(media3);
-                                //Player.currentItem = media3;
-                                //Player.play();
-                                //Player.settings.setMode("loop", true);
-                                //this.PlayMusic("GameMusic/Autumn.mp3");
-                                break;
-
-                            case GameSeason.冬:
-                                Session.PlayMusic("Winter");
-                                //Player.currentPlaylist.clear();
-                                //WMPLib.IWMPMedia media4;
-                                //string[] filePaths4 = Directory.GetFiles("GameMusic/Winter/", "*.mp3");
-                                //int index4 = GameObject.Random(filePaths4.Length);
-                                //string path4 = filePaths4[index4];
-                                //foreach (String s in filePaths4)
-                                //{
-                                //    media4 = Player.newMedia(s);
-                                //    Player.currentPlaylist.appendItem(media4);
-                                //}
-                                //media4 = Player.newMedia(path4);
-                                //Player.currentPlaylist.appendItem(media4);
-                                //Player.currentItem = media4;
-                                //Player.play();
-                                //Player.settings.setMode("loop", true);
-                                //this.PlayMusic("GameMusic/Winter.mp3");
-                                break;
-                        }
+                        // 使用新的AudioManager播放季节音乐
+                        AudioManager.Instance?.PlaySeasonMusic(season);
                     }
                 }
                 catch (System.Runtime.InteropServices.COMException)
                 {
+                    // 忽略COM异常
                 }
             }
             else
             {
-                Session.StopSong();
-                //this.StopMusic();
+                AudioManager.Instance?.StopMusic();
             }
         }
 
-        private void Date_OnSeasonChange(GameSeason season)
+        /// <summary>
+        /// 季节变化事件处理器（新事件系统）
+        /// </summary>
+        private void Scenario_OnSeasonChanged(GameScenario scenario, GameSeason newSeason)
         {
-            if (Session.Current.Scenario.CurrentPlayer == null || Session.Current.Scenario.CurrentPlayer.BattleState==ZhandouZhuangtai.和平)
+            // 🔥 修复读档崩溃：读档期间 scenario 的属性可能未初始化
+            // 原因：ProcessScenarioData 期间事件触发时 scenario 还未完全初始化
+            // 日期：2026-03-16
+            if (scenario == null || scenario.Date == null || scenario.Parameters == null) return;
+            
+            if (scenario.CurrentPlayer == null || scenario.CurrentPlayer.BattleState == ZhandouZhuangtai.和平)
             {
-                this.SwichMusic(season);
+                this.SwichMusic(newSeason);
             }
-            if (!Session.Current.Scenario.Threading&&Session.Current.Scenario.Date.Day <= Session.Current.Scenario.Parameters.DayInTurn)
+            if (!scenario.Threading && scenario.Date.Day <= scenario.Parameters.DayInTurn)
             {
-                Session.Current.Scenario.SeasonChangeEvent();
-                
+                scenario.SeasonChangeEvent();
             }
         }
 
@@ -285,17 +355,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             return false;
         }
 
-        private bool Date_OnYearStarting()
+        /// <summary>
+        /// 每年开始前事件处理器（新事件系统）
+        /// </summary>
+        private bool Scenario_OnYearStarting(GameScenario scenario)
         {
-            if (!Session.Current.Scenario.Threading)
+            if (!scenario.Threading)
             {
-                Session.Current.Scenario.YearStartingEvent();
+                scenario.YearStartingEvent();
 
+                // 🔥 关键修复：恢复玩家势力推荐，但避免与MainGameScreen重复UI显示
                 // 触发年度人才举荐
-                if (Session.Current.Scenario.CurrentPlayer != null)
+                if (scenario.CurrentPlayer != null)
                 {
-                    WorldOfTheThreeKingdoms.GameManager.YearlyRecommendationManager.Instance.OnTurnStart(Session.Current.Scenario.CurrentPlayer);
+                    WorldOfTheThreeKingdoms.GameManager.YearlyRecommendationManager.Instance.OnTurnStart(scenario.CurrentPlayer);
                 }
+                
                 return true;
             }
             return false;

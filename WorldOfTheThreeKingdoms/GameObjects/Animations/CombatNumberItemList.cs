@@ -1,4 +1,4 @@
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -19,6 +19,7 @@ namespace GameObjects.Animations
         public List<CombatNumberItem> Numbers = new List<CombatNumberItem>();
         private bool startDrawing;
 
+        private CombatNumberItemList() { }
         public CombatNumberItemList(CombatNumberDirection direction)
         {
             this.Direction = direction;
@@ -89,7 +90,11 @@ namespace GameObjects.Animations
                             }
                             break;
                     }
-                    if ((gameTime.TotalGameTime.TotalMilliseconds - this.currentTime) >= 300 * Setting.Current.GlobalVariables.TroopMoveSpeed+Setting.Current.GlobalVariables.ShowNumberAddTime*1000)
+                    // ✅ 优化：延长伤害数字显示时间，从300ms基础提升到1200ms
+                    // 原逻辑：300ms × TroopMoveSpeed + ShowNumberAddTime × 1000
+                    // 新逻辑：1200ms × TroopMoveSpeed + ShowNumberAddTime × 1000
+                    // 理由：300ms太短，玩家难以看清伤害数字，1200ms（1.2秒）更合理
+                    if ((gameTime.TotalGameTime.TotalMilliseconds - this.currentTime) >= 1200 * Setting.Current.GlobalVariables.TroopMoveSpeed + Setting.Current.GlobalVariables.ShowNumberAddTime * 1000)
                     {
                         this.Clear();
                     }

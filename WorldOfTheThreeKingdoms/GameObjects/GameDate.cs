@@ -1,57 +1,45 @@
-﻿using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
+using GameObjects.Events;  // 🔥 新增：ScenarioEvents
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
+using System.Text.Json.Serialization;  // 🔥 新增：System.Text.Json 支持
 
 namespace GameObjects
 {
     [DataContract]
     public class GameDate
     {
+        // 🔥 AOT 修复：添加 JsonInclude 以支持 System.Text.Json 序列化字段
+        // 日期：2026-03-20
+        // 原因：DataContract/DataMember 是 DataContractSerializer 的标记
+        //       System.Text.Json 不识别这些标记，导致读档后字段值为 0
+        //       添加 JsonInclude 后，System.Text.Json 可以正确序列化/反序列化字段
+        
         [DataMember]
+        [JsonInclude]
         public int Day = 1;
 
         [DataMember]
+        [JsonInclude]
         public int DaysLeft;
 
         [DataMember]
+        [JsonInclude]
         public bool IsRunning = false;
 
         [DataMember]
+        [JsonInclude]
         public int Month = 1;
 
         [DataMember]
+        [JsonInclude]
         public GameSeason Season;
 
         [DataMember]
+        [JsonInclude]
         public int Year = 0xb8;
-
-        public event DayPassedEvent OnDayPassed;
-
-#pragma warning disable CS0067 // The event 'GameDate.OnDayRunning' is never used
-        public event DayRunningEvent OnDayRunning;
-#pragma warning restore CS0067 // The event 'GameDate.OnDayRunning' is never used
-
-        public event DayStartingEvent OnDayStarting;
-
-        public event MonthPassedEvent OnMonthPassed;
-
-#pragma warning disable CS0067 // The event 'GameDate.OnMonthRunning' is never used
-        public event MonthRunningEvent OnMonthRunning;
-#pragma warning restore CS0067 // The event 'GameDate.OnMonthRunning' is never used
-
-        public event MonthStartingEvent OnMonthStarting;
-
-        public event SeasonChangeEvent OnSeasonChange;
-
-        public event YearPassedEvent OnYearPassed;
-
-#pragma warning disable CS0067 // The event 'GameDate.OnYearRunning' is never used
-        public event YearRunningEvent OnYearRunning;
-#pragma warning restore CS0067 // The event 'GameDate.OnYearRunning' is never used
-
-        public event YearStartingEvent OnYearStarting;
 
         public bool EndRunning()
         {
@@ -59,24 +47,60 @@ namespace GameObjects
             {
                 return false;
             }
-            if ((this.OnDayPassed != null) && !this.OnDayPassed())
+            
+            var scenario = Session.Current.Scenario;
+            
+            // 🔥 新事件系统：直接检查阻塞条件，不依赖旧事件返回值
+            // 阻塞条件 1：AI 正在思考
+            if (scenario.Threading)
             {
                 return false;
             }
+            
+            // 阻塞条件 2：玩家未通过回合
+            if (scenario.CurrentPlayer != null && !scenario.CurrentPlayer.Passed)
+            {
+                // 🔥 死锁修复：如果玩家未 Passed 且未 Controlling，强制授予控制权
+                if (!scenario.CurrentPlayer.Controlling)
+                {
+                    scenario.CurrentPlayer.Controlling = true;
+                    return false; // 下一帧刷新 UI
+                }
+                return false;
+            }
+            
+            // ✅ 所有阻塞条件解除，触发日事件
+            scenario.DayPassedEvent();
+            
+            // 🔥 月事件和年事件检查
             if (this.Day >= 30 - Session.Parameters.DayInTurn + 1)
             {
-                if ((this.OnMonthPassed != null) && !this.OnMonthPassed())
+                // 月末：检查是否需要阻塞
+                if (scenario.Threading)
                 {
                     return false;
                 }
-                if ((this.Month >= 12) && ((this.OnYearPassed != null) && !this.OnYearPassed()))
+                
+                scenario.MonthPassedEvent();
+                
+                // 年末：检查是否需要阻塞
+                if (this.Month >= 12)
                 {
-                    return false;
+                    if (scenario.Threading)
+                    {
+                        return false;
+                    }
+                    
+                    scenario.YearPassedEvent();
                 }
             }
+            
+            // ✅ 所有事件处理完成
             this.IsRunning = false;
             return true;
         }
+
+
 
         public float GetFoodRateBySeason(GameSeason season)
         {
@@ -125,6 +149,7 @@ namespace GameObjects
             if (this.DaysLeft > 0)
             {
                 this.DaysLeft--;
+                // System.Diagnostics.Debug.WriteLine($"[GameDate.Go] DaysLeft递减: {this.DaysLeft + 1} -> {this.DaysLeft}");
             }
 
         }
@@ -155,8 +180,9 @@ namespace GameObjects
 
         public void SetSeason()
         {
-            GameSeason season = this.Season;
-            if (this.Month >= 3 && this.Month<=5)
+            GameSeason oldSeason = this.Season;
+            
+            if (this.Month >= 3 && this.Month <= 5)
             {
                 this.Season = GameSeason.春;
             }
@@ -172,37 +198,73 @@ namespace GameObjects
             {
                 this.Season = GameSeason.冬;
             }
-            if ((season != this.Season) && (this.OnSeasonChange != null))
+            
+            // 🔥 修复读档崩溃：读档期间 Session.Current.Scenario 可能为 null
+            // 原因：ProcessScenarioData 中设置 Date 时会触发季节变化，但此时 Session.Current.Scenario 还未赋值
+            // 日期：2026-03-16
+            if (oldSeason != this.Season && Session.Current.Scenario != null)
             {
-                this.OnSeasonChange(this.Season);
+                ScenarioEvents.RaiseSeasonChanged(Session.Current.Scenario, this.Season);
+                
+                // 🔥 2026-03-09 新增：季节变化时更新天气
+                // ANTI-BAND-AID：WeatherManager 必须在 Scenario.Init() 中初始化，如果为 null 说明数据流错误
+                if (Session.Current.Scenario.WeatherManager != null)
+                {
+                    var seasonType = WorldOfTheThreeKingdoms.GameLogic.SeasonConverter.ToSeasonType(this.Season);
+                    Session.Current.Scenario.WeatherManager.UpdateWeather(seasonType);
+                    System.Diagnostics.Debug.WriteLine($"[GameDate] 季节变化：{oldSeason} → {this.Season}，天气已更新");
+                }
             }
-            //*jokosany每个月重新随机选择一首背景音乐,必须放在this.SetSeason();之后
-            //Session.MainGame.mainGameScreen.SwichMusic(Session.Current.Scenario.Date.Season);
-            //  Session.MainGame.mainGameScreen.SwichMusic(GameSeason.秋);
-            // Session.MainGame.mainGameScreen.SwichMusic(this.Season);
         }
 
+        private static DateTime _lastStartRunningLogTime = DateTime.MinValue;
+        
         public bool StartRunning()
         {
+            // 🔥 AOT修复：如果IsRunning卡在true，检查是否是死锁状态并强制重置
             if (this.IsRunning)
             {
-                return false;
+                // 检查是否是死锁状态（Threading=false但IsRunning=true）
+                if (Session.Current.Scenario != null && !Session.Current.Scenario.Threading)
+                {
+                    this.IsRunning = false;
+                }
+                else
+                {
+                    // 正常的等待状态
+                    if ((DateTime.Now - _lastStartRunningLogTime).TotalSeconds > 5)
+                    {
+                        _lastStartRunningLogTime = DateTime.Now;
+                    }
+                    return false;
+                }
             }
-            if ((this.OnDayStarting != null) && !this.OnDayStarting())
+            
+            // 🔥 数据完整性：StartRunning 在游戏运行时调用，Scenario 必须存在
+            // 如果为 null 说明游戏状态异常，应该崩溃而不是静默返回
+            var scenario = Session.Current.Scenario;
+            
+            // 🔥 新事件系统：调用 ScenarioEvents.OnDayStarting
+            if (!ScenarioEvents.RaiseDayStarting(scenario))
             {
                 return false;
             }
-            if (this.Day <= Session.Current.Scenario.Parameters.DayInTurn)
+            
+            if (this.Day <= scenario.Parameters.DayInTurn)
             {
-                if ((this.OnMonthStarting != null) && !this.OnMonthStarting())
+                // 🔥 新事件系统：调用 ScenarioEvents.OnMonthStarting
+                if (!ScenarioEvents.RaiseMonthStarting(scenario))
                 {
                     return false;
                 }
-                if ((this.Month == 1) && ((this.OnYearStarting != null) && !this.OnYearStarting()))
+                
+                // 🔥 新事件系统：调用 ScenarioEvents.OnYearStarting
+                if (this.Month == 1 && !ScenarioEvents.RaiseYearStarting(scenario))
                 {
                     return false;
                 }
             }
+            
             this.IsRunning = true;
             return true;
         }
@@ -233,7 +295,16 @@ namespace GameObjects
             }
         }
 
-        public GameDate() { }
+        public GameDate()
+        {
+            // 🔥 关键修复：显式初始化字段，避免 AOT 或序列化器问题
+            // 日期：2026-03-17
+            // 原因：字段默认值（Year = 0xb8）在某些情况下不会被应用
+            //       导致 Year/Month/Day 都是 0，显示"0年0月0日"
+            Year = 0xb8;  // 184
+            Month = 1;
+            Day = 1;
+        }
 
         public GameDate(int y, int m, int d)
         {
@@ -248,27 +319,6 @@ namespace GameObjects
             Month = d.Month;
             Day = d.Day;
         }
-        
-
-        public delegate bool DayPassedEvent();
-
-        public delegate bool DayRunningEvent();
-
-        public delegate bool DayStartingEvent();
-
-        public delegate bool MonthPassedEvent();
-
-        public delegate bool MonthRunningEvent();
-
-        public delegate bool MonthStartingEvent();
-
-        public delegate void SeasonChangeEvent(GameSeason season);
-
-        public delegate bool YearPassedEvent();
-
-        public delegate bool YearRunningEvent();
-
-        public delegate bool YearStartingEvent();
     }
 }
 

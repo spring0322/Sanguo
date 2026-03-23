@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects.ArchitectureDetail;
 using GameObjects.FactionDetail;
@@ -8,11 +8,13 @@ using Platforms;
 using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using System.Text.Json.Serialization;
 using WorldOfTheThreeKingdoms;
 
 namespace GameObjects
 {
     [DataContract]
+
     [KnownType(typeof(AttackDefaultKind))]
     [KnownType(typeof(AttackTargetKind))]
     [KnownType(typeof(CastDefaultKind))]
@@ -41,10 +43,13 @@ namespace GameObjects
     [KnownType(typeof(YearTableEntry))]
     [KnownType(typeof(TreasureCreationSetting))]
     
+    // 🔥 [JsonDerivedType] attributes removed to resolve conflict with ReferenceHandler.Preserve
+    // The concrete types are already known at the collection level (e.g., Dictionary<int, ArchitectureKind>)
+    
     public class GameObject
     {
         private int id;
-        private string name;
+        protected string name;
 
         public float Scale;
 
@@ -135,6 +140,8 @@ namespace GameObjects
                 this.name = value;
             }
         }
+        
+        public GameScenario Scenario { get; set; }
 
         public bool Selected
         {
@@ -170,6 +177,13 @@ namespace GameObjects
             {
                 this.textResultString = value;
             }
+        }
+
+        public virtual bool IsCheatMode()
+        {
+            // 添加调试输出以确认被调用
+            // System.Diagnostics.Debug.WriteLine($"IsCheatMode Called: {Session.GlobalVariables.EnableCheat}");
+            return Session.GlobalVariables.EnableCheat;
         }
 
         public static T WeightedRandom<T>(Dictionary<T, float> weights)

@@ -5,11 +5,13 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using GameManager;
+using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 2026-03-09 添加：支持 [GenerateUIAccessor] 特性
 
 namespace GameObjects.ArchitectureDetail
 {
     [DataContract]
-    public class FacilityKind : GameObject
+    [GenerateUIAccessor]  // 🔥 2026-03-09 修复：添加源生成器特性，支持设施选择界面 UI 显示
+    public partial class FacilityKind : GameObject
     {
         private int days;
         private int endurance;

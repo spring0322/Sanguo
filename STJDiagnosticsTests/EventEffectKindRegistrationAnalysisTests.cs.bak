@@ -1,0 +1,128 @@
+using NUnit.Framework;
+using System;
+using System.Linq;
+using System.IO;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 测试 EventEffectKindTable 类型注册分析
+    /// 实现任务 10.1：分析当前 GameJsonContext 中的 EventEffectKindTable 注册
+    /// </summary>
+    [TestFixture]
+    public class EventEffectKindRegistrationAnalysisTests
+    {
+        private EventEffectKindRegistrationAnalyzer _analyzer;
+
+        [SetUp]
+        public void Setup()
+        {
+            _analyzer = new EventEffectKindRegistrationAnalyzer();
+        }
+
+        [Test]
+        public void AnalyzeEventEffectKindTableRegistrations_ShouldIdentifyMissingTypes()
+        {
+            // Act
+            var result = _analyzer.AnalyzeEventEffectKindTableRegistrations();
+
+            // Assert
+            Assert.IsNotNull(result, "分析结果不应为空");
+            Assert.IsNotNull(result.RegisteredTypes, "已注册类型列表不应为空");
+            Assert.IsNotNull(result.MissingTypes, "缺失类型列表不应为空");
+            Assert.IsNotNull(result.NamespaceConflicts, "命名空间冲突列表不应为空");
+
+            // 输出分析日志
+            Console.WriteLine("=== EventEffectKindTable 注册分析结果 ===");
+            foreach (var logEntry in result.AnalysisLog)
+            {
+                Console.WriteLine(logEntry);
+            }
+
+            Console.WriteLine($"\n总计: {result.RegisteredTypes.Count} 个已注册, {result.MissingTypes.Count} 个缺失");
+
+            if (result.NamespaceConflicts.Any())
+            {
+                Console.WriteLine($"发现 {result.NamespaceConflicts.Count} 个命名空间冲突");
+            }
+        }
+
+        [Test]
+        public void GenerateFixRecommendations_ShouldProvideActionableAdvice()
+        {
+            // Arrange
+            var result = _analyzer.AnalyzeEventEffectKindTableRegistrations();
+
+            // Act
+            var recommendations = _analyzer.GenerateFixRecommendations(result);
+
+            // Assert
+            Assert.IsNotNull(recommendations, "修复建议不应为空");
+            Assert.IsTrue(recommendations.Any(), "应该提供修复建议");
+
+            // 输出修复建议
+            Console.WriteLine("\n=== 修复建议 ===");
+            foreach (var recommendation in recommendations)
+            {
+                Console.WriteLine(recommendation);
+            }
+
+            // 将修复建议保存到文件以便后续使用
+            var recommendationsFile = Path.Combine(TestContext.CurrentContext.WorkDirectory, "EventEffectKindTable_Fix_Recommendations.txt");
+            File.WriteAllLines(recommendationsFile, recommendations);
+            Console.WriteLine($"\n修复建议已保存到: {recommendationsFile}");
+        }
+
+        [Test]
+        public void CheckCriticalTypes_ShouldBeRegistered()
+        {
+            // Arrange
+            var result = _analyzer.AnalyzeEventEffectKindTableRegistrations();
+
+            // 检查关键类型是否已注册
+            var criticalTypes = new[]
+            {
+                typeof(GameObjects.TroopDetail.EventEffect.EventEffectKindTable),
+                typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable),
+                typeof(GameObjects.TroopDetail.EventEffect.EventEffectKind),
+                typeof(GameObjects.ArchitectureDetail.EventEffect.EventEffectKind)
+            };
+
+            foreach (var criticalType in criticalTypes)
+            {
+                var isRegistered = result.RegisteredTypes.Contains(criticalType);
+                Console.WriteLine($"{criticalType.FullName}: {(isRegistered ? "✓ 已注册" : "✗ 缺失")}");
+                
+                if (!isRegistered)
+                {
+                    Assert.Warn($"关键类型 {criticalType.FullName} 未注册，可能导致反序列化失败");
+                }
+            }
+        }
+
+        [Test]
+        public void CheckDictionaryTypes_ShouldBeRegistered()
+        {
+            // Arrange
+            var result = _analyzer.AnalyzeEventEffectKindTableRegistrations();
+
+            // 检查字典类型是否已注册
+            var dictionaryTypes = new[]
+            {
+                typeof(System.Collections.Generic.Dictionary<int, GameObjects.TroopDetail.EventEffect.EventEffectKind>),
+                typeof(System.Collections.Generic.Dictionary<int, GameObjects.ArchitectureDetail.EventEffect.EventEffectKind>)
+            };
+
+            foreach (var dictType in dictionaryTypes)
+            {
+                var isRegistered = result.RegisteredTypes.Contains(dictType);
+                Console.WriteLine($"{dictType.FullName}: {(isRegistered ? "✓ 已注册" : "✗ 缺失")}");
+                
+                if (!isRegistered)
+                {
+                    Assert.Warn($"字典类型 {dictType.FullName} 未注册，可能导致反序列化失败");
+                }
+            }
+        }
+    }
+}

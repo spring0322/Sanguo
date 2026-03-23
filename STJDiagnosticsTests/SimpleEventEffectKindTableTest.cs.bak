@@ -1,0 +1,94 @@
+using NUnit.Framework;
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using GameObjects.TroopDetail.EventEffect;
+using GameObjects.ArchitectureDetail.EventEffect;
+using WorldOfTheThreeKingdoms.Serialization;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 简单的 EventEffectKindTable 测试，不使用有问题的转换器
+    /// </summary>
+    [TestFixture]
+    public class SimpleEventEffectKindTableTest
+    {
+        [Test]
+        public void TestArchitectureEventEffectKindTableSerialization()
+        {
+            // 创建一个简单的 ArchitectureDetail EventEffectKindTable
+            var table = new GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable();
+            
+            // 创建不包含有问题转换器的选项
+            var options = new JsonSerializerOptions
+            {
+                TypeInfoResolver = GameJsonContext.Default,
+                IncludeFields = true,
+                PropertyNameCaseInsensitive = true,
+                AllowTrailingCommas = true,
+                ReadCommentHandling = JsonCommentHandling.Skip,
+                NumberHandling = JsonNumberHandling.AllowReadingFromString,
+                // 不包含 LegacyDictionaryConverter
+            };
+            
+            // 测试序列化
+            string json = null;
+            Assert.DoesNotThrow(() => {
+                json = JsonSerializer.Serialize(table, options);
+            }, "ArchitectureDetail EventEffectKindTable 序列化不应抛出异常");
+            
+            Assert.IsNotNull(json, "序列化结果不应为空");
+            Console.WriteLine($"序列化结果: {json}");
+            
+            // 测试反序列化
+            GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable deserializedTable = null;
+            Assert.DoesNotThrow(() => {
+                deserializedTable = JsonSerializer.Deserialize<GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable>(json, options);
+            }, "ArchitectureDetail EventEffectKindTable 反序列化不应抛出异常");
+            
+            Assert.IsNotNull(deserializedTable, "反序列化结果不应为空");
+            Assert.IsNotNull(deserializedTable.EventEffectKinds, "EventEffectKinds 字典不应为空");
+            Console.WriteLine($"反序列化成功，包含 {deserializedTable.EventEffectKinds.Count} 个条目");
+        }
+        
+        [Test]
+        public void TestTroopEventEffectKindTableSerialization()
+        {
+            // 创建一个简单的 TroopDetail EventEffectKindTable
+            var table = new GameObjects.TroopDetail.EventEffect.EventEffectKindTable();
+            
+            // 创建不包含有问题转换器的选项
+            var options = new JsonSerializerOptions
+            {
+                TypeInfoResolver = GameJsonContext.Default,
+                IncludeFields = true,
+                PropertyNameCaseInsensitive = true,
+                AllowTrailingCommas = true,
+                ReadCommentHandling = JsonCommentHandling.Skip,
+                NumberHandling = JsonNumberHandling.AllowReadingFromString,
+                // 不包含 LegacyDictionaryConverter
+            };
+            
+            // 测试序列化
+            string json = null;
+            Assert.DoesNotThrow(() => {
+                json = JsonSerializer.Serialize(table, options);
+            }, "TroopDetail EventEffectKindTable 序列化不应抛出异常");
+            
+            Assert.IsNotNull(json, "序列化结果不应为空");
+            Console.WriteLine($"序列化结果: {json}");
+            
+            // 测试反序列化
+            GameObjects.TroopDetail.EventEffect.EventEffectKindTable deserializedTable = null;
+            Assert.DoesNotThrow(() => {
+                deserializedTable = JsonSerializer.Deserialize<GameObjects.TroopDetail.EventEffect.EventEffectKindTable>(json, options);
+            }, "TroopDetail EventEffectKindTable 反序列化不应抛出异常");
+            
+            Assert.IsNotNull(deserializedTable, "反序列化结果不应为空");
+            Assert.IsNotNull(deserializedTable.EventEffectKinds, "EventEffectKinds 字典不应为空");
+            Console.WriteLine($"反序列化成功，包含 {deserializedTable.EventEffectKinds.Count} 个条目");
+        }
+    }
+}

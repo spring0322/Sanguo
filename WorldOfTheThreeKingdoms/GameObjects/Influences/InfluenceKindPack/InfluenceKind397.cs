@@ -1,5 +1,6 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -8,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind397 : InfluenceKind
     {
+        [DataMember]
         private int baseIncrement;
 
         public override void ApplyInfluenceKind(Troop troop)
@@ -27,7 +29,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             if (!this.IsVaild(destination))
             {
@@ -40,7 +42,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
                 int num3 = troop.Army.MoraleCeiling - troop.Army.Morale;
                 if ((num3 >= 5) || !GameObject.Chance(0x5f))
                 {
-                    int num4 = source.GetStratagemSuccessChanceCredit(troop, false, false, false);
+                    int num4 = source.GetStratagemSuccessChanceCredit(stratagem, troop, false, false, false);
                     if (num4 > 0)
                     {
                         int num5 = source.GenerateBoostIncrement(this.baseIncrement);

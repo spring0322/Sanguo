@@ -8,8 +8,11 @@ namespace GameObjects.MapDetail
     [DataContract]
     public class TerrainDetailTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, TerrainDetail> TerrainDetails = new Dictionary<int, TerrainDetail>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, TerrainDetail>))]
+        public Dictionary<int, TerrainDetail> TerrainDetails = [];
 
         public bool AddTerrainDetail(TerrainDetail terrainDetail)
         {
@@ -45,6 +48,9 @@ namespace GameObjects.MapDetail
 
         public void LoadFromString(TerrainDetailTable allTerrainDetails, string terrainDetailIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(terrainDetailIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = terrainDetailIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             TerrainDetail detail = null;

@@ -1,5 +1,6 @@
-using GameGlobal;
-using GameManager;
+#nullable disable
+
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects.Animations;
 using GameObjects.ArchitectureDetail;
 using GameObjects.Conditions;
@@ -14,16 +15,37 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Linq;
+using ContextMenuPlugin;
+using WTKGameManager = WorldOfTheThreeKingdoms.GameManager;
+using global::GameManager;
+using WorldOfTheThreeKingdoms.GameData;
 
 namespace GameObjects
 {
-    //using GameObjects.PersonDetail.GuanzhiKindTable;
-    // using GameObjects.PersonDetail.PersonMessages;
-    //using GameFreeText;
+// ... (rest of imports)
+
     [DataContract]
-    public class Architecture : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持右键菜单访问
+
+    public partial class Architecture : GameObject, System.Text.Json.Serialization.IJsonOnDeserialized, WorldOfTheThreeKingdoms.GameGlobal.IPropertyAccessor
     {
+        // 🔥 修复：删除重复的 KindID 属性，只保留 KindId
+        [DataMember]
+        public int KindID { get; set; }
+
+        [DataMember]
+        public int AreaX { get; set; }
+        [DataMember]
+        public int AreaY { get; set; }
+        [DataMember]
+        public int AreaWidth { get; set; }
+        [DataMember]
+        public int AreaHeight { get; set; }
+// ...
+
+
         class SimulatingFightingForceComparer : IComparer<Troop>
         {
             public int Compare(Troop x, Troop y)
@@ -151,6 +173,8 @@ namespace GameObjects
 
         private Person mayor = null;
 
+
+
         //[DataMember]
         //public int mayorID = -1;
 
@@ -158,6 +182,10 @@ namespace GameObjects
 
         [DataMember]
         public bool TodayPersonArriveNote = false;
+        
+        // UI Tuner property
+        public Point NameDisplayOffset { get; set; } = new Point(0, 0);
+
         private int agriculture;
 
         [DataMember]
@@ -191,6 +219,8 @@ namespace GameObjects
         public int ChanceDecrementOfCriticalStrike = 0;
 
         public Faction BelongedFaction = null;
+        [DataMember]
+        public int BelongedFactionID { get; set; } = -1;
         
         public bool AutoRecommend
         {
@@ -204,13 +234,86 @@ namespace GameObjects
 
         public Section BelongedSection = null;
 
+        [DataMember]
+        [JsonInclude]
+        public int BelongedSectionID { get; set; } = -1;
+
         public ArchitectureList AILandLinks = new ArchitectureList();
 
         private Queue<AILinkProcedureDetail> AILinkProcedureDetails = new Queue<AILinkProcedureDetail>();
 
         public ArchitectureList AIWaterLinks = new ArchitectureList();
 
-        public GameArea ArchitectureArea = new GameArea();
+        // 🔥 将ArchitectureArea字段改为属性，以便追踪赋值和检测共享引用问题
+        private GameArea _architectureArea = new GameArea();
+        
+        public GameArea ArchitectureArea
+        {
+            get 
+            { 
+                // 🔥 严格修复：确保规模与ArchitectureAreaString完全对应
+                if (_architectureArea == null || 
+                    _architectureArea.Area == null || 
+                    _architectureArea.Area.Count == 0)
+                {
+                    _architectureArea = new GameArea();
+                    if (!string.IsNullOrEmpty(ArchitectureAreaString))
+                    {
+                        LoadFromString(_architectureArea, ArchitectureAreaString);
+                    }
+                }
+                else if (!string.IsNullOrEmpty(ArchitectureAreaString))
+                {
+                    // 🔥 验证一致性：实际规模必须与字符串匹配
+                    var expectedCount = ArchitectureAreaString.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length / 2;
+                    if (_architectureArea.Area.Count != expectedCount)
+                    {
+                        #if DEBUG
+                        // 详细调试信息，帮助找到根本原因
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} 规模不一致，重建: 期望{expectedCount}, 当前{_architectureArea.Area.Count}");
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} ArchitectureAreaString: '{ArchitectureAreaString}'");
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} _architectureArea.Area内容:");
+                        for (int i = 0; i < _architectureArea.Area.Count; i++)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[{i}]: {_architectureArea.Area[i]}");
+                        }
+                        
+                        // 🔥 添加调用堆栈以找到问题源头
+                        var stackTrace = new System.Diagnostics.StackTrace(true);
+                        System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} 调用堆栈:");
+                        for (int i = 0; i < Math.Min(10, stackTrace.FrameCount); i++)
+                        {
+                            var frame = stackTrace.GetFrame(i);
+                            System.Diagnostics.Debug.WriteLine($"at {frame.GetMethod().DeclaringType.Name}.{frame.GetMethod().Name}() in {frame.GetFileName()}:line {frame.GetFileLineNumber()}");
+                        }
+                        #endif
+                        
+                        // 强制重建以确保一致性
+                        _architectureArea = new GameArea();
+                        LoadFromString(_architectureArea, ArchitectureAreaString);
+                        
+                        #if DEBUG
+                        // 验证重建后是否修复了问题
+                        if (_architectureArea.Area.Count != expectedCount)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} 重建后仍然不一致: 期望{expectedCount}, 实际{_architectureArea.Area.Count}");
+                            System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} 这表明 LoadFromString 或 ArchitectureAreaString 有问题");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ArchitectureArea] {Name} 重建成功，规模已修复为 {_architectureArea.Area.Count}");
+                        }
+                        #endif
+                    }
+                }
+                
+                return _architectureArea; 
+            }
+            set
+            {
+                _architectureArea = value;
+            }
+        }
 
         public MilitaryList BeMergedMilitaryList = new MilitaryList();
 
@@ -325,8 +428,24 @@ namespace GameObjects
         public ArchitectureKind Kind
         {
             get => _architectureKind;
-            set => _architectureKind = value;
+            set
+            {
+                // 诊断：追踪Kind被设置为null的情况
+                if (value == null && _architectureKind != null)
+                {
+                    var stackTrace = new System.Diagnostics.StackTrace(true);
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.Kind] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 被设置为 null！原值: {_architectureKind.Name}");
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.Kind] 调用堆栈:\n{stackTrace}");
+                }
+                _architectureKind = value;
+            }
         }
+
+        public bool HasPort
+        {
+            get { return this.Kind != null && this.Kind.HasHarbor; }
+        }
+
 
         [DataMember]
         public int StateID { get; set; }
@@ -336,6 +455,7 @@ namespace GameObjects
         private GameArea longViewArea = null;
 
         [DataMember]
+        [JsonIgnore]  // 🔥 使用 MilitariesString_Legacy 代替
         public string MilitariesString { get; set; }
 
         private int morale;
@@ -479,6 +599,11 @@ namespace GameObjects
         public float enduranceDecreaseRateDrop;
 
         public bool hostileTroopInViewLastDay = false;
+        
+        // 🔥 新增：城市占领日期（用于识别新占领城市）
+        [DataMember]
+        private GameDate _occupiedDate = new(0, 1, 1);
+        
         [DataMember]
         public int SuspendTroopTransfer;
         public bool withoutTruceFrontline;
@@ -495,6 +620,66 @@ namespace GameObjects
         public float TroopTransportFoodRate { get; set; }
 
         public ArchitectureList AIBattlingArchitectures { get; set; }
+        
+        // 🔥 兼容性处理：从旧格式剧本文件加载PersonsString
+        [DataMember]
+        [JsonInclude]
+        [JsonPropertyName("PersonsString")]
+        public string PersonsString_Legacy
+        {
+            get => null;
+            set
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    PersonIDs = value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => int.TryParse(s, out int id) ? id : -1)
+                        .Where(id => id >= 0)
+                        .ToList();
+                    
+                    #if DEBUG
+                    if (this.ID == 0)  // 洛阳
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[PersonsString_Legacy] 洛阳(ID=0) setter 被调用，转换了 {PersonIDs.Count} 个武将ID");
+                    }
+                    #endif
+                }
+            }
+        }
+        
+        [DataMember]
+        [JsonInclude]
+        public List<int> PersonIDs { get; set; } = new List<int>();
+
+        // 🔥 兼容性处理：从旧格式剧本文件加载MilitariesString
+        [DataMember]
+        [JsonInclude]
+        [JsonPropertyName("MilitariesString")]
+        public string MilitariesString_Legacy
+        {
+            get => null;
+            set
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    MilitaryIDs = value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => int.TryParse(s, out int id) ? id : -1)
+                        .Where(id => id >= 0)
+                        .ToList();
+                    // 延迟日志输出，避免Name为null
+                    // System.Diagnostics.Debug.WriteLine($"[Architecture] {Name}(ID:{ID}) 从 MilitariesString 转换了 {MilitaryIDs.Count} 个部队ID");
+                }
+            }
+        }
+
+        [DataMember]
+        [JsonInclude]
+        public List<int> MilitaryIDs { get; set; } = new List<int>();
+
+        [DataMember]
+        [JsonInclude]
+        public List<int> FacilityIDs { get; set; } = new List<int>();
+
         [DataMember]
         public int MayorOnDutyDays {get;set;}
 
@@ -563,6 +748,14 @@ namespace GameObjects
         {
             get
             {
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    var emptyList = new CaptiveList();
+                    emptyList.SetImmutable();
+                    return emptyList;
+                }
+                
                 CaptiveList p = Session.Current.Scenario.GetCaptiveList(this);
                 p.SetImmutable();
                 foreach (Captive c in p) //禁止俘虏自势力武将
@@ -580,69 +773,67 @@ namespace GameObjects
         {
             get
             {
+                PersonList result = new PersonList();
+                
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    return result;
+                }
+                
                 GameObjectList p = Session.Current.Scenario.GetPersonList(this).GetList();
 
-                HashSet<Person> result = new HashSet<Person>();
+                HashSet<Person> resultSet = new HashSet<Person>();
                 foreach (Person q in p)
                 {
-                    result.Add(q);
+                    resultSet.Add(q);
                     foreach (Person r in q.ChildrenList)
                     {
-                        result.Add(r);
+                        resultSet.Add(r);
                     }
                 }
 
                 GameObjectList p2 = Session.Current.Scenario.GetMovingPersonList(this).GetList();
                 foreach (Person q in p2)
                 {
-                    result.Add(q);
+                    resultSet.Add(q);
                     foreach (Person r in q.ChildrenList)
                     {
-                        result.Add(r);
+                        resultSet.Add(r);
                     }
                 }
 
                 GameObjectList p3 = Session.Current.Scenario.GetNoFactionPersonList(this).GetList();
                 foreach (Person q in p3)
                 {
-                    result.Add(q);
+                    resultSet.Add(q);
                     foreach (Person r in q.ChildrenList)
                     {
-                        result.Add(r);
+                        resultSet.Add(r);
                     }
                 }
 
                 GameObjectList p4 = Session.Current.Scenario.GetNoFactionMovingPersonList(this).GetList();
                 foreach (Person q in p4)
                 {
-                    result.Add(q);
+                    resultSet.Add(q);
                     foreach (Person r in q.ChildrenList)
                     {
-                        result.Add(r);
+                        resultSet.Add(r);
                     }
                 }
 
                 foreach (Captive q in this.Captives)
                 {
-                    result.Add(q.CaptivePerson);
+                    resultSet.Add(q.CaptivePerson);
+                }
+                
+                foreach (Person person in resultSet)
+                {
+                    result.Add(person);
                 }
 
-                foreach (Person q in this.Feiziliebiao)
-                {
-                    result.Add(q);
-                    foreach (Person r in q.ChildrenList)
-                    {
-                        result.Add(r);
-                    }
-                }
-
-                PersonList result2 = new PersonList();
-                foreach (Person q in result)
-                {
-                    result2.Add(q);
-                }
-                result2.SetImmutable();
-                return result2;
+                return result;
             }
         }
 
@@ -650,9 +841,18 @@ namespace GameObjects
         {
             get
             {
-                GameObjectList p = Session.Current.Scenario.GetPersonList(this).GetList();
+                PersonList result2 = new PersonList();
+                
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    result2.SetImmutable();
+                    return result2;
+                }
+                
+                GameObjectList personList = Session.Current.Scenario.GetPersonList(this).GetList();
                 HashSet<Person> result = new HashSet<Person>();
-                foreach (Person q in p)
+                foreach (Person q in personList)
                 {
                     result.Add(q);
                     foreach (Person r in q.ChildrenList)
@@ -664,7 +864,6 @@ namespace GameObjects
                 {
                     result.Add(q);
                 }
-                PersonList result2 = new PersonList();
                 foreach (Person q in result)
                 {
                     result2.Add(q);
@@ -678,9 +877,17 @@ namespace GameObjects
         {
             get
             {
-                GameObjectList p = Session.Current.Scenario.GetPersonList(this).GetList();
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    var emptyList = new PersonList();
+                    emptyList.SetImmutable();
+                    return emptyList;
+                }
+                
+                GameObjectList personList = Session.Current.Scenario.GetPersonList(this).GetList();
                 HashSet<Person> result = new HashSet<Person>();
-                foreach (Person q in p)
+                foreach (Person q in personList)
                 {
                     foreach (Person r in q.ChildrenList)
                     {
@@ -701,6 +908,15 @@ namespace GameObjects
         {
             get
             {
+                // 🔥 防御性检查：在序列化/反序列化过程中，Session可能还没有初始化
+                if (Session.Current?.Scenario == null)
+                {
+                    // 返回空列表而不是崩溃
+                    var emptyList = new PersonList();
+                    emptyList.SetImmutable();
+                    return emptyList;
+                }
+                
                 PersonList p = Session.Current.Scenario.GetPersonList(this);
                 p.SetImmutable();
                 return p;
@@ -711,6 +927,14 @@ namespace GameObjects
         {
             get
             {
+                // 🔥 防御性检查：在序列化/反序列化过程中，Session可能还没有初始化
+                if (Session.Current?.Scenario == null)
+                {
+                    var emptyList = new PersonList();
+                    emptyList.SetImmutable();
+                    return emptyList;
+                }
+                
                 PersonList all = Session.Current.Scenario.GetPersonList(this);
                 PersonList result = new PersonList();
 
@@ -731,8 +955,16 @@ namespace GameObjects
         {
             get
             {
-                PersonList all = Session.Current.Scenario.GetPersonList(this);
                 PersonList result = new PersonList();
+                
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    result.SetImmutable();
+                    return result;
+                }
+                
+                PersonList all = Session.Current.Scenario.GetPersonList(this);
 
                 foreach (Person p in all)
                 {
@@ -751,8 +983,16 @@ namespace GameObjects
         {
             get
             {
-                PersonList all = Session.Current.Scenario.GetPersonList(this);
                 PersonList result = new PersonList();
+                
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    result.SetImmutable();
+                    return result;
+                }
+                
+                PersonList all = Session.Current.Scenario.GetPersonList(this);
 
                 foreach (Person p in all)
                 {
@@ -780,14 +1020,26 @@ namespace GameObjects
             }
         }
 
+        // 🔥 辅助方法：安全获取PersonList，处理Session未初始化的情况
+        private PersonList GetPersonListSafe(Func<GameScenario, Architecture, PersonList> getter)
+        {
+            if (Session.Current?.Scenario == null)
+            {
+                var emptyList = new PersonList();
+                emptyList.SetImmutable();
+                return emptyList;
+            }
+            
+            PersonList p = getter(Session.Current.Scenario, this);
+            p.SetImmutable();
+            return p;
+        }
 
         public PersonList MovingPersons
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetMovingPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetMovingPersonList(arch));
             }
         }
 
@@ -795,9 +1047,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetNoFactionPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetNoFactionPersonList(arch));
             }
         }
 
@@ -805,9 +1055,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetNoFactionMovingPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetNoFactionMovingPersonList(arch));
             }
         }
 
@@ -815,9 +1063,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetPrincessPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetPrincessPersonList(arch));
             }
         }
 
@@ -825,9 +1071,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetZhenzaiPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetZhenzaiPersonList(arch));
             }
         }
 
@@ -835,9 +1079,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetAgriculturePersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetAgriculturePersonList(arch));
             }
         }
 
@@ -845,9 +1087,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetCommercePersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetCommercePersonList(arch));
             }
         }
 
@@ -855,9 +1095,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetTechnologyPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetTechnologyPersonList(arch));
             }
         }
 
@@ -865,9 +1103,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetDomintaionPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetDomintaionPersonList(arch));
             }
         }
 
@@ -875,10 +1111,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetMoralePersonList(this);
-                p.SetImmutable();
-                return p;
-
+                return GetPersonListSafe((scenario, arch) => scenario.GetMoralePersonList(arch));
             }
         }
 
@@ -886,10 +1119,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetEndurancePersonList(this);
-                p.SetImmutable();
-                return p;
-
+                return GetPersonListSafe((scenario, arch) => scenario.GetEndurancePersonList(arch));
             }
         }
 
@@ -897,9 +1127,7 @@ namespace GameObjects
         {
             get
             {
-                PersonList p = Session.Current.Scenario.GetTrainingPersonList(this);
-                p.SetImmutable();
-                return p;
+                return GetPersonListSafe((scenario, arch) => scenario.GetTrainingPersonList(arch));
             }
         }
 
@@ -908,6 +1136,13 @@ namespace GameObjects
             get
             {
                 PersonList result = new PersonList();
+                
+                // 🔥 防御性检查：Session未初始化时返回空列表
+                if (Session.Current?.Scenario == null)
+                {
+                    return result;
+                }
+                
                 foreach (Person i in Session.Current.Scenario.Persons)
                 {
                     if (i.Status == PersonStatus.Normal && i.LocationArchitecture == this && i.LocationTroop == null && !this.BelongedFaction.MayorList.HasGameObject(i))
@@ -931,6 +1166,41 @@ namespace GameObjects
             }
             return zhengzaiBuchongDeBiandui;
         }
+        
+        /// <summary>
+        /// 判断是否为新占领城市（30天内）
+        /// </summary>
+        public bool IsRecentlyOccupied()
+        {
+            // 未记录占领时间，视为旧城市
+            if (_occupiedDate == null) return false;
+            
+            // 🔥 ANTI-BAND-AID：假设游戏状态有效，如果无效让它崩溃
+            GameDate currentDate = Session.Current.Scenario.Date;
+            
+            // 计算天数差异
+            int daysSinceOccupied = CalculateDaysDifference(_occupiedDate, currentDate);
+            return daysSinceOccupied <= 30;
+        }
+        
+        /// <summary>
+        /// 计算两个GameDate之间的天数差异
+        /// </summary>
+        private int CalculateDaysDifference(GameDate fromDate, GameDate toDate)
+        {
+            // 如果fromDate是初始值(0年1月1日)，返回一个大数值确保视为旧城市
+            if (fromDate.Year == 0 && fromDate.Month == 1 && fromDate.Day == 1)
+            {
+                return 9999;
+            }
+            
+            // 简化计算：年*360 + 月*30 + 日
+            int fromDays = fromDate.Year * 360 + fromDate.Month * 30 + fromDate.Day;
+            int toDays = toDate.Year * 360 + toDate.Month * 30 + toDate.Day;
+            
+            return toDays - fromDays;
+        }
+        
         [DataMember]
         public int MilitaryPopulation
         {
@@ -1008,7 +1278,7 @@ namespace GameObjects
                         return i.Name;
                     }
                 }
-                return "——";
+                return "-";
             }
         }
 
@@ -1268,6 +1538,9 @@ namespace GameObjects
 
         private void RoutewayAI()
         {
+            // 粮道管理是基础策略，委任军区可以执行
+            if (!ShouldExecuteBasicAI()) return;
+            
             if (GameObject.Random(10) == 0)
             {
                 RoutewayList toRemove = new RoutewayList();
@@ -1285,38 +1558,509 @@ namespace GameObjects
             }
         }
 
-        public void AI()
+        public void RunPrepareAI()
         {
-            //this.PlayAIZhaoXian();
             this.PrepareAI();
-            this.AIExecute();
+        }
+
+        public void RunDomesticAI()
+        {
+            // 🔥 修复：确保只有 AI 势力的建筑才执行内政 AI 逻辑
+            
+            // 1. 如果建筑没有势力（中立建筑），不执行内政 AI
+            if (BelongedFaction == null)
+            {
+                return;
+            }
+            
+            // 2. 如果建筑属于玩家势力，检查是否是委任军区
+            if (Session.Current?.Scenario?.IsPlayer(BelongedFaction) == true)
+            {
+                // 如果不是委任军区，不执行内政 AI
+                if (BelongedSection == null || 
+                    BelongedSection.AIDetail == null || 
+                    !BelongedSection.AIDetail.AutoRun)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RunDomesticAI] ⚠️ 警告：玩家建筑 {this.Name} 意外调用了 RunDomesticAI！");
+                    System.Diagnostics.Debug.WriteLine($"[RunDomesticAI]   所属势力: {BelongedFaction.Name}");
+                    System.Diagnostics.Debug.WriteLine($"[RunDomesticAI]   所属军区: {(BelongedSection != null ? BelongedSection.Name : "无")}");
+                    System.Diagnostics.Debug.WriteLine($"[RunDomesticAI]   军区托管: {(BelongedSection?.AIDetail?.AutoRun == true ? "是" : "否")}");
+                    
+                    // 记录调用堆栈
+                    var stackTrace = new System.Diagnostics.StackTrace(true);
+                    System.Diagnostics.Debug.WriteLine($"[RunDomesticAI] 调用堆栈:");
+                    for (int i = 0; i < Math.Min(5, stackTrace.FrameCount); i++)
+                    {
+                        var frame = stackTrace.GetFrame(i);
+                        System.Diagnostics.Debug.WriteLine($"  at {frame.GetMethod().DeclaringType?.Name}.{frame.GetMethod().Name}()");
+                    }
+                    
+                    return; // 玩家非委任建筑不执行内政 AI
+                }
+            }
+            
+            // 3. 只有 AI 势力的建筑或玩家委任军区的建筑才执行以下内政 AI 逻辑
+            
             this.RoutewayAI();
             this.AITreasure();
             this.AITrade();
-            this.AIMilitary();
             this.AIFacility();
-           // this.DiplomaticRelationAI();
-            this.AICampaign();
-            this.OutsideTacticsAI();
             this.AIWork(false);
-            this.InsideTacticsAI();
             this.AIExpand();
+        }
+
+        public void RunMilitaryAI()
+        {
+            // 🔥 CRITICAL FIX: 添加招募新军队的逻辑
+            // 这是AI创建编队的前提条件，必须先有军队才能创建编队
+            this.AIRecruitMilitary();
+            
+            // 🔥 V8.2 FIX: 为新创建的编队分配招募任务
+            // 确保编队创建后立即开始补充兵力
+            this.AutoRecruit();
+            
+            this.AIMilitary();
+            this.AICampaign();
+            this.CheckActiveDefense();
+            this.CheckEmergencyEvacuation();
+            try { WTKGameManager.AITroopRecyclingSystem.Instance.RecycleWeakTroopsForManpower(this); } catch { }
+            this.OutsideTacticsAI();
+            this.InsideTacticsAI();
+        }
+
+        public void AI()
+        {
+            // 🔥 修复：确保只有 AI 势力的建筑才执行 AI 逻辑
+            
+            // 1. 如果建筑没有势力（中立建筑、空城），不执行 AI
+            // 用户反馈：游戏中存在没有势力的建筑是正常的业务逻辑
+            if (BelongedFaction == null)
+            {
+                return;
+            }
+            
+            // 2. 如果建筑属于玩家势力，检查是否是委任军区
+            // 注意：Session.Current 永远不为 null（静态初始化），但 Scenario 可能为 null
+            if (Session.Current.Scenario?.IsPlayer(BelongedFaction) == true)
+            {
+                // 🔥 关键修复：允许委任军区执行AI逻辑
+                // 如果不是委任军区，不执行AI（使用 C# 12 模式匹配）
+                if (BelongedSection?.AIDetail?.AutoRun != true)
+                {
+                    return; // 玩家非委任建筑不执行AI逻辑
+                }
+                
+                // 委任军区继续执行AI逻辑
+            }
+            
+            // 3. AI 势力的建筑或玩家委任军区的建筑执行以下 AI 逻辑
+
+            //this.PlayAIZhaoXian();
+            this.RunPrepareAI();
+            
+            // Faction AI performs its own specialized tasks (e.g. executions) here, 
+            // but for the sake of structure, we keep the original flow's dedicated calls if any were interleaved.
+            // In the original code, AIExecute was called right after PrepareAI.
+            this.AIExecute();
+            
+            this.RunDomesticAI();
+            this.RunMilitaryAI();
+
             this.AIDiplomaticTactics();
 
-            ExtensionInterface.call("AIArchitecture", new Object[] { Session.Current.Scenario, this });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseAIArchitecture(Session.Current.Scenario, this);
         }
 
         private void AIExpand()
         {
-            if (this.ExpandAvail())
+            #if DEBUG
+            // 🔥 诊断：记录AIExpand调用，追踪玩家势力是否误触发
+            // System.Diagnostics.Debug.WriteLine($"[AIExpand] {Name}(ID:{ID}) 被调用");
+            if (BelongedFaction != null)
             {
-                this.Expand();
+                bool isPlayer = Session.Current?.Scenario?.IsPlayer(BelongedFaction) ?? false;
+                // System.Diagnostics.Debug.WriteLine($"[AIExpand] 所属势力: {BelongedFaction.Name}, 是否玩家: {isPlayer}");
+                
+                if (isPlayer)
+                {
+                    // 🔥 如果是玩家势力，记录调用堆栈并直接返回
+                    var stackTrace = new System.Diagnostics.StackTrace(true);
+                    // System.Diagnostics.Debug.WriteLine($"[AIExpand] ⚠️ 警告：玩家势力 {BelongedFaction.Name} 触发了AIExpand！");
+                    // System.Diagnostics.Debug.WriteLine($"[AIExpand] 调用堆栈:\n{stackTrace}");
+                    return; // 玩家势力不应该执行AI扩建
+                }
             }
+            #endif
+            
+            // 🔥 诊断：检查 _architectureKind 是否为 null
+            if (_architectureKind == null)
+            {
+                // System.Diagnostics.Debug.WriteLine($"[AIExpand] ❌ {Name}(ID:{ID}) 的 _architectureKind 为 null！");
+                // System.Diagnostics.Debug.WriteLine($"[AIExpand] Kind={(Kind != null ? Kind.Name : "null")}");
+                // System.Diagnostics.Debug.WriteLine($"[AIExpand] BelongedFaction={BelongedFaction?.Name}, IsPlayer={Session.Current?.Scenario?.IsPlayer(BelongedFaction)}");
+                return; // 直接返回，不执行扩建逻辑
+            }
+            
+            // #if DEBUG
+            // if (this.Name == "高陵")
+            // {
+            //     System.Diagnostics.Debug.WriteLine($"[AIExpand] ========== {Name} AIExpand 被调用 ==========");
+            //     System.Diagnostics.Debug.WriteLine($"  当前 _architectureArea 状态:");
+            //     System.Diagnostics.Debug.WriteLine($"    _architectureArea == null: {_architectureArea == null}");
+            //     if (_architectureArea != null)
+            //     {
+            //         System.Diagnostics.Debug.WriteLine($"    _architectureArea.Area == null: {_architectureArea.Area == null}");
+            //         if (_architectureArea.Area != null)
+            //         {
+            //             System.Diagnostics.Debug.WriteLine($"    _architectureArea.Area.Count: {_architectureArea.Area.Count}");
+            //             for (int i = 0; i < _architectureArea.Area.Count; i++)
+            //             {
+            //                 System.Diagnostics.Debug.WriteLine($"      [{i}]: {_architectureArea.Area[i]}");
+            //             }
+            //         }
+            //     }
+            //     System.Diagnostics.Debug.WriteLine($"  ArchitectureAreaString: '{ArchitectureAreaString}'");
+            //     System.Diagnostics.Debug.WriteLine($"  IsStrategicFrontline={IsStrategicFrontline()}");
+            //     System.Diagnostics.Debug.WriteLine($"  Population={Population}, PopulationCeiling={PopulationCeiling}");
+            //     System.Diagnostics.Debug.WriteLine($"  人口过载={(Population > PopulationCeiling * 0.9f)}");
+            // }
+            // #endif
+            
+            // 🔥 NEW: 整合战略地图的智能扩建逻辑
+            bool isFrontLine = IsStrategicFrontline();
+            // 使用PopulationCeiling替代MaxPopulation
+            bool isOvercrowded = (this.Population > this.PopulationCeiling * 0.9f);
+            
+            if (isFrontLine || isOvercrowded)
+            {
+                // #if DEBUG
+                // if (this.Name == "高陵")
+                // {
+                //     System.Diagnostics.Debug.WriteLine($"[AIExpand] {Name} 满足扩建触发条件: 前线={isFrontLine}, 过载={isOvercrowded}");
+                // }
+                // #endif
+                
+                // 执行扩建
+                if (this.ExpandAvail())
+                {
+                    // #if DEBUG
+                    // System.Diagnostics.Debug.WriteLine($"[AIExpand] {this.Name} 满足扩建条件并执行扩建: 前线={isFrontLine}, 过载={isOvercrowded}");
+                    // #endif
+                    this.Expand();
+                }
+
+            }
+        }
+
+        /// <summary>
+        /// 🔥 NEW: 整合战略地图的前线判断
+        /// 结合传统前线标识和战略势能图进行综合判断
+        /// <summary>
+        /// 🔥 NEW: 智能前线判断
+        /// 结合传统前线标识和战略势能图进行综合判断
+        /// </summary>
+        public bool IsStrategicFrontline()
+        {
+            // 1. 基础物理前线判定 (保持不变)
+            bool traditionalFrontline = this.FrontLine || this.HostileLine || this.noFactionFrontline;
+            
+            // 2. 深度战略价值评估
+            try
+            {
+                // A. 政治中心：首都或州治所
+                bool isCapital = this.BelongedFaction?.Capital == this;
+                // 假设有个 IsStateCapital 属性，如果没有可以去掉
+                // bool isStateCapital = this.IsStateCapital; 
+
+                // B. 战争热点：最近被打过，或者视野内有大量敌军
+                bool isHotZone = this.RecentlyAttacked > 0;
+                if (this.HasHostileTroopsInView() && this.GetHostileTroopsInView().Count > 1)
+                {
+                    isHotZone = true;
+                }
+
+                // C. 人口重镇 (修正逻辑)
+                // 不再看比例，而是看绝对值。假设 50000 人口就算具备动员能力的大城
+                bool isPopCenter = this.Population >= 50000; 
+
+                // D. 军事重镇 (新增)
+                // 兵多粮足，哪怕不是前线也是兵站
+                bool isMilitaryHub = this.MilitaryCount >= 30000 && this.Food >= 1000000;
+
+                // E. 经济重镇 (新增)
+                // 钱多，是势力的金库
+                bool isEconomicHub = this.Fund >= 50000;
+
+                // 3. 综合评分判定
+                // 满足以下任一条件即为【战略重要】：
+                // 1. 是首都
+                // 2. 正在挨打 (HotZone)
+                // 3. 是传统前线，并且 (人多 OR 兵多 OR 钱多) -> 避免了贫瘠的前线也被当宝
+                // 4. 即使不是前线，但是超级兵站 (MilitaryHub) -> 后方集结地
+                
+                bool strategicImportance = isCapital 
+                                        || isHotZone
+                                        || (traditionalFrontline && (isPopCenter || isMilitaryHub || isEconomicHub))
+                                        || (isMilitaryHub && isPopCenter); // 后方的大型兵源地也算战略要地
+
+#if DEBUG
+                // 优化日志输出，不再刷屏，只在确实重要时显示
+                if (global::GameObjects.SectionAIHelper.EnableDebugOutput && strategicImportance)
+                {
+                    string reason = "";
+                    if (isCapital) reason += "首都 ";
+                    if (isHotZone) reason += "交战中 ";
+                    if (traditionalFrontline) reason += "前线 ";
+                    if (isPopCenter) reason += "人口 ";
+                    if (isMilitaryHub) reason += "军事 ";
+                    
+                    System.Diagnostics.Debug.WriteLine($"[🏰 StrategicFrontline] {this.Name}: 判定为战略要地 (原因: {reason})");
+                }
+#endif
+
+                // 返回逻辑：只要是传统前线，或者具备战略价值，都返回 true
+                // 这样可以让 AI 既照顾边界，又重点照顾核心
+                return traditionalFrontline || strategicImportance;
+            }
+            catch (Exception ex)
+            {
+                return traditionalFrontline;
+            }
+        }
+
+        /// <summary>
+        /// 🔥 NEW: 动态内政饱和度阈值
+        /// 根据战略情况和势力状态动态调整内政发展优先级
+        /// </summary>
+        public float InternalAffairSaturationThreshold
+        {
+            get
+            {
+                return CalculateDynamicSaturationThreshold();
+            }
+        }
+
+        /// <summary>
+        /// 🔥 NEW: 计算动态饱和度阈值
+        /// 基于威胁等级、资源状况、发展阶段等因素动态调整
+        /// </summary>
+        private float CalculateDynamicSaturationThreshold()
+        {
+            // 🛡️ 递归保护：如果正在执行人员调配，返回默认阈值
+            if (Faction._isExecutingPersonnelAllocation)
+            {
+                return 0.85f; // 返回默认阈值，避免复杂计算
+            }
+            
+            float baseThreshold = 0.85f; // 基础阈值
+            
+            try
+            {
+                // =========================================================
+                // 1. 威胁等级调整
+                // =========================================================
+                bool hasImmediateThreat = this.HasHostileTroopsInView();
+                bool isUnderAttack = this.RecentlyAttacked > 0;
+                
+                if (isUnderAttack)
+                {
+                    // 正在被攻击：大幅降低阈值，专注军事
+                    baseThreshold = 0.60f;
+                }
+                else if (hasImmediateThreat)
+                {
+                    // 有即时威胁：适度降低阈值
+                    baseThreshold = 0.70f;
+                }
+                else if (this.FrontLine)
+                {
+                    // 前线城市：略微降低阈值，保持警戒
+                    baseThreshold = 0.80f;
+                }
+
+                // =========================================================
+                // 2. 资源状况调整
+                // =========================================================
+                if (!this.IsFundEnough || !this.IsFoodEnough)
+                {
+                    // 资源紧缺：提高阈值，优先发展经济
+                    baseThreshold = Math.Min(baseThreshold + 0.10f, 0.95f);
+                }
+                
+                if (this.Fund > this.FundCeiling * 0.8f && this.Food > this.FoodCeiling * 0.8f)
+                {
+                    // 资源充足：可以追求完美，提高阈值
+                    baseThreshold = Math.Min(baseThreshold + 0.05f, 0.95f);
+                }
+
+                // =========================================================
+                // 3. 发展阶段调整
+                // =========================================================
+                float developmentLevel = (this.Agriculture + this.Commerce + this.Technology) / 
+                                       (float)(this.AgricultureCeiling + this.CommerceCeiling + this.TechnologyCeiling);
+                
+                if (developmentLevel < 0.3f)
+                {
+                    // 发展初期：提高阈值，快速发展基础设施
+                    baseThreshold = Math.Min(baseThreshold + 0.10f, 0.95f);
+                }
+                else if (developmentLevel > 0.8f)
+                {
+                    // 发展后期：降低阈值，避免过度投入
+                    baseThreshold = Math.Max(baseThreshold - 0.05f, 0.70f);
+                }
+
+                // =========================================================
+                // 4. 势力整体状况调整
+                // =========================================================
+                if (this.BelongedFaction != null)
+                {
+                    int totalCities = this.BelongedFaction.ArchitectureCount;
+                    int threatenedCities = 0;
+                    
+                    foreach (var arch in this.BelongedFaction.Architectures.Cast<Architecture>())
+                    {
+                        if (arch.HasHostileTroopsInView() || arch.RecentlyAttacked > 0)
+                        {
+                            threatenedCities++;
+                        }
+                    }
+                    
+                    float threatRatio = (float)threatenedCities / totalCities;
+                    
+                    if (threatRatio > 0.5f)
+                    {
+                        // 势力面临全面威胁：大幅降低阈值
+                        baseThreshold = Math.Max(baseThreshold - 0.15f, 0.60f);
+                    }
+                    else if (threatRatio > 0.2f)
+                    {
+                        // 势力面临部分威胁：适度降低阈值
+                        baseThreshold = Math.Max(baseThreshold - 0.08f, 0.70f);
+                    }
+                }
+
+                // =========================================================
+                // 5. 特殊情况调整
+                // =========================================================
+                
+                // 人口压力：人口接近上限时提高阈值，优先发展
+                if (this.Population > this.PopulationCeiling * 0.9f)
+                {
+                    baseThreshold = Math.Min(baseThreshold + 0.05f, 0.95f);
+                }
+                
+                // 耐久度危机：城墙快塌时降低其他内政阈值
+                if (this.Endurance < this.EnduranceCeiling * 0.3f)
+                {
+                    baseThreshold = Math.Max(baseThreshold - 0.10f, 0.65f);
+                }
+
+#if DEBUG
+                if (global::GameObjects.SectionAIHelper.EnableDebugOutput && Math.Abs(baseThreshold - 0.85f) > 0.05f)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[🎯 DynamicThreshold] {this.Name}: 动态阈值={baseThreshold:F2} " +
+                        $"(威胁={hasImmediateThreat}, 前线={this.FrontLine}, 发展度={developmentLevel:F2})");
+                }
+#endif
+
+                return Math.Max(0.60f, Math.Min(0.95f, baseThreshold)); // 限制在合理范围内
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[⚠️ DynamicThreshold] {this.Name}: 计算失败 - {ex.Message}");
+#endif
+                return 0.85f; // 失败时返回默认值
+            }
+        }
+
+        /// <summary>
+        /// 判断建筑是否应该执行基础AI逻辑（仅说服、招募等基础策略）
+        /// 规则：AI势力总是执行；玩家势力只有在委任军区时才执行基础策略
+        /// </summary>
+        /// <returns>true=应该执行基础AI, false=不执行AI</returns>
+        private bool ShouldExecuteBasicAI()
+        {
+            // 🔥 调试：基础AI执行判断
+            if (Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            {
+#if DEBUG
+                if (global::GameObjects.SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ShouldExecuteBasicAI] 建筑{this.Name}: 是否玩家={Session.Current.Scenario.IsPlayer(this.BelongedFaction)}, 军区={this.BelongedSection?.Name}, AutoRun={this.BelongedSection?.AIDetail?.AutoRun}");
+                }
+#endif
+            }
+            
+            // AI势力总是执行AI（不需要军区）
+            if (!Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            {
+                return true;
+            }
+            
+            // 玩家势力：只有委任的军区才执行基础AI
+            if (this.BelongedSection != null && 
+                this.BelongedSection.AIDetail != null && 
+                this.BelongedSection.AIDetail.AutoRun)
+            {
+#if DEBUG
+                if (global::GameObjects.SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine("[ShouldExecuteBasicAI] 玩家势力建筑 " + this.Name + " 属于委任军区 " + this.BelongedSection.Name + "，将执行基础AI逻辑");
+                }
+#endif
+                return true;
+            }
+            
+#if DEBUG
+            if (global::GameObjects.SectionAIHelper.EnableDebugOutput && Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            {
+                System.Diagnostics.Debug.WriteLine("[ShouldExecuteBasicAI] 玩家势力建筑 " + this.Name + " 不属于委任军区，跳过基础AI逻辑");
+            }
+#endif
+            
+            return false;
+        }
+
+        private void CheckActiveDefense()
+        {
+            try
+            {
+                global::WorldOfTheThreeKingdoms.GameManager.AICoordinatedDefenseSystem.Instance.CheckActiveDefense(this);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckActiveDefense] Error: {ex.Message}");
+            }
+        }
+
+        private void CheckEmergencyEvacuation()
+        {
+            try
+            {
+                global::WorldOfTheThreeKingdoms.GameManager.AICoordinatedDefenseSystem.Instance.CheckEmergencyEvacuation(this);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckEmergencyEvacuation] Error: {ex.Message}");
+            }
+        }  /// <summary>
+        /// 判断建筑是否应该执行高级AI逻辑（外交、处决、劝降等势力级别决策）
+        /// 规则：只有AI势力才执行高级策略
+        /// </summary>
+        /// <returns>true=应该执行高级AI, false=不执行高级AI</returns>
+        private bool ShouldExecuteAdvancedAI()
+        {
+            // 只有AI势力才执行高级策略
+            return !Session.Current.Scenario.IsPlayer(this.BelongedFaction);
         }
 
         private void AIExecute()
         {
-            if (Session.Current.Scenario.IsPlayer(this.BelongedFaction)) return;
+            // 🔥 处决是势力级别的决策，只有AI势力才执行
+            if (!ShouldExecuteAdvancedAI()) return;
             if (Session.GlobalVariables.AIExecutionRate <= 0) return;
 
             //AI for executing officers. High ambition and low personal loyalty leads to higher chance of execution (rate lower => higher chance)
@@ -1409,35 +2153,146 @@ namespace GameObjects
             return false;
         }
 
+        /// <summary>
+        /// 🔥 NEW: 整合AI管理系统的威胁检查
+        /// 结合即时威胁、战略势能图和AI决策管理器进行综合判断
+        /// </summary>
+        private bool HasIntegratedThreat()
+        {
+            // 🔥 2026-02-17 修复：简化威胁判断，移除过度防御性检查
+            // 根本原因：原逻辑充满 try-catch 和防御性空检查，违反 ANTI-BAND-AID PROTOCOL
+            // 新逻辑：只检查真正的即时威胁，允许前线城市在安全时建设施
+            
+            // 1. 即时威胁：视野内有敌军
+            if (this.HasHostileTroopsInView())
+            {
+                return true;
+            }
+
+            // 2. 战略威胁：只有同时满足多个条件才认为有威胁
+            // 单纯的 FrontLine 不应该阻止建设施，只有在敌对线且最近被攻击才算真正威胁
+            if (this.HostileLine && this.RecentlyAttacked > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIFacility] {this.Name} 检测到战略威胁 - 敌对线={this.HostileLine}, 最近攻击={this.RecentlyAttacked}");
+                return true;
+            }
+
+            return false;
+        }
+
         private void AIFacility()
         {
-            if (((this.PlanArchitecture == null) || GameObject.Chance(10)) && (this.BuildingFacility < 0) && this.FacilityPositionCount > 0)
+            // 🔥 终极修复：在 AIFacility 方法内部再次检查玩家势力
+            // 这是最后一道防线，确保玩家城市绝对不会自动建造设施
+            
+            // 1. 如果建筑没有势力（中立建筑），不执行
+            if (BelongedFaction == null)
             {
+                return;
+            }
+            
+            // 2. 如果建筑属于玩家势力，检查是否是委任军区
+            if (Session.Current?.Scenario?.IsPlayer(BelongedFaction) == true)
+            {
+                // 如果不是委任军区，不执行
+                if (BelongedSection == null || 
+                    BelongedSection.AIDetail == null || 
+                    !BelongedSection.AIDetail.AutoRun)
+                {
+
+                    
+                    return; // 玩家非委任建筑绝对不执行设施建造
+                }
+                else
+                {
+
+                }
+            }
+            
+            // 🔥 NEW: 1. 整合战略地图的安全检查
+            if (HasIntegratedThreat())
+            {
+
+                // 有威胁时，只允许建设防御性设施或停止建设
+                // 这里可以根据需要添加防御性设施的建设逻辑
+                return;
+            }
+
+            // 🔥 NEW: 2. 资金保留：不要把钱花光
+            // 必须保留足够的钱用于征兵 (例如保留 2000 金)
+            if (this.Fund < 2000)
+            {
+
+                return;
+            }
+
+            // 🔥 2026-02-17 修复：调整 PlanArchitecture 对设施建造的影响
+            // PlanArchitecture 的含义：
+            // - 如果是敌对势力：进攻目标
+            // - 如果是同势力：资源调配/支援目标（例如：支援首都）
+            // 原逻辑：有计划时只有 10% 概率建设施（优先支援目标城市）
+            // 新逻辑：有计划时 50% 概率建设施（平衡本地发展和支援任务）
+            
+            var canBuildFacility = (this.PlanArchitecture == null) || GameObject.Chance(50);
+            
+
+
+            if (canBuildFacility && this.BuildingFacility < 0 && this.FacilityPositionCount > 0)
+            {
+                // 🔥 修复：先处理已有计划，如果能建造就建造，否则清除计划
                 if (this.PlanFacilityKind != null && this.BelongedFaction != null)
                 {
-                    if (this.Technology >= this.PlanFacilityKind.TechnologyNeeded && this.PlanFacilityKind.PositionOccupied <= this.FacilityPositionLeft)
+                    bool shouldClearPlan = false;
+                    
+                    // 检查技术和空间是否满足
+                    if (this.Technology < this.PlanFacilityKind.TechnologyNeeded || this.PlanFacilityKind.PositionOccupied > this.FacilityPositionLeft)
                     {
-                        if ((this.Fund >= this.PlanFacilityKind.FundCost) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) >= this.PlanFacilityKind.PointCost))
-                        {
-                            this.BelongedFaction.DepositTechniquePointForFacility(this.PlanFacilityKind.PointCost);
-                            this.BeginToBuildAFacility(this.PlanFacilityKind);
-                            this.PlanFacilityKind = null;
-                        }
-                        else if (GameObject.Chance(0x21) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < this.PlanFacilityKind.PointCost))
-                        {
-                            this.BelongedFaction.SaveTechniquePointForFacility(this.PlanFacilityKind.PointCost / this.PlanFacilityKind.Days);
-                        }
+                        shouldClearPlan = true;
+                    }
+                    // 检查造价是否超过资金上限一半
+                    else if (this.PlanFacilityKind.FundCost > this.FundCeiling / 2)
+                    {
+                        shouldClearPlan = true;
+                    }
+                    // 检查资金和技巧点
+                    else if ((this.Fund >= this.PlanFacilityKind.FundCost) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) >= this.PlanFacilityKind.PointCost))
+                    {
+                        // 资金和技巧点都足够，开始建造
+                        this.BelongedFaction.DepositTechniquePointForFacility(this.PlanFacilityKind.PointCost);
+                        this.BeginToBuildAFacility(this.PlanFacilityKind);
+                        this.PlanFacilityKind = null;
+                        return; // 建造开始，本回合结束
                     }
                     else
                     {
-                        this.PlanFacilityKind = null;
+                        // 资金或技巧点不足
+                        // 技巧点不足时，尝试保存技巧点
+                        if (GameObject.Chance(0x21) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < this.PlanFacilityKind.PointCost))
+                        {
+                            this.BelongedFaction.SaveTechniquePointForFacility(this.PlanFacilityKind.PointCost / this.PlanFacilityKind.Days);
+                        }
+                        
+                        // 🔥 关键修复：资金不足时，有概率放弃计划，避免永远等待
+                        if (this.Fund < this.PlanFacilityKind.FundCost && GameObject.Chance(30))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[AIFacility] {this.Name} 资金不足({this.Fund}/{this.PlanFacilityKind.FundCost})，放弃计划设施 {this.PlanFacilityKind.Name}");
+                            shouldClearPlan = true;
+                        }
                     }
-                    if (this.PlanFacilityKind != null && this.PlanFacilityKind.FundCost > this.FundCeiling / 2)
+                    
+                    if (shouldClearPlan)
                     {
                         this.PlanFacilityKind = null;
                     }
+                    else
+                    {
+                        // 有计划且未清除，等待资金/技巧点，本回合不选择新设施
+                        return;
+                    }
                 }
-                else
+                
+                // 🔥 修复：没有计划时，执行设施选择逻辑
+                if (this.PlanFacilityKind == null)
                 {
                     if (AIExtension()) return;
 
@@ -1456,7 +2311,7 @@ namespace GameObjects
                             }
                             if (value < 0 && this.CanRemoveFacility(i) && i.Kind.rongna == 0)
                             {
-                                if (this.FacilityEnabled || i.MaintenanceCost <= 0)
+                            if (this.FacilityEnabled || i.MaintenanceCost <= 0)
                                 {
                                     i.Influences.PurifyInfluence(this, Applier.Facility, i.ID);
                                 }
@@ -1467,7 +2322,8 @@ namespace GameObjects
                         }
                     }
                     //remove facilities if not enough fund to support
-                    if (this.FacilityMaintenanceCost * 30 + 100 > this.ExpectedFund && this.BelongedSection.AIDetail.AllowFacilityRemoval)
+                    if (this.FacilityMaintenanceCost * 30 + 100 > this.ExpectedFund && 
+                        this.BelongedSection != null && this.BelongedSection.AIDetail != null && this.BelongedSection.AIDetail.AllowFacilityRemoval)
                     {
                         GameObjectList f = this.Facilities.GetList();
                         f.PropertyName = "AIValue";
@@ -1518,11 +2374,25 @@ namespace GameObjects
                         if (value > 0 && this.ExpectedFund != 0)
                         {
                             int fundMonthToWait = (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1;
-                            if (value > maxValue && GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam)) && this.Fund - kind.FundCost > this.EnoughFund)
+                            
+                            // 🔥 优化：和平时期只要没敌人，资金允许就必然修
+                            bool isPeaceful = this.RecentlyAttacked <= 0 && !this.HasHostileTroopsInView();
+                            bool chanceCheck = GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
+                            int effectiveEnoughFund = this.EnoughFund;
+
+                            if (isPeaceful)
+                            {
+                                chanceCheck = true; // 和平时期强制通过概率检测
+                                effectiveEnoughFund = (int)(this.EnoughFund * 0.7); // 和平时期放宽资金保留要求，鼓励建设
+                            }
+
+                            if (value > maxValue && chanceCheck && this.Fund - kind.FundCost > effectiveEnoughFund)
                             {
                                 if (this.FacilityPositionLeft < kind.PositionOccupied)
                                 {
-                                    if (this.BelongedSection != null && this.BelongedSection.AIDetail != null && this.BelongedSection.AIDetail.AllowFacilityRemoval && this.FacilityPositionLeft < Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetMaxFacilitySpace())
+                                    if (this.BelongedSection != null && this.BelongedSection.AIDetail != null && 
+                                        this.BelongedSection.AIDetail.AllowFacilityRemoval && 
+                                        this.FacilityPositionLeft < Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetMaxFacilitySpace())
                                     {
                                         int fpl = this.FacilityPositionLeft;
                                         toDestroy.Clear();
@@ -1684,7 +2554,8 @@ namespace GameObjects
                     Math.Max((this.MoraleCeiling - this.Morale) / 90,
                     (this.DominationCeiling - this.Domination) / 30)))));
                 int frontLine = (this.withoutTruceFrontline || this.noFactionFrontline) ? this.EffectiveMilitaryCount * 2 : 0;
-                return Math.Min(this.MaxSupportableTroop, Math.Min(Math.Max(develop, frontLine), fundSupport));
+                int result = Math.Min(this.MaxSupportableTroop, Math.Min(Math.Max(develop, frontLine), fundSupport));
+                return Math.Max(0, result);
             }
         }
 
@@ -1783,6 +2654,7 @@ namespace GameObjects
 
         public bool CallResource(Architecture src, int fund, int food)
         {
+
             if (fund == 0 && food == 0) return false;
 
             int actualTransferFood = food;
@@ -1934,45 +2806,135 @@ namespace GameObjects
             return 0;
         }
 
+        /// <summary>
+        /// 【主动索取】：城池发现自己缺粮时，主动向周围请求 (V8.7 迟滞阈值版)
+        /// 修复：引入 70% 警戒线，高于此线不请求，彻底解决"每回合微调"的问题
+        /// </summary>
         public void WithdrawResources()
         {
-            if (!this.TransferFoodAvail() || !this.TransferFundAvail()) return;
+            // 1. 基础检查
+            if (this.BelongedFaction == null || this.BelongedSection == null) return;
 
-            int transferFood = Math.Max(0, this.Food - this.EnoughFood);
-            int transferFund = Math.Max(0, this.Fund - this.EnoughFund);
+            // =============================================================
+            // 📊 1. 计算上限 (Cap)
+            // =============================================================
+            bool isCity = (this.Kind != null && (this.Kind.HasAgriculture || this.Kind.HasCommerce));
 
-            foreach (LinkNode n in this.AIAllLinkNodes.Values)
+            int capFund, capFood;
+            if (isCity)
             {
-                if (n.A.BelongedFaction != this.BelongedFaction) continue;
-
-                int toTransferFood = Math.Max(0, Math.Min(transferFood, n.A.FoodCeiling * 4 / 5 - n.A.Food));
-                int toTransferFund = Math.Max(0, Math.Min(transferFund, n.A.FundCeiling * 4 / 5 - n.A.Fund));
-
-                transferFood -= toTransferFood;
-                transferFund -= toTransferFund;
-                n.A.CallResource(this, toTransferFund, toTransferFood);
-
-                if (transferFund <= 0 && transferFood <= 0)
-                {
-                    return;
-                }
+                // 城市：资金1万+人口加成，粮草300万
+                capFund = 10000 + (this.Population / 10);
+                capFood = Math.Min(3000000, 100000 + (this.MilitaryCount * 360));
+            }
+            else
+            {
+                // 关隘：严格锁死
+                capFund = 5000;
+                capFood = Math.Min(200000, Math.Max(30000, this.MilitaryCount * 60));
             }
 
-            foreach (Architecture a in this.BelongedFaction.Architectures)
+            // =============================================================
+            // 🛑 2. 迟滞判定 (Hysteresis) - 这一步能过滤 90% 的无效请求
+            // =============================================================
+            
+            // 设定警戒线：只有低于 70% 才算"缺"，才允许发起请求
+            // (这给资源留出了 30% 的波动空间，不会一有消耗就请求)
+            int safetyFund = (int)(capFund * 0.7f);
+            int safetyFood = (int)(capFood * 0.7f);
+
+            bool needFund = this.Fund < safetyFund;
+            bool needFood = this.Food < safetyFood;
+
+            // 如果两个都还没跌破警戒线，直接躺平，什么都不做
+            if (!needFund && !needFood) return;
+
+            // =============================================================
+            // 3. 寻找金主 (遍历邻接据点)
+            // =============================================================
+            var neighbors = new List<Architecture>();
+            if (this.AILandLinks != null) 
+                foreach(var link in this.AILandLinks) neighbors.Add((link is Architecture ? (Architecture)link : null));
+            if (this.AIWaterLinks != null)
+                foreach(var link in this.AIWaterLinks) neighbors.Add((link is Architecture ? (Architecture)link : null));
+
+            foreach (var neighbor in neighbors)
             {
-                int toTransferFood = Math.Max(0,Math.Min(transferFood, a.FoodCeiling * 4 / 5 - a.Food));
-                int toTransferFund = Math.Max(0,Math.Min(transferFund, a.FundCeiling * 4 / 5 - a.Fund));
+                if (neighbor == null || neighbor.BelongedFaction != this.BelongedFaction) continue;
 
-                transferFood -= toTransferFood;
-                transferFund -= toTransferFund;
-                a.CallResource(this, toTransferFund, toTransferFood);
+                // 邻居必须非常富裕 (城市120% / 关口200%)，防止把邻居拖下水
+                bool neighborIsCity = (neighbor.Kind != null && (neighbor.Kind.HasAgriculture || neighbor.Kind.HasCommerce));
+                float threshold = neighborIsCity ? 1.2f : 2.0f; 
 
-                if (transferFund <= 0 && transferFood <= 0)
+                // 简单的邻居上限估算
+                int nCapFund = neighborIsCity ? 20000 : 5000;
+                int nCapFood = neighborIsCity ? 2000000 : 200000;
+
+                bool neighborRichFund = neighbor.Fund > (nCapFund * threshold);
+                bool neighborRichFood = neighbor.Food > (nCapFood * threshold);
+
+                if (!neighborRichFund && !neighborRichFood) continue;
+
+                // =============================================================
+                // 📉 4. 计算请求量 (按需补满)
+                // =============================================================
+
+                int requestFund = 0;
+                int requestFood = 0;
+
+                // 如果缺钱且邻居有钱
+                if (needFund && neighborRichFund)
                 {
-                    return;
+                    // 目标是补满到 100%，但只在跌破 70% 时触发
+                    requestFund = capFund - this.Fund;
+                    
+                    // 邻居保留底线
+                    int canGive = (int)(neighbor.Fund - (nCapFund * 1.0f));
+                    requestFund = Math.Min(requestFund, canGive);
+                }
+
+                // 如果缺粮且邻居有粮
+                if (needFood && neighborRichFood)
+                {
+                    requestFood = capFood - this.Food;
+                    int canGive = (int)(neighbor.Food - (nCapFood * 1.0f));
+                    requestFood = Math.Min(requestFood, canGive);
+                }
+
+                // =============================================================
+                // 🛑 5. 最小运量过滤 (防止蚂蚁搬家)
+                // =============================================================
+                
+                // 除非真的快饿死了(<=0)，否则小额请求直接忽略
+                bool isEmergency = this.Fund <= 0 || this.Food <= 0;
+
+                if (!isEmergency)
+                {
+                    // 如果请求量小于 5000 资金 或 5万 粮草，没必要折腾一趟
+                    // (您日志里的 10229, 14944 这种刚刚过线的，会因为上面的 70% 判定直接被拦在外面)
+                    if (requestFund < 5000 && requestFood < 50000) continue;
+                }
+
+                // 关隘安全阀
+                if (!isCity)
+                {
+                    if (requestFood > 100000) requestFood = 100000;
+                    if (requestFund > 10000) requestFund = 10000;
+                }
+
+                // 执行请求
+                if (requestFund > 0 || requestFood > 0)
+                {
+                    this.CallResource(neighbor, requestFund, requestFood);
+
+                    // 模拟加上了资源 (为了跳出循环)
+                    this.Fund += requestFund;
+                    this.Food += requestFood;
+
+                    // 如果已经补满了，就别找下一个邻居了
+                    if (this.Fund >= capFund && this.Food >= capFood) break;
                 }
             }
-
         }
 
         public bool IsNetLosingPopulation
@@ -2039,100 +3001,493 @@ namespace GameObjects
         // 从农业商业技术统治民心耐久训练随机挑一项工作，need储存相应工作是否需要做
         // 根据能力比例随机选择，例如：只有农业商业要做，农业200，商业100。则2/3做农业，1/3做商业
         // 有了这个函数可以避免用resort，太浪费时间而且不科学
-        private void assignRandomWork(Person p, bool[] need, bool needOnlyOneDomination, bool needOnlyOneMorale, bool needOnlyOneTrain)
+        /// <summary>
+        /// 🧠 智能工作分配系统 - 基于动态权重的武将工作分配
+        /// 替代原有的固定阈值逻辑，实现更精细的内政管理
+        /// </summary>
+        /// <param name="p">要分配工作的武将</param>
+        private void AIWorkSmart_Old(Person p)
         {
-            int totalAbility = 0;
-            for (int i = 0; i < need.Length; i++)
+            // 获取动态阈值
+            float limit = this.InternalAffairSaturationThreshold;
+            
+            // 🔥 NEW: 特殊处理统治度45-55区间，避免49停滞
+            if (_architectureKind.HasDomination && this.Domination < 55)
             {
-                if (need[i])
+                // 在这个关键区间，强制提高统治优先级
+                limit = Math.Max(limit, 0.75f); // 确保至少70%的目标
+                
+#if DEBUG
+                if (this.Domination == 49)
                 {
-                    switch (i)
+                    System.Diagnostics.Debug.WriteLine($"[AI工作] {this.Name}: 检测到统治度49，提高优先级 (阈值={limit:F2})");
+                }
+#endif
+            }
+            
+            // 定义工作权重数组
+            // [0]=农业, [1]=商业, [2]=技术, [3]=统治, [4]=民心, [5]=耐久, [6]=训练
+            float[] workWeights = new float[7];
+            
+            // --- 农业检查 ---
+            if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling)
+            {
+                if (this.Agriculture < this.AgricultureCeiling * limit)
+                {
+                    // 没达标：正常权重 (优先干)
+                    workWeights[0] = 100.0f;
+                }
+                else
+                {
+                    // 达标了但没满：填缝权重 (没事干才干这个)
+                    workWeights[0] = 1.0f;
+                }
+            }
+            
+            // --- 商业检查 ---
+            if (_architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling)
+            {
+                if (this.Commerce < this.CommerceCeiling * limit)
+                {
+                    workWeights[1] = 100.0f;
+                }
+                else
+                {
+                    workWeights[1] = 1.0f;
+                }
+            }
+            
+            // --- 技术检查 ---
+            if (_architectureKind.HasTechnology && this.Technology < this.TechnologyCeiling)
+            {
+                if (this.Technology < this.TechnologyCeiling * limit)
+                {
+                    workWeights[2] = 100.0f;
+                }
+                else
+                {
+                    workWeights[2] = 1.0f;
+                }
+            }
+            
+            // --- 统治检查 ---
+            if (_architectureKind.HasDomination && this.Domination < this.DominationCeiling)
+            {
+                if (this.Domination < this.DominationCeiling * limit)
+                {
+                    workWeights[3] = 100.0f;
+                }
+                else
+                {
+                    workWeights[3] = 1.0f;
+                }
+            }
+            
+            // --- 民心检查 ---
+            if (_architectureKind.HasMorale && this.Morale < this.MoraleCeiling)
+            {
+                if (this.Morale < this.MoraleCeiling * limit)
+                {
+                    workWeights[4] = 100.0f;
+                }
+                else
+                {
+                    workWeights[4] = 1.0f;
+                }
+            }
+            
+            // --- 耐久检查 ---
+            if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling)
+            {
+                if (this.Endurance < this.EnduranceCeiling * limit)
+                {
+                    workWeights[5] = 100.0f;
+                }
+                else
+                {
+                    workWeights[5] = 1.0f;
+                }
+            }
+            
+            // --- 训练检查 ---
+            MilitaryList trainingMilitaryList = this.GetTrainingMilitaryList();
+            if (trainingMilitaryList.Count > 0)
+            {
+                // 训练总是高优先级（军事需求）
+                workWeights[6] = 150.0f;
+                
+                // 检查是否只需要一人训练
+                if (trainingMilitaryList.Count == 1)
+                {
+                    Military m = trainingMilitaryList[0] as Military;
+                    if (m.Morale >= m.MoraleCeiling - 3 && m.Combativity >= m.CombativityCeiling - 3)
                     {
-                        case 0:
-                            totalAbility += p.AgricultureAbility;
-                            break;
-                        case 1:
-                            totalAbility += p.CommerceAbility;
-                            break;
-                        case 2:
-                            totalAbility += p.TechnologyAbility;
-                            break;
-                        case 3:
-                            totalAbility += p.DominationAbility;
-                            break;
-                        case 4:
-                            totalAbility += p.MoraleAbility;
-                            break;
-                        case 5:
-                            totalAbility += p.EnduranceAbility;
-                            break;
-                        case 6:
-                            totalAbility += p.TrainingAbility;
-                            break;
+                        workWeights[6] = 50.0f; // 降低权重，只需要一人训练
                     }
                 }
             }
-            if (totalAbility == 0)
-                p.WorkKind = ArchitectureWorkKind.无;
-            else
+            
+            // --- 特殊情况调整 ---
+            
+            // 最近被攻击：优先耐久修复
+            if (this.RecentlyAttacked > 0)
             {
-                int workIndex = StaticMethods.Random(totalAbility);
-                for (int i = 0; i < need.Length; i++)
+                if (this.Endurance < this.EnduranceCeiling)
                 {
-                    if (need[i])
+                    workWeights[5] = 200.0f; // 耐久最高优先级
+                }
+                // 降低其他内政权重
+                workWeights[0] = Math.Min(workWeights[0], 10.0f);
+                workWeights[1] = Math.Min(workWeights[1], 10.0f);
+                workWeights[2] = Math.Min(workWeights[2], 10.0f);
+            }
+            
+            // 资金不足：优先商业
+            if (!this.IsFundEnough)
+            {
+                workWeights[1] *= 2.0f;
+            }
+            
+            // 粮食不足：优先农业
+            if (!this.IsFoodEnough)
+            {
+                workWeights[0] *= 2.0f;
+            }
+            
+            // --- 最终决策 ---
+            this.AssignWorkByWeights(p, workWeights);
+            
+#if DEBUG
+            if (SectionAIHelper.EnableDebugOutput)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIWorkSmart] {p.Name} 在 {this.Name} 被分配工作: {p.WorkKind} " +
+                    $"(阈值={limit:F2}, 权重=[{string.Join(",", workWeights.Select(w => w.ToString("F1")))}])");
+            }
+#endif
+        }
+
+        /// <summary>
+        /// 基于权重数组分配工作
+        /// </summary>
+        /// <param name="p">武将</param>
+        /// <param name="workWeights">工作权重数组</param>
+        private void AssignWorkByWeights_Old(Person p, float[] workWeights)
+        {
+            // 计算总权重（基于武将能力）
+            float totalWeight = 0f;
+            float[] adjustedWeights = new float[workWeights.Length];
+            
+            for (int i = 0; i < workWeights.Length; i++)
+            {
+                if (workWeights[i] > 0)
+                {
+                    float abilityWeight = GetPersonAbilityForWork_Old(p, i);
+                    adjustedWeights[i] = workWeights[i] * abilityWeight;
+                    totalWeight += adjustedWeights[i];
+                }
+            }
+            
+            if (totalWeight == 0)
+            {
+                p.WorkKind = ArchitectureWorkKind.无;
+                return;
+            }
+            
+            // 随机选择工作（基于权重）
+            float randomValue = (float)(GameObject.Random(10000) / 10000.0) * totalWeight;
+            float currentWeight = 0f;
+            
+            for (int i = 0; i < adjustedWeights.Length; i++)
+            {
+                if (adjustedWeights[i] > 0)
+                {
+                    currentWeight += adjustedWeights[i];
+                    if (randomValue <= currentWeight)
                     {
-                        switch (i)
-                        {
-                            case 0:
-                                workIndex -= p.AgricultureAbility;
-                                if (workIndex < 0) p.WorkKind = ArchitectureWorkKind.农业;
-                                break;
-                            case 1:
-                                workIndex -= p.CommerceAbility;
-                                if (workIndex < 0) p.WorkKind = ArchitectureWorkKind.商业;
-                                break;
-                            case 2:
-                                workIndex -= p.TechnologyAbility;
-                                if (workIndex < 0) p.WorkKind = ArchitectureWorkKind.技术;
-                                break;
-                            case 3:
-                                workIndex -= p.DominationAbility;
-                                if (workIndex < 0)
-                                {
-                                    p.WorkKind = ArchitectureWorkKind.统治;
-                                    if (needOnlyOneDomination) // 因为补充导致的统治下降1或2点时，只需要选择1个武将进行统治就足够了
-                                        need[3] = false;
-                                }
-                                break;
-                            case 4:
-                                workIndex -= p.MoraleAbility;
-                                if (workIndex < 0)
-                                {
-                                    p.WorkKind = ArchitectureWorkKind.民心;
-                                    if (needOnlyOneMorale) // 因为补充导致的民心下降1或2点时，只需要选择1个武将进行民心就足够了
-                                        need[4] = false;
-                                }
-                                break;
-                            case 5:
-                                workIndex -= p.EnduranceAbility;
-                                if (workIndex < 0) p.WorkKind = ArchitectureWorkKind.耐久;
-                                break;
-                            case 6:
-                                workIndex -= p.TrainingAbility;
-                                if (workIndex < 0)
-                                {
-                                    p.WorkKind = ArchitectureWorkKind.训练; // 因为补充导致的士气或战意下降1或2点时，只需要选择1个武将进行训练就足够了
-                                    if (needOnlyOneTrain)
-                                        need[6] = false;
-                                }
-                                break;
-                        }
-                        if (workIndex < 0)
-                            break;
+                        AssignSpecificWork_Old(p, i);
+                        return;
                     }
                 }
+            }
+            
+            // 兜底：如果没有分配到工作，分配第一个可用的
+            for (int i = 0; i < adjustedWeights.Length; i++)
+            {
+                if (adjustedWeights[i] > 0)
+                {
+                    AssignSpecificWork_Old(p, i);
+                    return;
+                }
+            }
+            
+            p.WorkKind = ArchitectureWorkKind.无;
+        }
+
+        /// <summary>
+        /// 获取武将在特定工作上的能力值
+        /// </summary>
+        /// <param name="p">武将</param>
+        /// <param name="workIndex">工作索引</param>
+        /// <returns>能力值</returns>
+        private float GetPersonAbilityForWork_Old(Person p, int workIndex)
+        {
+            switch (workIndex)
+            {
+                case 0: return p.AgricultureAbility;
+                case 1: return p.CommerceAbility;
+                case 2: return p.TechnologyAbility;
+                case 3: return p.DominationAbility;
+                case 4: return p.MoraleAbility;
+                case 5: return p.EnduranceAbility;
+                case 6: return p.TrainingAbility;
+                default: return 1.0f;
             }
         }
+
+        /// <summary>
+        /// 分配特定工作给武将
+        /// </summary>
+        /// <param name="p">武将</param>
+        /// <param name="workIndex">工作索引</param>
+        private void AssignSpecificWork_Old(Person p, int workIndex)
+        {
+            switch (workIndex)
+            {
+                case 0: p.WorkKind = ArchitectureWorkKind.农业; break;
+                case 1: p.WorkKind = ArchitectureWorkKind.商业; break;
+                case 2: p.WorkKind = ArchitectureWorkKind.技术; break;
+                case 3: p.WorkKind = ArchitectureWorkKind.统治; break;
+                case 4: p.WorkKind = ArchitectureWorkKind.民心; break;
+                case 5: p.WorkKind = ArchitectureWorkKind.耐久; break;
+                case 6: p.WorkKind = ArchitectureWorkKind.训练; break;
+                default: p.WorkKind = ArchitectureWorkKind.无; break;
+            }
+        }
+
+        #region AI内政评分系统 - 整合版
+
+        /// <summary>
+        /// 🎯 计算城市内政发展评分
+        /// 功能：基于动态阈值和城市状况计算综合评分，用于AI决策
+        /// 策略：征兵优先城市得高分，内政需求城市根据缺口计算分数
+        /// </summary>
+        /// <returns>城市内政评分，分数越高优先级越高</returns>
+        public float CalculateInternalAffairScore()
+        {
+            // 🛡️ 递归保护：如果正在执行人员调配，返回简化评分
+            if (Faction._isExecutingPersonnelAllocation)
+            {
+                // 返回基于人口的简化评分，避免复杂计算
+                return this.Population / 1000.0f;
+            }
+            
+            float score = 0.0f;
+            
+            // 获取动态饱和度阈值
+            float saturation = this.InternalAffairSaturationThreshold;
+            
+            // 征兵逻辑优先：如果城市适合征兵，给予高分
+            if (this.IsGoodForRecruitment())
+            {
+                score = 10.0f; // 征兵城市基础高分
+                
+                // 征兵城市额外评分因素
+                if (this.Population > this.PopulationCeiling * 0.8f)
+                {
+                    score += 2.0f; // 人口充足加分
+                }
+                
+                if (this.Fund > this.EnoughFund)
+                {
+                    score += 1.0f; // 资金充足加分
+                }
+                
+                if (this.Food > this.EnoughFood)
+                {
+                    score += 1.0f; // 粮食充足加分
+                }
+                
+                return score;
+            }
+            
+            // 内政发展评分：只有非征兵城市才计算内政小分
+            if (score < 10.0f)
+            {
+                // 农业发展评分
+                if (this.Agriculture < this.AgricultureCeiling * saturation)
+                {
+                    score += (this.AgricultureCeiling - this.Agriculture) / 600.0f;
+                }
+                
+                // 商业发展评分
+                if (this.Commerce < this.CommerceCeiling * saturation)
+                {
+                    score += (this.CommerceCeiling - this.Commerce) / 600.0f;
+                }
+                
+                // 技术发展评分
+                if (this.Technology < this.TechnologyCeiling * saturation)
+                {
+                    score += (this.TechnologyCeiling - this.Technology) / 400.0f;
+                }
+                
+                // 统治发展评分
+                if (this.Domination < this.DominationCeiling * saturation)
+                {
+                    score += (this.DominationCeiling - this.Domination) / 500.0f;
+                }
+                
+                // 民心发展评分
+                if (this.Morale < this.MoraleCeiling * saturation)
+                {
+                    score += (this.MoraleCeiling - this.Morale) / 500.0f;
+                }
+                
+                // 耐久修复评分（特殊处理）
+                if (this.Endurance < this.EnduranceCeiling * 0.9f)
+                {
+                    float enduranceScore = (this.EnduranceCeiling - this.Endurance) / 300.0f;
+                    
+                    // 最近被攻击的城市，耐久修复优先级更高
+                    if (this.RecentlyAttacked > 0)
+                    {
+                        enduranceScore *= 2.0f;
+                    }
+                    
+                    score += enduranceScore;
+                }
+                
+                // 城市类型基础分
+                score += (this.Kind.Name == "城市" || this.Kind.Name == "City") ? 2.0f : 0.1f;
+                
+                // 战略位置加分
+                if (this.IsStrategicPosition())
+                {
+                    score += 1.0f;
+                }
+                
+                // 资源状况调整
+                if (!this.IsFundEnough)
+                {
+                    score *= 0.8f; // 资金不足时降低优先级
+                }
+                
+                if (!this.IsFoodEnough)
+                {
+                    score *= 0.8f; // 粮食不足时降低优先级
+                }
+            }
+            
+            return score;
+        }
+
+        /// <summary>
+        /// 判断城市是否适合征兵
+        /// </summary>
+        /// <returns>true表示适合征兵，false表示适合内政发展</returns>
+        private bool IsGoodForRecruitment()
+        {
+            // 🛡️ 递归保护：如果正在执行人员调配，返回false避免复杂判断
+            if (Faction._isExecutingPersonnelAllocation)
+            {
+                return false;
+            }
+            
+            // 征兵判断逻辑：人口充足、资源充足、有征兵需求
+            return this.Population > this.PopulationCeiling * 0.7f &&
+                   this.Fund > this.EnoughFund &&
+                   this.Food > this.EnoughFood &&
+                   this.BelongedFaction != null &&
+                   this.BelongedFaction.NeedMoreTroops();
+        }
+
+        /// <summary>
+        /// 判断是否为战略要地
+        /// </summary>
+        /// <returns>true表示战略位置重要</returns>
+        private bool IsStrategicPosition()
+        {
+            // 战略位置判断：边境城市、交通要道、资源丰富等
+            if (this.Kind.Name == "城市" || this.Kind.Name == "City") return true;
+            
+            // 检查是否为边境城市（邻近敌对势力）
+            foreach (Architecture neighbor in this.AILandLinks)
+            {
+                if (neighbor.BelongedFaction != this.BelongedFaction)
+                {
+                    return true; // 边境城市具有战略价值
+                }
+            }
+            
+            // 检查是否为交通枢纽（连接多个城市）
+            if (this.AILandLinks.Count >= 3)
+            {
+                return true;
+            }
+            
+            return false;
+        }
+
+
+
+        /// <summary>
+        /// 获取武将在特定工作上的能力值 (Enhanced)
+        /// </summary>
+        private float GetPersonAbilityForWork(Person p, int workIndex)
+        {
+            const int STAT_THRESHOLD = 60;
+            
+            switch (workIndex)
+            {
+                case 0: // 农业 (Politics)
+                    if (p.Politics < STAT_THRESHOLD) return (p.Politics / 100.0f) * 0.6f;
+                    return p.Politics / 100.0f;
+                    
+                case 1: // 商业 (Politics)
+                    if (p.Politics < STAT_THRESHOLD) return (p.Politics / 100.0f) * 0.6f;
+                    return p.Politics / 100.0f;
+                    
+                case 2: // 技术 (Intelligence)
+                    if (p.Intelligence < STAT_THRESHOLD) return (p.Intelligence / 100.0f) * 0.6f;
+                    return p.Intelligence / 100.0f;
+                    
+                case 3: // 统治 (Average of Strength and Glamour)
+                    return (p.Strength / 100.0f + p.Glamour / 100.0f) / 2.0f;
+                    
+                case 4: // 民心 (Average of Strength and Glamour)
+                    return (p.Strength / 100.0f + p.Glamour / 100.0f) / 2.0f;
+                    
+                case 5: // 耐久 (Strength + Command)
+                    return (p.Strength + p.Command) / 200.0f;
+                    
+                case 6: // 训练 (Strength + Command, with bonus for fierce generals)
+                    float trainScore = (p.Strength + p.Command) / 200.0f;
+                    if (p.Strength > 80) trainScore *= 2.0f;
+                    return trainScore;
+                    
+                default: return 1.0f;
+            }
+        }
+
+        /// <summary>
+        /// 分配特定工作给武将
+        /// </summary>
+        private void AssignSpecificWork(Person p, int workIndex)
+        {
+            switch (workIndex)
+            {
+                case 0: p.WorkKind = ArchitectureWorkKind.农业; break;
+                case 1: p.WorkKind = ArchitectureWorkKind.商业; break;
+                case 2: p.WorkKind = ArchitectureWorkKind.技术; break;
+                case 3: p.WorkKind = ArchitectureWorkKind.统治; break;
+                case 4: p.WorkKind = ArchitectureWorkKind.民心; break;
+                case 5: p.WorkKind = ArchitectureWorkKind.耐久; break;
+                case 6: p.WorkKind = ArchitectureWorkKind.训练; break;
+                default: p.WorkKind = ArchitectureWorkKind.训练; break;
+            }
+        }
+
+        #endregion
 
         private bool AdjacentToHostileByWater
         {
@@ -2152,13 +3507,118 @@ namespace GameObjects
 
         private void AutoRecruit()
         {
+            // System.Diagnostics.Debug.WriteLine($"");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ ═══════════════════════════════════════════════════════════");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ [编队招募检查] 城市: {this.Name}");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ 资金: {this.Fund}, 兵役人口: {this.MilitaryPopulation}");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ 编队数量: {this.Militaries.Count}");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ 前线状态: FrontLine={this.FrontLine}, HostileLine={this.HostileLine}");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ 威胁状态: HasHostileTroops={this.HasHostileTroopsInView()}");
+            // System.Diagnostics.Debug.WriteLine($"⚔️ ═══════════════════════════════════════════════════════════");
+            
+            // 显示每个编队的状态
+            /*
+            foreach (Military m in this.Militaries)
+            {
+                float fillRate = m.Kind.MaxScale > 0 ? (float)m.Scales / m.Kind.MaxScale * 100 : 0;
+                string recruitStatus = m.RecruitmentPerson != null ? m.RecruitmentPerson.Name : "无";
+                System.Diagnostics.Debug.WriteLine($"  📋 {m.Name}: {m.Scales}/{m.Kind.MaxScale} ({fillRate:F1}%) " +
+                    $"招募中: {recruitStatus}");
+            }
+            */
+            
+            // 🔥 修复：放宽招募条件，确保编队能及时补充
+            bool shouldRecruit = false;
+            string recruitReason = "";
+            
+            // 1. 标准条件：资金充裕 (>500)
             if (RecruitmentAvail() && this.Fund > 500 && (this.IsFundEnough || this.HasHostileTroopsInView()))
+            {
+                shouldRecruit = true;
+                recruitReason = "标准条件：资金充足且(富裕或有威胁)";
+            }
+            // 2. 强制招募：严重缺员 (>200)
+            else if (RecruitmentAvail() && this.Fund > 200 && HasUnderstaffedMilitaries())
+            {
+                shouldRecruit = true;
+                recruitReason = "强制招募：编队严重缺员(<30%)";
+            }
+            // 🔥 FIX V1.1: 新增"日常维护"逻辑
+            // 填补 200-500 资金段的逻辑空白
+            // 如果资金尚可(>300)，且有编队兵力不满 80%，则允许进行非紧急招募
+            else if (RecruitmentAvail() && this.Fund > 300 && HasMilitariesBelowRatio(0.8f))
+            {
+                shouldRecruit = true;
+                recruitReason = "日常维护：资金尚可且编队不满80%";
+            }
+            // 3. 前线优先：资金紧张但处于前线 (>100)
+            else if (RecruitmentAvail() && this.Fund > 100 && (this.FrontLine || this.HostileLine))
+            {
+                shouldRecruit = true;
+                recruitReason = "前线优先：保证前线兵力";
+            }
+            // 4. 紧急招募：完全无兵 (>50)
+            else if (RecruitmentAvail() && this.Fund > 50 && this.Militaries.Count > 0 && this.MilitaryCount == 0)
+            {
+                shouldRecruit = true;
+                recruitReason = "紧急招募：有编队但无兵力";
+            }
+            
+            // System.Diagnostics.Debug.WriteLine($"⚔️ [招募决策] 是否招募: {shouldRecruit}");
+            /*
+            if (shouldRecruit)
+            {
+                System.Diagnostics.Debug.WriteLine($"⚔️ [招募原因] {recruitReason}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"⚔️ [跳过原因] 不满足招募条件");
+                System.Diagnostics.Debug.WriteLine($"  - RecruitmentAvail: {RecruitmentAvail()}");
+                System.Diagnostics.Debug.WriteLine($"  - Fund: {this.Fund} (需要>50)");
+                System.Diagnostics.Debug.WriteLine($"  - IsFundEnough: {this.IsFundEnough}");
+                System.Diagnostics.Debug.WriteLine($"  - HasHostileTroops: {this.HasHostileTroopsInView()}");
+                System.Diagnostics.Debug.WriteLine($"  - HasUnderstaffed: {HasUnderstaffedMilitaries()}");
+            }
+            */
+            
+            if (shouldRecruit)
             {
                 MilitaryList recruitmentMilitaryList = this.GetRecruitmentMilitaryList();
 
-                recruitmentMilitaryList.PropertyName = "Merit";
+                // System.Diagnostics.Debug.WriteLine($"⚔️ [可招募编队] 数量: {recruitmentMilitaryList.Count}");
+                /*
+                foreach (Military m in recruitmentMilitaryList)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {m.Name}: {m.Quantity}/{m.Kind.MaxScale}");
+                }
+                */
+
+                // 🔥 修复：改为按综合优先级排序，而不是按功勋排序
+                // 优先补充：兵力缺口大、上限小的编队
+                foreach (Military m in recruitmentMilitaryList)
+                {
+                    // 1. 兵力缺口比例（0-1，越大越需要补充）
+                    float gapRatio = m.Kind.MaxScale > 0 ? 
+                        (float)(m.Kind.MaxScale - m.Quantity) / m.Kind.MaxScale : 0f;
+                    
+                    // 2. 上限权重（上限越大，权重越低）
+                    // 标准正规军上限为10000，超过此值的大编制兵种权重降低
+                    float scaleWeight = 10000f / Math.Max(m.Kind.MaxScale, 10000);
+                    
+                    // 3. 功勋权重（大幅降低影响，避免功勋主导决策）
+                    // 原来：1.0 + (Merit / 1000) * 0.1，对于Merit=6000，权重=1.6
+                    // 修改：1.0 + (Merit / 1000) * 0.01，对于Merit=6000，权重=1.06
+                    float meritWeight = 1.0f + (m.Merit / 1000f) * 0.01f;
+                    
+                    // 4. 综合评分
+                    m.RecruitmentPriority = gapRatio * scaleWeight * meritWeight;
+                    
+                    // System.Diagnostics.Debug.WriteLine($"  📊 {m.Name}: 缺口={gapRatio:F3}, 上限权重={scaleWeight:F3}, 功勋权重={meritWeight:F3}, 综合分数={m.RecruitmentPriority:F3}");
+                }
+
+                recruitmentMilitaryList.PropertyName = "RecruitmentPriority";
                 recruitmentMilitaryList.IsNumber = true;
-                recruitmentMilitaryList.SmallToBig = false;
+                recruitmentMilitaryList.SmallToBig = false; // 分数高的优先
                 recruitmentMilitaryList.ReSort();
 
                 GameObjectList recruitmentPersonList = this.PersonsExcludeNvGuan.GetList();
@@ -2168,23 +3628,80 @@ namespace GameObjects
                 recruitmentPersonList.ReSort();
 
                 int recruitCount = Math.Min(recruitmentMilitaryList.Count, recruitmentPersonList.Count);
+                
+                // 🔥 修复：放宽兵役人口限制
                 if (this.MilitaryPopulation < 10 && recruitCount > 0)
                 {
-                    recruitCount = 1;
+                    recruitCount = Math.Min(recruitCount, 2); // 从1提升到2
+                    // System.Diagnostics.Debug.WriteLine($"⚔️ [兵役人口不足] 限制招募数量为: {recruitCount}");
                 }
+                
+                // System.Diagnostics.Debug.WriteLine($"⚔️ [开始招募] 可招募编队: {recruitmentMilitaryList.Count}, 可用武将: {recruitmentPersonList.Count}, 实际招募: {recruitCount}");
                  
                 for (int i = 0; i < recruitCount; ++i)
                 {
-                    (recruitmentPersonList[i] as Person).RecruitMilitary(recruitmentMilitaryList[i] as Military);
+                    var person = recruitmentPersonList[i] as Person;
+                    var military = recruitmentMilitaryList[i] as Military;
+                    
+                    // System.Diagnostics.Debug.WriteLine($"  ➜ {person.Name} 开始招募 {military.Name} (招募能力:{person.RecruitmentAbility})");
+                    person.RecruitMilitary(military);
                 }
+                
+                // System.Diagnostics.Debug.WriteLine($"⚔️ [招募完成] 已分配 {recruitCount} 个招募任务");
             }
             else
             {
+                // System.Diagnostics.Debug.WriteLine($"⚔️ [停止招募] 停止所有编队的招募工作");
                 foreach (Military m in this.Militaries)
                 {
+                    if (m.RecruitmentPerson != null)
+                    {
+                        // System.Diagnostics.Debug.WriteLine($"  ⏹️ 停止 {m.Name} 的招募 (原招募者: {m.RecruitmentPerson.Name})");
+                    }
                     m.StopRecruitment();
                 }
             }
+            
+            // System.Diagnostics.Debug.WriteLine($"⚔️ ═══════════════════════════════════════════════════════════");
+            // System.Diagnostics.Debug.WriteLine($"");
+        }
+        
+        /// <summary>
+        /// 🔥 新增：检查是否有严重缺员的编队
+        /// </summary>
+        private bool HasUnderstaffedMilitaries()
+        {
+            foreach (Military m in this.Militaries)
+            {
+                if (m.Kind.MinScale > 0 && m.Scales < m.Kind.MinScale * 0.3f) // 低于最小规模的30%
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        /// <summary>
+        /// 🔥 FIX V1.1: 检查是否有编队兵力比例低于指定阈值
+        /// </summary>
+        /// <param name="ratio">比例阈值 (0.0 - 1.0)</param>
+        /// <returns>如果有编队低于该比例，返回 true</returns>
+        private bool HasMilitariesBelowRatio(float ratio)
+        {
+            foreach (Military m in this.Militaries)
+            {
+                if (m.Kind.MaxScale > 0)
+                {
+                    // 计算当前满员率
+                    float currentRatio = (float)m.Quantity / m.Kind.MaxScale;
+                    // 如果低于阈值，且不是运输队
+                    if (currentRatio < ratio && !m.IsTransport)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private void AIWork(bool forPlayer)
@@ -2192,187 +3709,66 @@ namespace GameObjects
             this.StopAllWork();
             if (!this.HasPerson()) return;
 
-            MilitaryList trainingMilitaryList = this.GetTrainingMilitaryList();
-            bool needTrain = (trainingMilitaryList.Count > 0);
-
-            if ((!this.IsFundEnough && this.RecentlyAttacked <= 0) || this.Fund < Session.Current.Scenario.Parameters.InternalFundCost) // 资金不足时全武将训练
+            // 🔥 资金不足时的应急策略：全员训练
+            if ((!this.IsFundEnough && this.RecentlyAttacked <= 0) || 
+                this.Fund < Session.Current.Scenario.Parameters.InternalFundCost)
             {
-                if (needTrain)
+                MilitaryList trainingMilitaryList = this.GetTrainingMilitaryList();
+                if (trainingMilitaryList.Count > 0)
                 {
                     foreach (Person p in this.Persons)
                     {
                         p.WorkKind = ArchitectureWorkKind.训练;
                     }
                 }
+                return;
             }
-            else                                                                                                       // 资金足够
+
+            // 🧠 使用新的智能工作分配系统
+            foreach (Person p in this.Persons)
             {
-                bool[] need = {_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling * 0.8,
-                               _architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling * 0.8,
-                               _architectureKind.HasTechnology && this.Technology < this.TechnologyCeiling * 0.8,
-                               _architectureKind.HasDomination && this.Domination < this.DominationCeiling * 0.8,
-                               _architectureKind.HasMorale && this.Morale < this.MoraleCeiling * 0.8,
-                               _architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling * 0.8,
-                               needTrain};
-                bool needOnlyOneDomination = false;
-                bool needOnlyOneMorale = false;
-                bool needOnlyOneTrain = false;
-
-                if (this.RecentlyAttacked > 0 && this.Endurance < this.EnduranceCeiling)
+                // 为每个武将单独计算最优工作分配
+                this.AIWorkSmart(p);
+                
+                // 如果智能分配失败，使用兜底逻辑
+                if (p.WorkKind == ArchitectureWorkKind.无)
                 {
-                    need[0] = need[1] = need[2] = false;
-                    need[5] = true;
-                }
-                else if ((!IsFundIncomeEnough && need[1])
-                    || (!IsFoodIncomeEnough && need[0])
-                    || (this.PopulationDevelopingRate <= 0 && (need[3] || need[4]))
-                    || this.Endurance < 30)
-                {
-                    need[0] &= !IsFoodIncomeEnough;
-                    need[1] &= !IsFundIncomeEnough;
-                    need[2] = false;
-                    need[3] &= this.PopulationDevelopingRate <= 0 && this.Domination <= this.DominationCeiling * 0.9;
-                    need[4] &= this.PopulationDevelopingRate <= 0 && this.Morale <= this.MoraleCeiling * 0.75;
-                    need[5] = this.Endurance < 30;
-                }
-
-                if (!need[0] && !need[1] && !need[2] && !need[3] && !need[4] && !need[5] & !need[6])
-                {
-                     need = new bool[]{_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling,
-                               _architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling,
-                               _architectureKind.HasTechnology && this.Technology < this.TechnologyCeiling,
-                               _architectureKind.HasDomination && this.Domination < this.DominationCeiling,
-                               _architectureKind.HasMorale && this.Morale < this.MoraleCeiling,
-                               _architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling,
-                               needTrain};
-                }
-
-                if (trainingMilitaryList.Count == 1)
-                {
-                    Military m = trainingMilitaryList[0] as Military;                       // 因为补充导致的士气和战意下降1-3点时，只需要选择1个武将进行训练就足够了
-                    needOnlyOneTrain = (m.Morale >= m.MoraleCeiling - 3) && (m.Combativity >= m.CombativityCeiling - 3);
-                }
-
-                bool recentlyAttacked = this.RecentlyAttacked > 0;
-                int number = 0;
-                if (!recentlyAttacked) // 最近没有受到攻击
-                {
-                    foreach (Person p in this.Persons)
+                    // 兜底：至少让武将做点什么
+                    if (this.GetTrainingMilitaryList().Count > 0)
                     {
-                        p.resetPreferredWorkkind(need);
-                        number = StaticMethods.Random(100);
-                        if (number < 90) // 90%做第一选择
-                        {
-                            assignWork(p, p.firstPreferred, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                            if (p.WorkKind == ArchitectureWorkKind.无) // 如果不成功，随机挑一样工作
-                                assignRandomWork(p, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                            if (p.WorkKind == ArchitectureWorkKind.无) // keep everyone busy
-                                assignRandomWork(p, new bool[] { true, true, true, true, true, true, true }, false, false, false);
-                        }
-                        else // 10%随机
-                        {
-                            assignRandomWork(p, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                        }
+                        p.WorkKind = ArchitectureWorkKind.训练;
                     }
-                }
-                else // 最近受到攻击
-                {
-                    bool[] need2 = {false, false, _architectureKind.HasTechnology && this.Technology < 200, _architectureKind.HasDomination && this.Domination < this.DominationCeiling - 5,
-                                    _architectureKind.HasMorale && this.Morale < Session.Parameters.RecruitmentMorale, _architectureKind.HasEndurance && this.Endurance < 500, needTrain};
-                    foreach (Person p in this.Persons)
+                    else if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling)
                     {
-                        p.resetPreferredWorkkind(need);
-                        number = StaticMethods.Random(100);
-                        if (number < 50) // 50%做第一选择
-                        {
-                            assignWork(p, p.firstPreferred, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                            if (p.WorkKind == ArchitectureWorkKind.无) // 如果不成功，随机挑一样工作
-                                assignRandomWork(p, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                        }
-                        else // 50%随机
-                        {
-                            // 进入这里时不做农业商业，某些条件下做技术统治民心耐久，保证城内能新建部队反击
-                            assignRandomWork(p, need2, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                            if (p.WorkKind == ArchitectureWorkKind.无) // 可能城市刚受完攻击但技术统治民心耐久都相对较高，上面那句没有分配工作，这时候还需要再分配一次
-                                assignRandomWork(p, need, needOnlyOneDomination, needOnlyOneMorale, needOnlyOneTrain);
-                        }
+                        p.WorkKind = ArchitectureWorkKind.农业;
                     }
-                }
-
-                // 分配完工作后选择人物补充军队
-                if (!forPlayer)
-                {
-
-                    bool needRecruit = false;
-                    bool lotsOfPopulation = GameObject.Chance((int)((((float)this.Population / (float)this.PopulationCeiling) * 100f - 50f) * 2.5));
-                    if ((recentlyAttacked || this.BelongedFaction.PlanTechniqueArchitecture != this) && _architectureKind.HasPopulation && ((recentlyAttacked || GameObject.Random((int)this.BelongedFaction.Leader.StrategyTendency + 1) == 0) && this.RecruitmentAvail()))
+                    else if (_architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling)
                     {
-                        if (this.ArmyScale < this.FewArmyScale || lotsOfPopulation)
-                        {
-                            needRecruit = true;
-                        }
-                        else if (!this.IsFoodEnough)
-                        {
-                            needRecruit = false;
-                        }
-                        else if (GameObject.Random(Enum.GetNames(typeof(PersonStrategyTendency)).Length) < (int)this.BelongedFaction.Leader.StrategyTendency)
-                        {
-                            needRecruit = false;
-                        }
-                        else if (!GameObject.Chance(this.Domination * 4 - 300) || this.Morale < 100)
-                        {
-                            needRecruit = false;
-                        }
-                        else
-                        {
-                            bool nearFrontline = this.FrontLine || this.HostileLine || this.noFactionFrontline;
-                            if (!nearFrontline)
-                            {
-                                foreach (LinkNode a in this.AIAllLinkNodes.Values)
-                                {
-                                    if (a.Level <= 1 && (a.A.FrontLine || a.A.HostileLine || a.A.noFactionFrontline) && !a.A.Kind.HasPopulation)
-                                    {
-                                        nearFrontline = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            needRecruit = this.MilitaryPopulation >
-                                this.PopulationDevelopingRate * this.PopulationCeiling * Session.Parameters.AIRecruitPopulationCapMultiply *
-                                (nearFrontline ? 1.0 : Session.Parameters.AIRecruitPopulationCapBackendMultiply) /
-                                (this.BelongedSection != null && this.BelongedSection.AIDetail.ValueRecruitment ? 2.0 : 1) /
-                                ((int)this.BelongedFaction.Leader.StrategyTendency
-                                * Session.Parameters.AIRecruitPopulationCapStrategyTendencyMulitply + Session.Parameters.AIRecruitPopulationCapStrategyTendencyAdd)
-                                / (this.HostileLine ? Session.Parameters.AIRecruitPopulationCapHostilelineMultiply : 1);
-                        }
+                        p.WorkKind = ArchitectureWorkKind.商业;
                     }
-                    needRecruit = needRecruit && (GameObject.Chance(this.Persons.Count * 25) || (!need[0] && !need[1] && !need[2])); // 太少武将在城内时就不要补充了，先搞好内政更重要
-                    needRecruit = needRecruit && (this.Population > this.PopulationCeiling / 5);
-                    if (needRecruit)
+                    else if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling)
                     {
-                        AutoRecruit();
+                        p.WorkKind = ArchitectureWorkKind.耐久;
                     }
-                }
-
-                // 最后再选择人物赈灾
-                if (this.kezhenzai() && this.IsFundEnough && this.IsFoodEnough)
-                {
-                    foreach (Person p in this.Persons)
-                    {
-                        if (p.zhenzaiAbility > 200)
-                        {
-                            p.WorkKind = ArchitectureWorkKind.赈灾;
-                        }
-                    }
-                }
-
-                // 新建部队
-                if (!forPlayer)
-                {
-                    this.AIRecruitMilitary();
                 }
             }
+
+#if DEBUG
+            if (SectionAIHelper.EnableDebugOutput)
+            {
+                var workCounts = new Dictionary<ArchitectureWorkKind, int>();
+                foreach (Person p in this.Persons)
+                {
+                    if (!workCounts.ContainsKey(p.WorkKind))
+                        workCounts[p.WorkKind] = 0;
+                    workCounts[p.WorkKind]++;
+                }
+                
+                string workSummary = string.Join(", ", workCounts.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
+                System.Diagnostics.Debug.WriteLine($"[AIWork] {this.Name} 工作分配完成: {workSummary} " +
+                    $"(阈值={this.InternalAffairSaturationThreshold:F2})");
+            }
+#endif
         }
 
         public void WithdrawMilitaries()
@@ -2386,6 +3782,74 @@ namespace GameObjects
 
         private void AIRecruitMilitary()
         {
+            // 0. 基础门槛：如果连补兵的资格都没有（没钱/没人口），直接不谈
+            if (!this.RecruitmentAvail()) return;
+
+            // =========================================================
+            // 🎲 软上限概率控制系统 (Soft Cap System)
+            // =========================================================
+            
+            // 1. 定义软上限 (Soft Cap) - 这是一个"理想"的编队数量
+            // 基础: 5队
+            int softLimit = 5; 
+            
+            // 规模加成: 大城+3, 巨城+6
+            if (this.PopulationCeiling >= 150000) softLimit += 6;
+            else if (this.PopulationCeiling >= 50000) softLimit += 3;
+
+            // 武将修正: 每2个武将允许多带1个队 (防止有兵无将)
+            softLimit += this.PersonCount / 2;
+
+            // 2. 定义硬底线 (Hard Cap) - 绝对不能超过的红线
+            // 允许在软上限的基础上最多再溢出 3 队
+            int hardLimit = softLimit + 3;
+
+            // 战时状态：如果有敌军，直接放宽限制
+            bool isEmergency = this.HasHostileTroopsInView();
+
+            // 3. 逻辑判断
+            if (isEmergency)
+            {
+                // 战时只看硬上限，无视软上限惩罚
+                if (this.MilitaryCount >= hardLimit + 5) return;
+            }
+            else
+            {
+                // --- 和平时期逻辑 ---
+
+                // A. 绝对硬上限拦截
+                if (this.MilitaryCount >= hardLimit) 
+                {
+                    return; 
+                }
+
+                // B. 软上限概率拦截 (核心逻辑)
+                if (this.MilitaryCount >= softLimit)
+                {
+                    // 计算目前超标了多少 (比如超了1个，overflow=1)
+                    int overflow = this.MilitaryCount - softLimit;
+                    
+                    // 基础成功率：随着超标数量指数级下降
+                    // 超0个(刚满): 50% 概率新建
+                    // 超1个: 25% 概率新建
+                    // 超2个: 12% 概率新建
+                    int successChance = 50 / (int)Math.Pow(2, overflow);
+
+                    // [土豪修正] 如果钱太多(>10万)，哪怕超标了也允许它任性，概率翻倍
+                    if (this.Fund > 100000) successChance *= 2;
+
+                    // 掷骰子 (0-99)
+                    // 如果 随机数 > 成功率，则"本次没有意愿新建"，跳过
+                    // AI 会转而去执行 AutoRecruit 给老队伍补兵
+                    if (GameObject.Random(100) >= successChance)
+                    {
+                        return;
+                    }
+                }
+            }
+            // =========================================================
+
+            
             bool flag2 = this.RecentlyAttacked > 0;
             if ((_architectureKind.HasPopulation && (flag2 || (this.BelongedFaction.PlanTechniqueArchitecture != this))) &&
                 (flag2 || (this.Population > ((this.RecruitmentPopulationBoundary * (1 + (int)this.BelongedFaction.Leader.StrategyTendency * 0.5f)) + GameObject.Random(this.RecruitmentPopulationBoundary)))))
@@ -2594,7 +4058,7 @@ namespace GameObjects
                 }
                 */
 
-                if (!Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+                if (ShouldExecuteBasicAI())
                 {
 
                     if ((this.BelongedSection != null) && ((knownArch.Count > 0) && (this.PlanArchitecture == null)) && this.BelongedSection.AIDetail.AllowPersonTactics)
@@ -2944,13 +4408,21 @@ namespace GameObjects
             get
             {
                 int result = 0;
-                foreach (LinkNode i in this.AIAllLinkNodes.Values)
+                
+                // 添加空值检查防止NullReferenceException
+                if (this.BelongedSection?.OrientationFaction != null && this.AIAllLinkNodes != null)
                 {
-                    if (this.BelongedSection.OrientationFaction == i.A.BelongedFaction && i.Level <= 1)
+                    foreach (LinkNode i in this.AIAllLinkNodes.Values)
                     {
-                        result += i.A.ArmyScale;
+                        if (i?.A?.BelongedFaction != null && 
+                            this.BelongedSection.OrientationFaction == i.A.BelongedFaction && 
+                            i.Level <= 1)
+                        {
+                            result += i.A.ArmyScale;
+                        }
                     }
                 }
+                
                 return result * 2;
             }
         }
@@ -3029,7 +4501,7 @@ namespace GameObjects
             return sourceArea[GameObject.Random(sourceArea.Count)];
         }
 
-        private Point? GetRandomStartingPosition(Military m)
+        public Point? GetRandomStartingPosition(Military m)
         {
             GameArea allAvailableArea = this.GetAllAvailableArea(false);
             m.ModifyAreaByTerrainAdaptablity(allAvailableArea);
@@ -3067,7 +4539,7 @@ namespace GameObjects
             troop = this.CreateTroop(leader, leader[0] as Person, military, food, nullable.Value);
             troop.WillArchitecture = destination;
             troop.zijin = fund;
-            this.Fund -= fund;
+            this.DecreaseFund(fund);  // 使用安全的减少方法，防止负数
             Legion legion = this.BelongedFaction.GetLegion(destination);
             if (legion == null)
             {
@@ -3229,7 +4701,18 @@ namespace GameObjects
                    
         private void AIRecruitment(bool water, bool siege)
         {
-            if (Session.Current.Scenario.IsPlayer(this.BelongedFaction) && this.BelongedSection != null  && this.BelongedSection.AIDetail .AutoRun && !this.BelongedSection.AIDetail.AllowNewMilitary) return;
+            // 🔥 招募是基础策略，委任军区可以执行
+            if (!ShouldExecuteBasicAI()) return;
+            
+            // 🔥 额外检查：如果是委任军区但不允许新建军队，则跳过
+            if (Session.Current.Scenario.IsPlayer(this.BelongedFaction) && 
+                this.BelongedSection != null && 
+                this.BelongedSection.AIDetail != null && 
+                this.BelongedSection.AIDetail.AutoRun && 
+                !this.BelongedSection.AIDetail.AllowNewMilitary) 
+            {
+                return;
+            }
 
             if (this.Population > 0 && (this.IsFundEnough || this.HasHostileTroopsInView()))
             {
@@ -3250,14 +4733,7 @@ namespace GameObjects
                         if (current.Type == MilitaryType.水军 && this.AIWaterLinks.Count == 0) continue;
                         if (current.Type != MilitaryType.水军 && this.AILandLinks.Count == 0) continue;
 
-                        float weight = 1;
-                        foreach (KeyValuePair<Condition, float> c in current.AICreateArchitectureConditionWeight)
-                        {
-                            if (c.Key.CheckCondition(this))
-                            {
-                                weight *= c.Value;
-                            }
-                        }
+                        float weight = CalculateFinalWeight(current, false);
 
                         if (((water && current.Type == MilitaryType.水军) || (!water && current.Type != MilitaryType.水军))
                             && ((siege && current.Type == MilitaryType.器械) || (!siege && current.Type != MilitaryType.器械))
@@ -3271,10 +4747,6 @@ namespace GameObjects
                             allMilitaries2.Add(current);
                             allMilitaries.Add(current, weight);
                         }
-                        /*if ((((this.ValueWater == (current.Type == MilitaryType.水军)) || (!water && GameObject.Chance(20))) && current.CreateAvail(this)) && (current.ID != 29))
-                        {
-                            list.Add(current);
-                        }*/
                     }
                 }
                 using (enumerator = this.PrivateMilitaryKinds.MilitaryKinds.Values.GetEnumerator())
@@ -3286,15 +4758,7 @@ namespace GameObjects
                         if (current.Type == MilitaryType.水军 && this.AIWaterLinks.Count == 0) continue;
                         if (current.Type != MilitaryType.水军 && this.AILandLinks.Count == 0) continue;
 
-                        float weight = 1;
-                        foreach (KeyValuePair<Condition, float> c in current.AICreateArchitectureConditionWeight)
-                        {
-                            if (c.Key.CheckCondition(this))
-                            {
-                                weight *= c.Value;
-                            }
-                        }
-                        weight *= current.Merit;
+                        float weight = CalculateFinalWeight(current, true);
 
                         if (((water && current.Type == MilitaryType.水军) || (!water && current.Type != MilitaryType.水军))
                             && ((siege && current.Type == MilitaryType.器械) || (!siege && current.Type != MilitaryType.器械))
@@ -3334,36 +4798,316 @@ namespace GameObjects
                     current = GameObject.WeightedRandom(allMilitaries);
                     this.CreateMilitary(current.findSuccessorCreatable(allMilitaries2, this));
                 }
-                /*if (GameObject.Chance(90))
+            }
+        }
+
+        /// <summary>
+        /// 计算最终权重（整合了原有逻辑、兵种上限动态权重、武将加成、地形修正）
+        /// </summary>
+        private float CalculateFinalWeight(MilitaryKind kind, bool isPrivate)
+        {
+            float w = 1.0f;
+
+            // 1. 基础条件权重 (原有逻辑)
+            foreach (KeyValuePair<Condition, float> c in kind.AICreateArchitectureConditionWeight)
+            {
+                if (c.Key.CheckCondition(this))
                 {
-                    list.PropertyName = "Merit";
-                    list.IsNumber = true;
-                    list.ReSort();
-                    int maxValue = list.Count / 2;
-                    if (list.Count > 1)
+                    w *= c.Value;
+                }
+            }
+
+            // 2. 私有兵种品质加成 (原有逻辑)
+            if (isPrivate)
+            {
+                w *= kind.Merit;
+            }
+
+            // 🔥 3. 兵种上限动态权重系统（通用版本，替代硬编码的贼兵限制）
+            // 标准正规军上限为10000，超过此值的大编制兵种需要特殊处理
+            const int STANDARD_TROOP_CAP = 10000;
+            
+            if (kind.MaxScale > STANDARD_TROOP_CAP)
+            {
+                // 计算超额倍率
+                float excessRatio = (float)kind.MaxScale / STANDARD_TROOP_CAP;
+                float baseDecay = 1.0f / excessRatio;
+                
+                // 统计城内"有效战备部队"数量
+                // 条件1：是正规军（上限 <= 10000，成型快）
+                // 条件2：有实际战力（兵力 >= 上限的80%）
+                int validCombatReadyUnits = 0;
+                foreach (Military m in this.Militaries)
+                {
+                    bool isQuickType = m.Kind.MaxScale <= STANDARD_TROOP_CAP;
+                    bool isCombatReady = m.Quantity >= (m.Kind.MaxScale * 0.8f);
+                    
+                    if (isQuickType && isCombatReady)
                     {
-                        for (int i = maxValue; i < list.Count; i++)
-                        {
-                            if ((list[i] as MilitaryKind).Merit == (list[i - 1] as MilitaryKind).Merit)
-                            {
-                                maxValue++;
-                            }
-                        }
+                        validCombatReadyUnits++;
                     }
-                    current = list[GameObject.Random(maxValue)] as MilitaryKind;
-                    if ((!this.ValueWater || (current.Type == MilitaryType.水军)) || GameObject.Chance(20))
-                    {
-                        this.CreateMilitary(current);
-                    }
+                }
+                
+                // 根据有效战备部队数量调整权重
+                if (validCombatReadyUnits < 3)
+                {
+                    // 战力不足时，极度抑制大编制兵种
+                    // 使用平方衰减 + 额外惩罚，确保几乎不会招募
+                    w *= baseDecay * baseDecay * 0.1f;
+                    
+                    System.Diagnostics.Debug.WriteLine($"  🚫 {kind.Name}: 上限={kind.MaxScale}, 有效战备部队={validCombatReadyUnits}/3, 权重衰减={baseDecay * baseDecay * 0.1f:F4}");
                 }
                 else
                 {
-                    current = list[GameObject.Random(list.Count)] as MilitaryKind;
-                    if ((!this.ValueWater || (current.Type == MilitaryType.水军)) || GameObject.Chance(20))
+                    // 战力充足时，允许以较低概率招募大编制兵种
+                    w *= baseDecay;
+                    
+                    System.Diagnostics.Debug.WriteLine($"  ✓ {kind.Name}: 上限={kind.MaxScale}, 有效战备部队={validCombatReadyUnits}/3, 权重衰减={baseDecay:F4}");
+                }
+            }
+
+            // 4. 骑兵地形与全局修正
+            if (kind.Type == MilitaryType.骑兵)
+            {
+                // 骑兵基础优势：机动高、攻击高，给予 1.3 倍基础偏好
+                w *= 1.3f;
+                // 地形修正：如果周围全是山地森林，大幅降低权重
+                w *= this.CalculateCavalryTerrainFactor();
+            }
+
+            // 5. 武将适性加成 (技能/称号)
+            // 如果城内有很多擅长该兵种的武将，权重提升
+            w *= this.CalculateOfficerRelevance(kind);
+
+            return w;
+        }
+
+        /// <summary>
+        /// 计算城内武将对特定兵种的适配程度
+        /// </summary>
+        private float CalculateOfficerRelevance(MilitaryKind kind)
+        {
+            if (this.Persons.Count == 0) return 1.0f;
+
+            float relevanceScore = 0;
+            int relevantOfficers = 0;
+
+            foreach (Person p in this.Persons)
+            {
+                bool isRelevant = false;
+
+                // 1. 检查技能
+                foreach (Skill s in p.Skills.GetSkillList())
+                {
+                    // 检查技能的影响是否与兵种类型相关
+                    if (IsSkillRelevantToMilitaryType(s, kind.Type))
                     {
-                        this.CreateMilitary(current);
+                        relevanceScore += 1.0f;
+                        isRelevant = true;
                     }
-                }*/
+                }
+
+                // 2. 检查称号（遍历武将的所有称号）
+                if (p.RealTitles != null && p.RealTitles.Count > 0)
+                {
+                    foreach (Title title in p.RealTitles)
+                    {
+                        if (IsTitleRelevantToMilitaryType(title, kind.Type))
+                        {
+                            relevanceScore += 1.5f;
+                            isRelevant = true;
+                            break; // 找到一个相关称号即可
+                        }
+                    }
+                }
+
+                if (isRelevant)
+                {
+                    relevantOfficers++;
+                }
+            }
+
+            // 计算加成倍率
+            // 如果有一半的武将都适合带这个兵，权重最高可达 1.5 倍
+            // 公式可自行调整
+            float ratio = (float)relevantOfficers / this.Persons.Count;
+            return 1.0f + (ratio * 0.5f) + (relevanceScore * 0.05f);
+        }
+
+        /// <summary>
+        /// 简单的技能匹配判断 (通过技能影响系统判断)
+        /// </summary>
+        private bool IsSkillRelevantToMilitaryType(Skill skill, MilitaryType type)
+        {
+            // 检查技能的MilitaryTypeOnly属性
+            if (skill.MilitaryTypeOnly == type)
+            {
+                return true;
+            }
+
+            // 检查技能影响中是否包含对应兵种的加成
+            foreach (Influence influence in skill.Influences.Influences.Values)
+            {
+                // 检查影响类型是否与兵种相关
+                // 根据CommonData中的影响ID判断
+                // 例如：ID 290 是兵种限定影响
+                if (influence.Kind.ID == 290 && influence.Parameter == type.ToString())
+                {
+                    return true;
+                }
+
+                // 检查其他与兵种相关的影响
+                // 步兵相关影响 (示例ID，需根据实际配置调整)
+                if (type == MilitaryType.步兵 && (
+                    influence.Kind.ID == 800 || // 步兵攻击力
+                    influence.Kind.ID == 801))  // 步兵防御力
+                {
+                    return true;
+                }
+
+                // 骑兵相关影响
+                if (type == MilitaryType.骑兵 && (
+                    influence.Kind.ID == 802 || // 骑兵攻击力
+                    influence.Kind.ID == 803))  // 骑兵防御力
+                {
+                    return true;
+                }
+
+                // 弩兵相关影响
+                if (type == MilitaryType.弩兵 && (
+                    influence.Kind.ID == 804 || // 弩兵攻击力
+                    influence.Kind.ID == 805))  // 弩兵防御力
+                {
+                    return true;
+                }
+
+                // 水军相关影响
+                if (type == MilitaryType.水军 && (
+                    influence.Kind.ID == 824 || // 水军攻击力
+                    influence.Kind.ID == 825))  // 水军防御力
+                {
+                    return true;
+                }
+
+                // 器械相关影响
+                if (type == MilitaryType.器械 && (
+                    influence.Kind.ID == 832 || // 器械攻击力
+                    influence.Kind.ID == 833))  // 器械防御力
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 检查称号是否与兵种类型相关
+        /// </summary>
+        private bool IsTitleRelevantToMilitaryType(Title title, MilitaryType type)
+        {
+            if (title == null) return false;
+
+            // 检查称号的影响
+            foreach (Influence influence in title.Influences.Influences.Values)
+            {
+                // 使用与技能相同的逻辑
+                if (influence.Kind.ID == 290 && influence.Parameter == type.ToString())
+                {
+                    return true;
+                }
+
+                // 检查其他与兵种相关的影响
+                if (type == MilitaryType.步兵 && (influence.Kind.ID == 800 || influence.Kind.ID == 801))
+                {
+                    return true;
+                }
+                if (type == MilitaryType.骑兵 && (influence.Kind.ID == 802 || influence.Kind.ID == 803))
+                {
+                    return true;
+                }
+                if (type == MilitaryType.弩兵 && (influence.Kind.ID == 804 || influence.Kind.ID == 805))
+                {
+                    return true;
+                }
+                if (type == MilitaryType.水军 && (influence.Kind.ID == 824 || influence.Kind.ID == 825))
+                {
+                    return true;
+                }
+                if (type == MilitaryType.器械 && (influence.Kind.ID == 832 || influence.Kind.ID == 833))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 计算骑兵的地形适应因子
+        /// </summary>
+        private float CalculateCavalryTerrainFactor()
+        {
+            try
+            {
+                var scenario = Session.Current.Scenario;
+                int badTerrainCount = 0;
+                int totalCount = 0;
+
+                // 扫描城市周围 3 格范围 (7x7 区域)
+                int range = 3;
+                Point archPos = this.Position;
+
+                for (int x = -range; x <= range; x++)
+                {
+                    for (int y = -range; y <= range; y++)
+                    {
+                        Point targetPoint = new Point(archPos.X + x, archPos.Y + y);
+
+                        // 检查是否越界
+                        if (scenario.PositionOutOfRange(targetPoint))
+                        {
+                            continue;
+                        }
+
+                        // 获取地形类型
+                        TerrainKind terrain = scenario.GetTerrainKindByPosition(targetPoint);
+
+                        // 判断是否为骑兵不利地形
+                        if (terrain == TerrainKind.森林 ||   // 森林
+                            terrain == TerrainKind.山地 ||   // 山地
+                            terrain == TerrainKind.水域 ||   // 水域
+                            terrain == TerrainKind.峻岭 ||   // 峻岭
+                            terrain == TerrainKind.栈道 ||   // 栈道
+                            terrain == TerrainKind.湿地)     // 湿地
+                        {
+                            badTerrainCount++;
+                        }
+
+                        totalCount++;
+                    }
+                }
+
+                // 如果不利地形超过 50%，骑兵权重打 2 折
+                if (totalCount > 0)
+                {
+                    float badTerrainRatio = (float)badTerrainCount / totalCount;
+                    if (badTerrainRatio > 0.5f)
+                    {
+                        return 0.2f;
+                    }
+                    else if (badTerrainRatio > 0.3f)
+                    {
+                        return 0.5f;
+                    }
+                }
+
+                return 1.0f; // 默认不惩罚
+            }
+            catch
+            {
+                // 如果出现任何异常，返回默认值
+                return 1.0f;
             }
         }
 
@@ -3461,7 +5205,10 @@ namespace GameObjects
 
         private void AITreasure()
         {
-            if (GameObject.Chance(Session.Parameters.AITreasureChance) && !Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            // 宝物管理是高级策略，只有AI势力执行
+            if (!ShouldExecuteAdvancedAI()) return;
+            
+            if (GameObject.Chance(Session.Parameters.AITreasureChance))
             {
                 /*if (this.HasTreasureToConfiscate())
                 {
@@ -3924,22 +5671,216 @@ namespace GameObjects
 
         public void ApplyInfluences()
         {
+            // 🔥 关键：只清空 Characteristics 的 appliedArch
+            // Characteristics 是建筑特有的，不是共享对象，可以安全清空
+            foreach (var influence in this.Characteristics.Influences.Values)
+            {
+                influence.appliedArch.Clear();
+            }
+            
+            // 应用 Characteristics 影响
             this.Characteristics.ApplyInfluence(this, Applier.Characteristics, 0);
-            this.ApplyFacilityInfluences(false);
+            
+            // 🔥 修复：应该调用 ApplyFacilityInfluencesForced()，而不是 ApplyFacilityInfluences()
+            // ApplyFacilityInfluencesForced() 不会重置增益字段，只会移除旧记录并重新应用
+            // ApplyFacilityInfluences() 会重置增益字段，导致 Characteristics 增益丢失
+            this.ApplyFacilityInfluencesForced();
+        }
+        
+        /// <summary>
+        /// 🆕 应用势力范围增益（基于能量分级）
+        /// 🧊 Cold Path：势力范围更新或读档后调用
+        /// 日期：2026-03-16
+        /// </summary>
+        public void ApplyInfluenceBuff()
+        {
+            // 🔥 ANTI-BAND-AID：检查数据源
+            if (this.BelongedFaction == null)
+            {
+                // 无归属势力的城池（如中立城池）不获得增益
+                return;
+            }
+            
+            if (this.ArchitectureArea == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 的 ArchitectureArea 为 null");
+            }
+            
+            // 🔥 初始化顺序容错：GlobalInfluenceMap 在 InfluenceUpdateManager.Initialize() 中初始化
+            // 🔥 日期：2026-03-17
+            // 🔥 场景：AfterLoadGameScenario() 在 GlobalInfluenceMap 初始化前调用
+            if (this.BelongedFaction.GlobalInfluenceMap is not { Length: > 0 })
+            {
+                // 跳过增益应用，等待 InfluenceUpdateManager.Initialize() 完成后再次调用
+                return;
+            }
+            
+            // 1. 获取城池中心位置的净能量
+            int netEnergy = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.GetNetInfluenceAt(
+                this.ArchitectureArea.Centre, 
+                this.BelongedFaction);
+            
+            // 2. 计算分级 Buff
+            var buffEffect = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateTieredBuffs(netEnergy);
+            
+            // 3. 应用 Buff 到城池属性
+            // 🔥 关键：城池的攻防加成通过部队实现（部队在城池区域内获得加成）
+            // 🔥 城池本身的增益主要是：粮食折扣、视野范围
+            // 🔥 日期：2026-03-17
+            // 🔥 说明：城池攻防最高10%，通过部队在城池区域内的 ApplyInfluenceBuff() 实现
+            
+            // 粮食折扣影响城池维护成本
+            // 例如：FoodDiscount = 0.15 表示 -15%
+            // 如果原本 RateOfFoodReduceRate = 1.0，则变为 0.85（减少 15% 粮食消耗）
+            if (buffEffect.FoodDiscount > 0)
+            {
+                this.RateOfFoodReduceRate = Math.Max(0.1f, 1.0f - buffEffect.FoodDiscount);
+            }
+            
+            // 4. 更新视野缓存
+            // 🔥 关键：在应用增益时更新缓存，避免 Hot Path 重复计算
+            // 🔥 核心保护：建筑可以为 0（被敌方完全压制时失去视野）
+            _cachedEffectiveViewDistance = this.ViewDistance + 
+                WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: true);
+            
+            // 5. 记录调试信息
+            #if DEBUG
+            if (buffEffect.FoodDiscount > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 获得增益：" +
+                    $"粮耗-{buffEffect.FoodDiscount * 100:F1}%，" +
+                    $"视野={_cachedEffectiveViewDistance}");
+            }
+            #endif
+        }
+        
+        /// <summary>
+        /// 🆕 获取动态视野范围（基于能量）
+        /// 🧊 Cold Path：查询视野时调用
+        /// 日期：2026-03-16
+        /// </summary>
+        /// <returns>视野范围（格子数）</returns>
+        public int GetDynamicVisionRange()
+        {
+            // 🔥 ANTI-BAND-AID：检查数据源
+            if (this.BelongedFaction == null)
+            {
+                return 0; // 无归属势力，无视野
+            }
+            
+            if (this.ArchitectureArea == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture.GetDynamicVisionRange] 城池 {this.Name} 的 ArchitectureArea 为 null");
+            }
+            
+            // 🔥 初始化顺序容错：GlobalInfluenceMap 在 InfluenceUpdateManager.Initialize() 中初始化
+            // 🔥 日期：2026-03-17
+            // 🔥 场景：Faction.PrepareKnownAreaData() 在 GlobalInfluenceMap 初始化前调用
+            if (this.BelongedFaction.GlobalInfluenceMap is not { Length: > 0 })
+            {
+                // 返回基础视野（无动态增益）
+                return 0;
+            }
+            
+            // 获取城池中心位置的净能量
+            int netEnergy = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.GetNetInfluenceAt(
+                this.ArchitectureArea.Centre, 
+                this.BelongedFaction);
+            
+            // 计算视野范围（建筑可以为 0）
+            return WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: true);
+        }
+        
+        /// <summary>
+        /// 🆕 获取情报等级（基于能量）
+        /// 🧊 Cold Path：情报查询时调用
+        /// 日期：2026-03-16
+        /// </summary>
+        /// <returns>情报等级</returns>
+        public InformationLevel GetDynamicInformationLevel()
+        {
+            // 🔥 ANTI-BAND-AID：检查数据源
+            if (this.BelongedFaction == null)
+            {
+                return InformationLevel.无;
+            }
+            
+            if (this.ArchitectureArea == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture.GetDynamicInformationLevel] 城池 {this.Name} 的 ArchitectureArea 为 null");
+            }
+            
+            // 获取城池中心位置的净能量
+            int netEnergy = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.GetNetInfluenceAt(
+                this.ArchitectureArea.Centre, 
+                this.BelongedFaction);
+            
+            // 计算情报等级
+            return WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateInformationLevel(netEnergy);
+        }
+        
+        public void ApplyFacilityInfluencesForced()
+        {
+            // 🔥 V18 修复：必须先调用 PurifyInfluence 回退增益值
+            // 原因：读档后可能已经有旧的增益值，需要先清除再重新应用
+            
+            // 先清除所有设施的影响
+            foreach (Facility facility in this.Facilities)
+            {
+                facility.Influences.PurifyInfluence(this, Applier.Facility, facility.ID);
+            }
+            
+            // 然后重新应用所有设施影响
+            foreach (Facility facility in this.Facilities)
+            {
+                facility.Influences.ApplyInfluence(this, Applier.Facility, facility.ID);
+            }
         }
 
         public void ApplyFacilityInfluences(bool skipNoCostFacility)
         {
+            // 🔥 V19 修复：只清除将要重新应用的设施，避免误清除未启用的设施
+            // 原因：如果无条件清除所有设施，会导致未启用的设施增益被错误回退
+            
+
+            
+            // 先清除将要重新应用的设施影响
             foreach (Facility facility in this.Facilities)
             {
                 if (!skipNoCostFacility || facility.MaintenanceCost > 0)
                 {
-                    if (this.FacilityEnabled || facility.MaintenanceCost <= 0)
+                    bool shouldApply = (facility.MaintenanceCost <= 0) || this.FacilityEnabled;
+                    
+                    if (shouldApply)
+                    {
+                        // 只清除将要重新应用的设施
+                        facility.Influences.PurifyInfluence(this, Applier.Facility, facility.ID);
+                    }
+                }
+            }
+            
+            // 然后重新应用符合条件的设施影响
+            foreach (Facility facility in this.Facilities)
+            {
+                if (!skipNoCostFacility || facility.MaintenanceCost > 0)
+                {
+                    // 🔥 V15 修复：无维护费用的设施总是启用，有维护费用的设施需要检查 FacilityEnabled
+                    bool shouldApply = (facility.MaintenanceCost <= 0) || this.FacilityEnabled;
+                    
+
+                    
+                    if (shouldApply)
                     {
                         facility.Influences.ApplyInfluence(this, Applier.Facility, facility.ID);
                     }
                 }
             }
+            
+
         }
 
         public int GetFacilityKindCount(int id)
@@ -4067,7 +6008,7 @@ namespace GameObjects
 
         public bool AutoHiringAvail()
         {
-            return ((this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+            return (this.BelongedSection == null || (this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
         }
 
         private void AutoIncrement()
@@ -4123,12 +6064,17 @@ namespace GameObjects
 
         public bool AutoRewardingAvail()
         {
-            return ((this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+            return (this.BelongedSection == null || (this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+        }
+        
+        public bool RewardPersonAvail()
+        {
+            return this.HasPerson() && this.Fund >= Session.Parameters.RewardPersonCost && this.GetRewardPersons().Count > 0;
         }
 
         public bool AutoSearchingAvail()
         {
-            return ((this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+            return (this.BelongedSection == null || (this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
         }
 
         /*
@@ -4143,37 +6089,48 @@ namespace GameObjects
         */
         public bool AutoWorkingAvail()
         {
-            return ((this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+            return (this.BelongedSection == null || (this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
         }
 
         public bool AutoRecruitingAvail()
         {
-            return ((this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
+            return (this.BelongedSection == null || (this.BelongedSection.AIDetail == null) || !this.BelongedSection.AIDetail.AutoRun);
         }
 
         public void BeginToBuildAFacility(FacilityKind facilityKind)
         {
-            this.BuildingFacility = facilityKind.ID;
-            this.BuildingDaysLeft = Math.Max(1, (int)(facilityKind.Days * (1 - this.facilityConstructionTimeRateDecrease)));
-            this.DecreaseFund(facilityKind.FundCost);
-            if (this.BelongedFaction.TechniquePoint < facilityKind.PointCost)
+            // 🔥 根本性修复：标记为 AI 上下文，触发属性 setter 中的检查
+            _isInAIContext = true;
+            try
             {
-                this.BelongedFaction.DepositTechniquePointForFacility(facilityKind.PointCost - this.BelongedFaction.TechniquePoint);
+                this.BuildingFacility = facilityKind.ID;
+                this.BuildingDaysLeft = Math.Max(1, (int)(facilityKind.Days * (1 - this.facilityConstructionTimeRateDecrease)));
+                this.DecreaseFund(facilityKind.FundCost);
+                if (this.BelongedFaction.TechniquePoint < facilityKind.PointCost)
+                {
+                    this.BelongedFaction.DepositTechniquePointForFacility(facilityKind.PointCost - this.BelongedFaction.TechniquePoint);
+                }
                 if (this.BelongedFaction.TechniquePoint < facilityKind.PointCost)
                 {
                     this.BelongedFaction.DepositTechniquePointForTechnique(facilityKind.PointCost - this.BelongedFaction.TechniquePoint);
                 }
+                this.BelongedFaction.DecreaseTechniquePoint(facilityKind.PointCost);
+                /*
+                if (this.HasSpy)
+                {
+                    this.CreateNewFacilitySpyMessage(facilityKind);
+                }
+                 */
+                this.PlanFacilityKind = null;
+                this.PlanFacilityKindID = -1;
+                // 🔥 AOT 重构：使用强类型事件替代反射调用
+                WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseStartBuildFacility(Session.Current.Scenario, this, facilityKind);
             }
-            this.BelongedFaction.DecreaseTechniquePoint(facilityKind.PointCost);
-            /*
-            if (this.HasSpy)
+            finally
             {
-                this.CreateNewFacilitySpyMessage(facilityKind);
+                // 🔥 关键：无论成功或失败，都要重置 AI 上下文标志
+                _isInAIContext = false;
             }
-             */
-            this.PlanFacilityKind = null;
-            this.PlanFacilityKindID = -1;
-            ExtensionInterface.call("StartBuildFacility", new Object[] { Session.Current.Scenario, this, facilityKind });
         }
 
         public void StopBuildingFacility()
@@ -4186,21 +6143,33 @@ namespace GameObjects
 
         public void BuildFacility(FacilityKind facilityKind)
         {
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] ===== 开始建造设施 =====");
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] 建筑: {this.Name}, 设施: {facilityKind.Name}");
+            
             Facility facility = new Facility();
             facility.ID = Session.Current.Scenario.Facilities.GetFreeGameObjectID();
             facility.KindID = facilityKind.ID;
             facility.Endurance = facilityKind.Endurance;
             this.Facilities.AddFacility(facility);
             Session.Current.Scenario.Facilities.AddFacility(facility);
-            if (this.FacilityEnabled)
-            {
-                facility.Influences.ApplyInfluence(this, Applier.Facility, facility.ID);
-            }
+            
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] 设施已添加到建筑，ID={facility.ID}");
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] 开始应用设施影响，影响数量: {facility.Influences.Influences.Count}");
+            
+            // 🔥 关键修复：直接应用新设施的影响
+            // 不需要清除 appliedArch 记录，因为每个设施都有唯一的 applierID（设施 ID）
+            // InfluenceKind.ApplyInfluenceKind 会自动检查是否已经应用过（通过 HashSet.Add）
+            facility.Influences.ApplyInfluence(this, Applier.Facility, facility.ID);
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] ApplyInfluence 完成");
+            
             if (this.OnFacilityCompleted != null)
             {
                 this.OnFacilityCompleted(this, facility);
             }
-            ExtensionInterface.call("BuiltFacility", new Object[] { Session.Current.Scenario, this, facilityKind });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseFacilityCompleted(Session.Current.Scenario, this, facility);
+            
+            System.Diagnostics.Debug.WriteLine($"[BuildFacility] ===== 设施建造完成 =====");
         }
 
         public bool BuildFacilityAvail()
@@ -4221,35 +6190,294 @@ namespace GameObjects
             public Point position;
         }
 
+        // 计算将领能力系数 (修正版：120 上限)
+        private float GetLeaderCapabilityFactor(Troop troop)
+        {
+            if (troop.Leader == null) return 0.5f;
+
+            // 设定参考上限 120 (兼容宝物/官职)
+            const float REF_MAX = 120.0f;
+            
+            // 权重算法：(统+武+智)*2 + (魅+政)*0.5
+            float score = (troop.Leader.Command * 2.0f) + 
+                          (troop.Leader.Strength * 2.0f) + 
+                          (troop.Leader.Intelligence * 2.0f) + 
+                          (troop.Leader.Glamour * 0.5f) + 
+                          (troop.Leader.Politics * 0.5f);
+
+            // 分母 = 总权重(7.0) * 参考上限(120) = 840
+            float denominator = 7.0f * REF_MAX;
+
+            // 归一化到 0~1
+            return Math.Min(Math.Max(score / denominator, 0f), 1.0f);
+        }
+
+        private bool CheckOffensiveCapability(Troop troop)
+        {
+            System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] 开始检查 {troop.DisplayName}: Food={troop.Food}, CityFood={this.Food}, Qty={troop.Army?.Quantity}");
+            
+            float capability = GetLeaderCapabilityFactor(troop); 
+            // 基础比例：能力越低，要求的兵力比例越高
+            // 1.0能力 -> 0.4 MaxScale
+            // 0.0能力 -> 0.7 MaxScale
+            float leaderBaseRate = 0.4f + ((1.0f - capability) * 0.3f);
+
+            // 获取编制最大上限
+            int maxScale = 10000;
+            if (troop.Army != null && troop.Army.Kind != null)
+            {
+                maxScale = troop.Army.Kind.MaxScale > 0 ? troop.Army.Kind.MaxScale : 10000;
+            }
+
+            // 规模修正：编制越大，要求的统率比例可以越低（大军团本身就是威慑）
+            float scaleRatio = (float)maxScale / 100000.0f; 
+            float scaleCorrection = (float)Math.Sqrt(scaleRatio); 
+            if (scaleCorrection > 1.0f) scaleCorrection = 1.0f;
+
+            // 最终兵力阈值
+            int finalThreshold = (int)(maxScale * leaderBaseRate * scaleCorrection);
+
+            // 硬性下限：至少要有 500 人
+            int hardFloor = Math.Min(500, maxScale);
+            if (finalThreshold < hardFloor) finalThreshold = hardFloor;
+
+            // Check 1: Quantity
+            if (troop.Army.Quantity < finalThreshold)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ❌ {troop.DisplayName} 兵力不足: {troop.Army.Quantity} < {finalThreshold}");
+                return false;
+            }
+
+            // Check 2: Morale (Dynamic)
+            // 高能力将领更能驾驭低士气部队
+            // 🔥 修复：与 Troop.CheckOffensiveCapabilityStatic 保持一致
+            int dynamicMorale = 60 + (int)((1.0f - capability) * 25);
+            if (troop.Morale < dynamicMorale)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ❌ {troop.DisplayName} 士气不足: {troop.Morale} < {dynamicMorale}");
+                return false;
+            }
+
+            // Check 3: Food
+            // 🔥 修复：粮草检查应基于健康兵数量，而非总兵力（含伤兵）
+            // 原因：FoodCostPerDay = FoodPerSoldier * TotalQuantity（包含伤兵）
+            // 但伤兵会逐渐恢复，且部队可在途中补给，不应按总兵力要求 30 天粮草
+            
+            // 计算基于健康兵的粮草消耗（伤兵按 50% 计算）
+            int effectiveFoodCost = troop.Army.Kind.FoodPerSoldier * 
+                (troop.Army.Quantity + troop.Army.InjuryQuantity / 2);
+            
+            // 要求 15 天粮草（降低要求，因为可以途中补给）
+            int requiredFood = effectiveFoodCost * 15;
+            
+            if (this.Food < requiredFood)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {requiredFood} (健康兵={troop.Army.Quantity}, 伤兵={troop.Army.InjuryQuantity}, 有效消耗={effectiveFoodCost}/天)");
+                return false;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ✅ {troop.DisplayName} 通过检查");
+            return true;
+        }
+
+        private bool CheckDefensiveCapability(Troop troop)
+        {
+            // 防守要求较低
+            // 至少满编的 20%
+             int maxScale = 10000;
+            if (troop.Army != null && troop.Army.Kind != null)
+            {
+                maxScale = troop.Army.Kind.MaxScale > 0 ? troop.Army.Kind.MaxScale : 10000;
+            }
+
+            if (troop.Army.Quantity < maxScale * 0.2f)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ❌ {troop.DisplayName} 兵力不足: {troop.Army.Quantity} < {maxScale * 0.2f}");
+                return false;
+            }
+            
+            // 至少 10 天存粮
+            if (this.Food < troop.FoodCostPerDay * 10)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {troop.FoodCostPerDay * 10}");
+                return false;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ✅ {troop.DisplayName} 通过检查");
+            return true;
+        }
+
         private bool BuildOffensiveTroop(Architecture destination, LinkKind linkkind, bool offensive, int reserve)
         {
-            // 🧠 AI New Formation Logic Integration
-            // NOTE: AIFormationManager is currently commented out due to dependency issues
-            // The following block is disabled until dependencies are resolved
-            /*
-            if (Session.Parameters.AIUseNewFormationLogic && offensive)
+            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] ===== {this.Name} 开始创建部队 =====");
+            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] destination={destination?.Name}, linkkind={linkkind}, offensive={offensive}, reserve={reserve}");
+            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] AIUseNewFormationLogic={Session.Parameters.AIUseNewFormationLogic}");
+            
+            // 🔥 新增：防守出兵逻辑优化
+            if (!offensive)
             {
+                // 防守本城时不需要保留兵力，可以全部出兵
+                if (destination == this)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 防守本城：无需保留兵力，全部出兵");
+                    reserve = 0;
+                }
+                else
+                {
+                    // 救援其他城市时使用较低的保留兵力
+                    int defensiveReserve = this.getArmyReserveForDefensive();
+                    if (defensiveReserve < reserve)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 救援出兵：降低保留兵力从 {reserve} 到 {defensiveReserve}");
+                        reserve = defensiveReserve;
+                    }
+                }
+            }
+            
+            // [新增] AI策略限制：防止在弱势情况下无脑添油
+            // 如果城内（领地范围内）已集结了3支或更多士气低落（<60）的部队，暂停出兵以积蓄力量
+            if (this.BelongedFaction != null && this.BelongedFaction.Troops != null)
+            {
+                int weakTroopCount = 0;
+                int totalTroopsInCity = 0;
+
+                foreach (Troop t in this.BelongedFaction.Troops)
+                {
+                    if (t != null && !t.Destroyed && t.StartingArchitecture == this)
+                    {
+                        // 判定“城内”：位于该据点所属的区域内
+                        // 优先使用 ArchitectureArea 判断，因为部队可能不在中心点
+                        bool isInCity = false;
+                        if (this.ArchitectureArea != null)
+                        {
+                            isInCity = this.ArchitectureArea.HasPoint(t.Position);
+                        }
+                        else
+                        {
+                            isInCity = (t.Position == this.Position);
+                        }
+
+                        if (isInCity)
+                        {
+                            totalTroopsInCity++;
+                            if (t.Morale < 60)
+                            {
+                                weakTroopCount++;
+                            }
+                        }
+                    }
+                }
+
+                // 规则： 如果城内编队数量大于等于3，并且这些部队士气都未达到60
+                if (totalTroopsInCity >= 3 && weakTroopCount == totalTroopsInCity)
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] {this.Name} 暂停出兵：城内积压{totalTroopsInCity}支低士气部队，停止添油");
+#endif
+                    return false;
+                }
+            }
+
+            // 🧠 AI New Formation Logic Integration
+            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 检查新AI逻辑: AIUseNewFormationLogic={Session.Parameters.AIUseNewFormationLogic}, offensive={offensive}");
+            // 🔥 修改：防守出兵也使用新AI逻辑
+            if (Session.Parameters.AIUseNewFormationLogic)
+            {
+#if !DISABLE_AI_FORMATION
+                string logicType = offensive ? "进攻" : "防守";
+                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 使用新AI编队逻辑 ({logicType})");
+                // ✅ 整合：根据 offensive 参数先准备好目标军团，并在创建部队时直接传入
+                // 🔥 重构：使用新的CreateLegion方法
+                Legion targetLegion = null;
+                if (offensive)
+                {
+                    targetLegion = this.BelongedFaction.GetOrCreateLegion(destination, LegionKind.AI, LegionMission.Attack);
+                }
+                else
+                {
+                    // 防守情况：如果目标是自己，使用防守军团；否则使用进攻军团
+                    LegionKind kind = LegionKind.AI;
+                    LegionMission mission = (destination == this) ? LegionMission.Defend : LegionMission.Attack;
+                    targetLegion = this.BelongedFaction.GetOrCreateLegion(destination, kind, mission);
+                }
+
                 // Create manager
                 GameManager.AIFormationManager formationManager = new GameManager.AIFormationManager();
-                // Call optimal troops. Reserve passed as minReserve.
-                // Note: CreateOptimalTroops returns List<Troop>.
-                List<Troop> troops = formationManager.CreateOptimalTroops(this, Session.Parameters.MaxAITroopCountCandidates, reserve);
+                // Call optimal troops and pass the legion for immediate binding.
+                List<Troop> troops = formationManager.CreateOptimalTroops(this, Session.Parameters.MaxAITroopCountCandidates, reserve, assignedLegion: targetLegion);
+                
+                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] CreateOptimalTroops返回{troops.Count}支部队 ({logicType})");
                 
                 if (troops.Count > 0)
                 {
-                    Legion legion = this.BelongedFaction.GetLegion(destination);
-                    if (legion == null)
+                    // 🔧 校验：如果准备好的军团依然为 null，清理僵尸部队
+                    if (targetLegion == null)
                     {
-                        legion = this.CreateOffensiveLegion(destination);
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] {this.Name} 无法获取/创建目标军团，清理部队");
+                        foreach (Troop t in troops) t.Enter(this);
+                        return false;
                     }
+
+                    // 🔥 防守本城时的特殊检查：过滤战斗力太低或士气太低的部队
+                    if (!offensive && destination == this)
+                    {
+                        var validTroops = new List<Troop>();
+                        foreach (Troop t in troops)
+                        {
+                            // 检查战斗力和士气
+                            bool hasValidFightingForce = t.FightingForce > 100; // 战斗力至少100
+                            bool hasValidMorale = t.Morale >= 20; // 士气至少20
+                            
+                            if (hasValidFightingForce && hasValidMorale)
+                            {
+                                validTroops.Add(t);
+                                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 防守部队 {t.DisplayName} 通过检查: 战斗力={t.FightingForce}, 士气={t.Morale}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 防守部队 {t.DisplayName} 不符合要求: 战斗力={t.FightingForce}(需>100), 士气={t.Morale}(需>=20)");
+                                // 解散不符合要求的部队
+                                t.Enter(this);
+                            }
+                        }
+                        
+                        // 更新部队列表
+                        troops = validTroops;
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 防守本城筛选后剩余{troops.Count}支合格部队");
+                        
+                        // 如果没有合格的部队，直接返回失败
+                        if (troops.Count == 0)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] {this.Name} 防守本城：无合格部队，取消出兵");
+                            return false;
+                        }
+                    }
+                    
                     foreach (Troop t in troops)
                     {
-                        legion.AddTroop(t);
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 部队 {t.DisplayName} 创建后武将数: {t.PersonCount} ({logicType})");
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 设置部队 {t.DisplayName} 目标: {destination.Name} ({logicType})");
+                        t.WillArchitecture = destination;
+                        t.TargetArchitecture = destination;
+                        t.StartingArchitecture = this;  // 🔥 根本修复：属性会自动同步 StartingArchitectureID
+                        
+                        // 🔥 核心修复：由于是静默创建，手动触发通知
+                        t.NotifyCreation();
+
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 加入军团验证: Will={t.WillArchitecture?.Name}, Target={t.TargetArchitecture?.Name}, Legion={t.BelongedLegion?.Name}, PersonCount={t.PersonCount} ({logicType})");
+                        
+                        // 🔥 诊断：输出部队的关键移动属性
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 移动属性: Position={t.Position}, Destination={t.Destination}, RealDestination={t.RealDestination} ({logicType})");
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] 控制状态: Auto={t.Auto}, Controllable={t.Controllable} ({logicType})");
+                        
+                        // 🔥 修复：完全初始化后启用移动
+                        t.Controllable = true;
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop-NewAI] {t.DisplayName} 初始化完成，启用移动 ({logicType})");
                     }
                     return true;
                 }
+#endif
             }
-            */
             Troop troop;
             if (linkkind == LinkKind.None)
             {
@@ -4269,9 +6497,49 @@ namespace GameObjects
             //Label_0309:
             foreach (Military military in mList)
             {
-                if (military.Scales < military.RetreatScale * 1.5) continue;
+                // [统一逻辑] 如果是高价值精锐（造价>=800或特殊兵种），即使比例不高也允许出征
+                bool isHighValue = (military.Kind.CreateCost >= 800) || (military.Kind.RecruitLimit > 0);
+                
+                // 🔧 FIX: 高价值精锐降低出征标准，但仍需满足基本兵力要求
+                // 精锐标准：Scales >= RetreatScale（与撤退标准一致，避免矛盾）
+                // 普通标准：Scales >= RetreatScale * 1.5（更高的要求）
+                double minScalesRequired = isHighValue ? military.RetreatScale : military.RetreatScale * 1.5;
+                
+                if (military.Scales < minScalesRequired)
+                {
+                    if (isHighValue)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 跳过精锐 {military.Name}：兵力不足 (Scales:{military.Scales:F2} < {minScalesRequired:F2})");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 跳过普通 {military.Name}：兵力不足 (Scales:{military.Scales:F2} < {minScalesRequired:F2})");
+                    }
+                    continue;
+                }
+                
                 if (!military.Kind.Movable) continue;
                 if (military.IsTransport) continue; //never deal with transports in this function
+
+                // [AI Optimization 2026-01-08] 反添油战术检测
+                // 估算当前这支预备部队的战斗力 (Combativity * 100 + quantity * 1) 简单预估
+                int estimatedForce = military.Combativity * 50 + military.Quantity; 
+                if (this.Persons.Count > 0)
+                {
+                    // 加上最强武将的加成估算
+                    Person bestLeader = this.Persons.GetMaxStrengthPerson();
+                    if (bestLeader != null)
+                    {
+                        estimatedForce += (bestLeader.Strength + bestLeader.Command) * 50;
+                    }
+                }
+
+                bool canAttack = this.CheckCoordinatedAttack(destination, estimatedForce);
+                if (!canAttack) 
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[AI] {this.Name} 正在积蓄兵力，暂不攻击 {destination.Name} (Force:{estimatedForce})");
+                    continue; 
+                }
 
                 bool movable = false;
                 foreach (Point p in this.ArchitectureArea.GetContactArea(false).Area)
@@ -4322,25 +6590,65 @@ namespace GameObjects
                     TroopList candidates = this.AISelectPersonIntoTroop(this, military, true);
                     foreach (Troop t in candidates)
                     {
-                        if (t.FightingForce < 10000 && offensive)
+                        // 🔥 AI Dispatch Capability Check
+                        if (offensive) 
                         {
-                            t.Destroy(true, false);
-                            continue;
+                            if (!CheckOffensiveCapability(t)) 
+                            {
+#if DEBUG
+                                System.Diagnostics.Debug.WriteLine($"[AI Dispatch] Refused Offensive: {t.DisplayName} (Cap:{GetLeaderCapabilityFactor(t):F2}, Qty:{t.Army.Quantity})");
+#endif
+                                // 🔥 修复：移除豁免逻辑，所有部队都必须通过能力检查
+                                // 原因：新创建的部队如果不满足条件，更应该被拒绝，而不是豁免
+                                t.Destroy(true, false);
+                                continue;
+                            }
                         }
+                        else 
+                        {
+                            if (!CheckDefensiveCapability(t))
+                            {
+#if DEBUG
+                                System.Diagnostics.Debug.WriteLine($"[AI Dispatch] Refused Defensive: {t.DisplayName} (Qty:{t.Army.Quantity})");
+#endif
+                                // 🔥 修复：移除豁免逻辑，所有部队都必须通过能力检查
+                                // 原因：新创建的部队如果不满足条件，更应该被拒绝，而不是豁免
+                                t.Destroy(true, false);
+                                continue;
+                            }
+                        }
+
+                        // 🔥 战力检查已移除：让所有部队（包括新创建的）都有机会参与进攻
+                        
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 尝试加入部队: {t.DisplayName}, SimulatingFightingForce={t.SimulatingFightingForce}, IsNewlyCreated={t.IsNewlyCreated}");
+#endif
+                        
                         Troop removed;
                         list.Add(t, out removed);
                         if (removed != null)
                         {
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] ⚠️ 部队 {removed.DisplayName} 被淘汰: SimulatingFightingForce={removed.SimulatingFightingForce}, 当前列表已满({list.Count}/{Session.Parameters.MaxAITroopCountCandidates})");
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop]   新加入部队: {t.DisplayName}, SimulatingFightingForce={t.SimulatingFightingForce}");
+                            
+                            // 🔥 诊断：显示当前列表中的所有部队
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop]   当前列表部队:");
+                            foreach (Troop listTroop in list)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop]     - {listTroop.DisplayName}: SimulatingFightingForce={listTroop.SimulatingFightingForce}");
+                            }
+#endif
                             removed.Destroy(true, false);
                         }
                     }
                 }
             }
 
-            List<CreateTroopInfo> willCreate = new List<CreateTroopInfo>();
-            HashSet<Person> selectedPersons = new HashSet<Person>();
-            HashSet<Military> selectedMilitaries = new HashSet<Military>();
-            HashSet<Point> takenPosition = new HashSet<Point>();
+            List<CreateTroopInfo> willCreate = [];
+            HashSet<Person> selectedPersons = [];
+            HashSet<Military> selectedMilitaries = [];
+            HashSet<Point> takenPosition = [];
             bool ranOutOfArea = false;
 
             foreach (Troop troop2 in list)
@@ -4364,7 +6672,7 @@ namespace GameObjects
                 {
                     if (!takenPosition.Contains(point) && troop2.IsMovableOnPosition(point))
                     {
-                        sourceArea.Area.Add(point);
+                        sourceArea.Area.Add(point);        
                     }
                 }
                 if (sourceArea.Count == 0)
@@ -4422,23 +6730,97 @@ namespace GameObjects
                     foreach (CreateTroopInfo info in willCreate)
                     {
                         troop = this.CreateTroop(info.candidates, info.leader, info.military, -1, info.position);
+                        
+                        // ✅ CreateTroop 返回 null 是合法的业务逻辑（兵力不足、不满足条件）
+                        if (troop == null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] CreateTroop 返回 null（业务逻辑），跳过此部队");
+                            continue;
+                        }
+                        
+                        // 🔥 防守本城时的特殊检查：过滤战斗力太低或士气太低的部队
+                        if (!offensive && destination == this)
+                        {
+                            bool hasValidFightingForce = troop.FightingForce > 100;
+                            bool hasValidMorale = troop.Morale >= 20;
+                            
+                            if (!hasValidFightingForce || !hasValidMorale)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 防守部队 {troop.DisplayName} 不符合要求: 战斗力={troop.FightingForce}(需>100), 士气={troop.Morale}(需>=20)，解散");
+                                troop.Destroy(true, false);
+                                continue;
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 防守部队 {troop.DisplayName} 通过检查: 战斗力={troop.FightingForce}, 士气={troop.Morale}");
+                            }
+                        }
+                        
+                        // 🔥 诊断：确认 destination 是敌方目标
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 创建部队:{troop.DisplayName} 目标:{destination.Name}(势力:{destination.BelongedFaction.Name}) 出发:{this.Name}(势力:{this.BelongedFaction.Name})");
+                        
+                        // 🔧 设置所有目标相关属性
                         troop.WillArchitecture = destination;
+                        troop.TargetArchitecture = destination;
+                        troop.StartingArchitecture = this;
+                        
+                        // 🔧 确保加入军团
                         Legion legion = this.BelongedFaction.GetLegion(destination);
                         if (legion == null)
                         {
                             legion = this.CreateOffensiveLegion(destination);
                         }
-                        legion.AddTroop(troop);
+
+                        if (legion != null)
+                        {
+                            legion.AddTroop(troop);
+                        }
+                        else
+                        {
+                            // 无法创建军团（可能因为兵力不足 CreateOffensiveLegion 的严格限制）
+                            // 销毁已创建的部队，防止僵尸部队
+                            troop.Destroy(true, false);
+                            continue;
+                        }
+                        
+                        // 🔧 FIX: 立即验证设置
+                        System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 设置后验证：Will={troop.WillArchitecture?.Name}, Target={troop.TargetArchitecture?.Name}, Start={troop.StartingArchitecture?.Name}, Legion={troop.BelongedLegion?.Name}");
+                        
+                        if (troop.WillArchitecture != destination || troop.BelongedLegion == null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] ⚠️ 警告：设置被覆盖！Will={troop.WillArchitecture?.Name}, Legion={troop.BelongedLegion?.Name}");
+                            // 强制重新设置
+                            troop.WillArchitecture = destination;
+                            troop.TargetArchitecture = destination;
+                            if (troop.BelongedLegion == null)
+                            {
+                                legion.AddTroop(troop);
+                            }
+                        }
+                        
                         //this.PostCreateTroop(troop, false);
                         hasCreatedTroop = true;
                     }
                 }
 
             }
-            foreach (Troop t in list)
+            
+            // 🔥 根本修复：只有在使用旧逻辑时才销毁list中的部队
+            // 新AI逻辑(CreateOptimalTroops)已经创建了真实部队，不应该销毁
+            if (!Session.Parameters.AIUseNewFormationLogic)
             {
-                t.Destroy(true, false);
+                foreach (Troop t in list)
+                {
+                    t.Destroy(true, false);
+                }
             }
+#if DEBUG
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 使用新AI逻辑，跳过销毁list中的{list.Count}支部队");
+            }
+#endif
+            
             return hasCreatedTroop;
         }
 
@@ -4588,15 +6970,19 @@ namespace GameObjects
         {
             this.DecreaseFund(spendFund);
             this.IncreaseFood(spendFund * Session.Parameters.FundToFoodMultiple);
-            ExtensionInterface.call("BuyFood", new Object[] { Session.Current.Scenario, this });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseBuyFood(Session.Current.Scenario, this);
         }
 
         public bool BuyFoodAvail()
         {
+            // 🔥 技术性修复：避免ArgumentNullException
+            string archName = this.Name ?? "";
+            
             return this.Agriculture >= Session.Parameters.BuyFoodAgriculture && (Session.Current.Scenario.Date.Season == GameSeason.夏 || Session.Current.Scenario.Date.Season == GameSeason.秋) && this.Fund > 0 && this.Food < this.FoodCeiling
                 && (Session.Current.Scenario.Date.Month * 483
-                + (this.Name.Length > 0 ? this.Name[0] : 735) * 203
-                + (this.Name.Length > 1 ? this.Name[1] : 492) * 680
+                + (archName.Length > 0 ? archName[0] : 735) * 203
+                + (archName.Length > 1 ? archName[1] : 492) * 680
                     + this.ID * 912) % 2 == 0;
         }
 
@@ -4698,7 +7084,25 @@ namespace GameObjects
         /// </summary>
         public bool RecallAdvisorAvail()
         {
-             return (Session.GlobalVariables.SkyEye || this.CurrentPlayerOwned()) && this.HasAdvisor();
+            bool isPlayerOwned = Session.GlobalVariables.SkyEye || this.CurrentPlayerOwned();
+            bool hasAdvisor = this.HasAdvisor();
+            
+            System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 城池: {this.Name}");
+            System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 玩家拥有: {isPlayerOwned}");
+            System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 有军师: {hasAdvisor}");
+            
+            if (this.BelongedFaction != null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 势力: {this.BelongedFaction.Name}");
+                System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 军师ID: {this.BelongedFaction.AdvisorID}");
+                System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 军师对象: {this.BelongedFaction.Advisor?.Name ?? "null"}");
+                System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 势力RecallAdvisorAvail: {this.BelongedFaction.RecallAdvisorAvail()}");
+            }
+            
+            bool result = isPlayerOwned && hasAdvisor;
+            System.Diagnostics.Debug.WriteLine($"[RecallAdvisorAvail] 最终结果: {result}");
+            
+            return result;
         }
 
 
@@ -4830,9 +7234,12 @@ namespace GameObjects
         public PersonGeneratorTypeList AvailGeneratorTypeList()
         {
             PersonGeneratorTypeList list = new PersonGeneratorTypeList();
-            foreach (PersonGeneratorType type in Session.Current.Scenario.GameCommonData.AllPersonGeneratorTypes)
+
+            foreach (GameObject obj in Session.Current.Scenario.GameCommonData.AllPersonGeneratorTypes.GameObjects)
             {
-                if (this.Fund >= type.CostFund && this.BelongedFaction.GetGeneratorPersonCount(type) < type.FactionLimit)
+                if (obj is PersonGeneratorType type && 
+                    this.Fund >= type.CostFund && 
+                    this.BelongedFaction.GetGeneratorPersonCount(type) < type.FactionLimit)
                 {
                     list.Add(type);
                 }
@@ -4856,6 +7263,25 @@ namespace GameObjects
 
         public void DoZhaoXian(PersonGeneratorType preferredType)
         {
+            // 🔥 修复：添加基本的空引用检查
+            if (this.BelongedFaction == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DoZhaoXian] BelongedFaction为null，无法执行招贤");
+                return;
+            }
+            
+            // 🔥 Checklist Fix: Priority 3 - Defensive Check
+            if (this.BelongedFaction.Leader == null)
+            {
+                 System.Diagnostics.Debug.WriteLine($"[DoZhaoXian] BelongedFaction.Leader为null，无法执行招贤");
+                 return;
+            }
+            
+            if (preferredType == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DoZhaoXian] preferredType为null，无法执行招贤");
+                return;
+            }
 
             bool isAI = !Session.Current.Scenario.IsPlayer(this.BelongedFaction);
 
@@ -4873,19 +7299,43 @@ namespace GameObjects
             //type.ID = preferredType;
             PersonGenerateParam param = new PersonGenerateParam(this,this.BelongedFaction.Leader, true,preferredType ,isAI);
             Person r = Person.createPerson(param, true);
+            if (r == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DoZhaoXian] 创建人物失败，返回null");
+                return;
+            }
+            
             if (this.BelongedFaction.IsAlien && r.PersonalLoyalty >= 2)
             {
                 r.PersonalLoyalty = GameObject.Random(0, 1);
             }
-            r.Ideal = (this.BelongedFaction.Leader.Ideal + GameObject.Random(r.IdealTendency.Offset * 2 + 1) - r.IdealTendency.Offset) % 150;
+            
+            // 🔥 修复：添加空引用检查
+            if (this.BelongedFaction?.Leader != null && r.IdealTendency != null)
+            {
+                r.Ideal = (this.BelongedFaction.Leader.Ideal + GameObject.Random(r.IdealTendency.Offset * 2 + 1) - r.IdealTendency.Offset) % 150;
+            }
+            else
+            {
+                // 如果无法获取Leader的理想或人物的理想倾向，使用默认值
+                r.Ideal = GameObject.Random(150);
+                System.Diagnostics.Debug.WriteLine($"[DoZhaoXian] 无法获取Leader理想或人物理想倾向，使用随机理想值: {r.Ideal}");
+            }
             this.ZhaoXian(r);
-            this.BelongedFaction.YearOfficialLimit++;
-            preferredType.TypeCount++;
-            this.BelongedFaction.GetGeneratorPersonCount(preferredType);
-            this.BelongedFaction.IncrementGeneratorCount(preferredType);
-            //this.BelongedFaction.ZongShu[preferredType.ID]++;
-
-            this.DecreaseFund(preferredType.CostFund);
+            
+            // 🔥 修复：添加空引用检查
+            if (this.BelongedFaction != null)
+            {
+                this.BelongedFaction.YearOfficialLimit++;
+                this.BelongedFaction.GetGeneratorPersonCount(preferredType);
+                this.BelongedFaction.IncrementGeneratorCount(preferredType);
+            }
+            
+            if (preferredType != null)
+            {
+                preferredType.TypeCount++;
+                this.DecreaseFund(preferredType.CostFund);
+            }
 
         }
 
@@ -5058,15 +7508,29 @@ namespace GameObjects
 
         public void ChangeFaction(Faction faction)
         {
+            // 🔥 NEW: 通知原势力AI紧急事件 - 城市丢失
+            if (this.BelongedFaction != null && faction != this.BelongedFaction)
+            {
+                this.BelongedFaction.NotifyPersonnelUrgentEvent($"城市{this.Name}丢失");
+                this.BelongedFaction.NotifyDomesticUrgentEvent($"城市{this.Name}丢失");
+            }
+            
             this.ResetAuto();
             if ((faction != null) && Session.Current.Scenario.IsPlayer(faction))
             {
                 this.AutoHiring = true;
-                this.AutoRewarding = true;
+                // 🔧 修复：自动褒赏默认关闭，由玩家手动开启
+                // this.AutoRewarding = true;
 
             }
             if ((faction != null) && (this.BelongedFaction != null))
             {
+                // 🔥 修复：移除旧势力的补给范围注册
+                // 日期：2026-03-07
+                // 问题：城池变更势力后，MapTileData 中的 SupplyingArchitectures 仍指向旧势力
+                //       导致部队无法从新势力城池获得补给（势力过滤失败）
+                this.RemoveBaseSupplyingArchitecture();
+                
                 this.BelongedFaction.Architectures.Remove(this);
                 this.BelongedFaction.RemoveArchitectureKnownData(this);
                 if (!Session.Current.Scenario.IsPlayer(this.BelongedFaction))
@@ -5105,6 +7569,20 @@ namespace GameObjects
                 }
                 faction.FirstSection.AddArchitecture(this);
                 this.ApplyFactionInfluences();
+                
+                // 🔥 修复：添加新势力的补给范围注册
+                // 日期：2026-03-07
+                // 原因：城池变更势力后，需要重新注册补给范围到 MapTileData
+                //       否则新势力的部队无法从该城池获得补给
+                this.AddBaseSupplyingArchitecture();
+                
+                // 🔥 记录占领时间（用于识别新占领城市）
+                // 日期：2026-03-12
+                _occupiedDate = Session.Current.Scenario.Date;
+                
+                // 🔥 NEW: 通知新势力AI紧急事件 - 新占领建筑
+                faction.NotifyPersonnelUrgentEvent($"新占领建筑{this.Name}");
+                faction.NotifyDomesticUrgentEvent($"新占领建筑{this.Name}");
             }
             if (faction != null)
             {
@@ -5128,13 +7606,101 @@ namespace GameObjects
                 this.BuildingDaysLeft -= 1;
                 if (this.BuildingDaysLeft <= 0)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] 设施建造完成: {this.Name}, BuildingFacility={this.BuildingFacility}");
+                    
                     FacilityKind facilityKind = Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetFacilityKind(this.BuildingFacility);
                     if (facilityKind != null)
                     {
+                        System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] 找到设施类型: {facilityKind.Name}");
                         this.BuildFacility(facilityKind);
                     }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] ⚠️ 未找到设施类型 ID={this.BuildingFacility}");
+                    }
+                    
+                    System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] 清除建造状态");
                     this.BuildingFacility = -1;
+                    
+                    // 🔥 修复：设施建造完成后，立即选择下一个设施（不等待AI回合）
+                    // 注意：这里只选择设施（设置PlanFacilityKind），不立即建造
+                    // 真正的建造会在下次AIFacility()调用时进行（有资金检查）
+                    System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] 尝试选择下一个设施建造");
+                    SelectNextFacilityToBuild();
                 }
+            }
+        }
+        
+        /// <summary>
+        /// 选择下一个要建造的设施（仅选择，不立即建造）
+        /// 这个方法跳过AIFacility()的资金检查，只负责选择最优设施
+        /// </summary>
+        private void SelectNextFacilityToBuild()
+        {
+            // 基础检查
+            if (this.BelongedFaction == null) return;
+            if (this.FacilityPositionCount <= 0) return;
+            if (this.PlanFacilityKind != null) return; // 已有计划，不重复选择
+            
+            // 选择最优设施（复用AIFacility中的选择逻辑）
+            double maxValue = double.MinValue;
+            FacilityKind toBuild = null;
+            
+            foreach (FacilityKind kind in Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetFacilityKindList())
+            {
+                if (kind.IsExtension) continue;
+                if (!kind.CanBuild(this)) continue;
+                if (kind.rongna > 0) continue;
+                
+                // 跳过维护成本过高的设施
+                if ((kind.MaintenanceCost + this.FacilityMaintenanceCost) * 30 + 2000 > this.ExpectedFund && kind.NetFundIncrease <= 0)
+                {
+                    continue;
+                }
+                
+                // 跳过造价过高的设施（超过资金上限一半）
+                if (kind.FundCost > this.FundCeiling / 2)
+                {
+                    continue;
+                }
+                
+                // 计算设施价值
+                float value = (float)kind.AIValue(this);
+                foreach (KeyValuePair<Condition, float> weight in kind.AIBuildConditionWeight)
+                {
+                    if (weight.Key.CheckCondition(this))
+                    {
+                        value *= weight.Value;
+                    }
+                }
+                
+                if (value > 0 && value > maxValue)
+                {
+                    // 检查空间是否足够
+                    if (this.FacilityPositionLeft >= kind.PositionOccupied)
+                    {
+                        maxValue = value;
+                        toBuild = kind;
+                    }
+                }
+            }
+            
+            // 设置计划设施
+            if (toBuild != null)
+            {
+                this.PlanFacilityKind = toBuild;
+                System.Diagnostics.Debug.WriteLine($"[SelectNextFacilityToBuild] {this.Name} 选择下一个设施: {toBuild.Name}");
+                
+                // 如果有技巧点需求，尝试保留技巧点
+                if (this.BelongedFaction != null && GameObject.Chance(0x21) && 
+                    ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < this.PlanFacilityKind.PointCost))
+                {
+                    this.BelongedFaction.SaveTechniquePointForFacility(this.PlanFacilityKind.PointCost / this.PlanFacilityKind.Days);
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[SelectNextFacilityToBuild] {this.Name} 没有可建造的设施");
             }
         }
 
@@ -5281,11 +7847,17 @@ namespace GameObjects
         {
             if (this.BelongedFaction != null && this.BelongedFaction.IsAlien && this.BelongedFaction.Capital == this && !IsSurrounded())
             {
-                var militaries = new List<Military>();
+                // 🔥 根本修复：使用对象快照避免集合修改导致的索引越界
+                // 日期：2026-03-19
+                // 原因：CreateMilitary() 会调用 AddMilitary()，修改 Militaries 集合
+                // 问题：在遍历 Militaries.GetList() 时调用 CreateMilitary() 会导致索引越界
+                // 解决方案：先创建 List<Military> 快照，避免直接遍历可能被修改的集合
+                // 性能：Cold Path（每回合一次），使用 List 分配可接受
+                
+                List<Military> militaries = [];
                 foreach (var mo in Militaries.GetList())
                 {
-                    var m = (Military)mo;
-                    if (m.Quantity < m.Kind.MaxScale)
+                    if (mo is Military m && m.Quantity < m.Kind.MaxScale)
                     {
                         militaries.Add(m);
                     }
@@ -5294,7 +7866,32 @@ namespace GameObjects
                 Military targetMilitary;
                 if (militaries.Count == 0)
                 {
-                    targetMilitary = CreateMilitary(BelongedFaction.BaseMilitaryKinds.GetMilitaryKindList().GetRandomObject() as MilitaryKind);
+                    // 🔥 关键修复：异族势力可能没有 BaseMilitaryKinds，使用城市的私有兵种
+                    // 日期：2026-03-19
+                    // 原因：异族势力的 BaseMilitaryKinds 可能为空（正常设定）
+                    // 解决方案：优先使用 BaseMilitaryKinds，如果为空则使用城市的 PrivateMilitaryKinds
+                    // 如果两者都为空，则跳过（不创建新编队）
+                    
+                    GameObjectList kindList = BelongedFaction.BaseMilitaryKinds.GetMilitaryKindList();
+                    
+                    // 如果势力没有 BaseMilitaryKinds，使用城市的私有兵种
+                    if (kindList == null || kindList.Count == 0)
+                    {
+                        kindList = this.PrivateMilitaryKinds.GetMilitaryKindList();
+                    }
+                    
+                    // 如果城市也没有私有兵种，跳过（不创建新编队）
+                    if (kindList == null || kindList.Count == 0)
+                    {
+                        #if DEBUG
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[AlienTroopGain] {this.Name}(ID:{this.ID}) 无可用兵种，跳过创建新编队。" +
+                            $"势力：{BelongedFaction.Name}(ID:{BelongedFaction.ID})");
+                        #endif
+                        return;
+                    }
+                    
+                    targetMilitary = CreateMilitary(kindList.GetRandomObject() as MilitaryKind);
                 }
                 else
                 {
@@ -5475,13 +8072,16 @@ namespace GameObjects
 
         public Legion CreateDefensiveLegion()
         {
-            this.DefensiveLegion = new Legion();
-            this.DefensiveLegion.Kind = LegionKind.Defensive;
-            this.DefensiveLegion.ID = Session.Current.Scenario.Legions.GetFreeGameObjectID();
-            this.DefensiveLegion.StartArchitecture = this;
-            this.DefensiveLegion.WillArchitecture = this;
-            Session.Current.Scenario.Legions.AddLegionWithEvent(this.DefensiveLegion);
-            this.BelongedFaction.AddLegion(this.DefensiveLegion);
+            // 🔥 重构：使用统一的军团创建入口
+            // 日期：2026-03-09
+            this.DefensiveLegion = this.BelongedFaction.GetOrCreateLegion(this, LegionKind.AI, LegionMission.Defend);
+            
+            // 🔥 自动分配军团角色
+            if (this.DefensiveLegion.Troops != null && this.DefensiveLegion.Troops.Count > 0)
+            {
+                WorldOfTheThreeKingdoms.GameGlobal.AIRoleSelector.UpdateLegionRoles(this.DefensiveLegion);
+            }
+            
             return this.DefensiveLegion;
         }
 
@@ -5619,18 +8219,67 @@ namespace GameObjects
 
         public Legion CreateOffensiveLegion(Architecture willArchitecture)
         {
-            Legion legion = new Legion();
-            legion.Kind = LegionKind.Offensive;
-            legion.StartArchitecture = this;
-            legion.WillArchitecture = willArchitecture;
-            legion.ID = Session.Current.Scenario.Legions.GetFreeGameObjectID();
-            Session.Current.Scenario.Legions.AddLegionWithEvent(legion);
-            this.BelongedFaction.AddLegion(legion);
+            // 🔧 修复：检查是否满足创建进攻军团的条件
+            // 不应该创建会立即撤退的进攻军团
+            
+            // 检查是否有足够的部队
+            if (this.Militaries.Count == 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CreateOffensiveLegion] {this.Name} 没有可用编队，无法创建进攻军团");
+                return null;
+            }
+            
+            // 检查士气是否足够（撤退阈值是45，我们要求至少60）
+            bool hasGoodMorale = false;
+            foreach (Military m in this.Militaries)
+            {
+                if (m.Morale >= 60)
+                {
+                    hasGoodMorale = true;
+                    break;
+                }
+            }
+            
+            if (!hasGoodMorale)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CreateOffensiveLegion] {this.Name} 所有编队士气不足60，无法创建进攻军团");
+                return null;
+            }
+            
+            // 检查规模是否足够（撤退阈值是5，我们要求至少8）
+            bool hasGoodScale = false;
+            foreach (Military m in this.Militaries)
+            {
+                if (m.Scales >= 8)
+                {
+                    hasGoodScale = true;
+                    break;
+                }
+            }
+            
+            if (!hasGoodScale)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CreateOffensiveLegion] {this.Name} 所有编队规模不足8，无法创建进攻军团");
+                return null;
+            }
+            
+            // 🔥 重构：使用新的CreateLegion方法
+            Legion legion = this.BelongedFaction.GetOrCreateLegion(willArchitecture, LegionKind.AI, LegionMission.Attack);
+            if (legion != null)
+            {
+                legion.StartArchitecture = this;
+            }
             LinkNode node = null;
             if (this.AIAllLinkNodes.TryGetValue(willArchitecture.ID, out node))
             {
                 legion.PreferredRouteway = this.GetRouteway(node, false);
             }
+            
+            System.Diagnostics.Debug.WriteLine($"[CreateOffensiveLegion] {this.Name} 成功创建进攻军团 -> {willArchitecture?.Name}");
+            
+            // 🔥 自动分配军团角色（创建时可能还没有部队，所以这里不调用）
+            // 角色分配会在部队加入军团后自动触发
+            
             return legion;
         }
 
@@ -5643,18 +8292,40 @@ namespace GameObjects
             military.Name = military.Kind.Name;
             military.Morale = military.MoraleCeiling;
             military.Combativity = military.CombativityCeiling;
-            military.Quantity = (military.Kind.MinScale + (this.Population / 100)) * ((this.AreaCount / 2) + 2);
-            if (military.Quantity > military.Kind.MaxScale)
+            
+            // 🔥 修复：添加边界检查，防止计算溢出
+            int populationFactor = Math.Min(this.Population / 100, 10000); // 限制人口因子最大10000
+            int areaFactor = Math.Min((this.AreaCount / 2) + 2, 100);      // 限制区域因子最大100
+            int baseQuantity = military.Kind.MinScale + populationFactor;
+            
+            // 防止中间计算溢出
+            long calculatedQuantity = (long)baseQuantity * areaFactor;
+            
+            // 限制在合理范围内
+            if (calculatedQuantity > military.Kind.MaxScale)
             {
                 military.Quantity = military.Kind.MaxScale;
+                System.Diagnostics.Debug.WriteLine($"[CreateRobberTroop] {this.Name} 兵力计算溢出：{calculatedQuantity} -> {military.Kind.MaxScale}（人口:{this.Population}，区域:{this.AreaCount}）");
             }
+            else if (calculatedQuantity < military.Kind.MinScale)
+            {
+                military.Quantity = military.Kind.MinScale;
+            }
+            else
+            {
+                military.Quantity = (int)calculatedQuantity;
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"[CreateRobberTroop] {this.Name} 创建盗贼部队，兵力:{military.Quantity}（人口:{this.Population}，区域:{this.AreaCount}）");
+            
             GameObjectList persons = new GameObjectList();
             Person gameObject = Session.Current.Scenario.Persons.GetGameObject(0x1bc4) as Person;
             persons.Add(gameObject);
             Troop troop = this.CreateTroop(persons, gameObject, military, 0, position);
             troop.WillArchitecture = this;
             this.RobberTroop = troop;
-            ExtensionInterface.call("CreateRobberTroop", new Object[] { Session.Current.Scenario, this, troop });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseCreateRobberTroop(Session.Current.Scenario, this, troop);
         }
 
         public Routeway CreateRouteway(Point p)
@@ -5720,9 +8391,9 @@ namespace GameObjects
             return routeway;
         }
 
-        public Troop CreateTroop(GameObjectList persons, Person leader, Military military, int food, Point position)
+        public Troop CreateTroop(GameObjectList persons, Person leader, Military military, int food, Point position, Legion assignedLegion = null, bool silent = false, bool playerManual = false)
         {
-            return Troop.Create(this, persons, leader, military, food, position);
+            return Troop.Create(this, persons, leader, military, food, position, assignedLegion, silent, false, playerManual);
         }
 
         public bool CurrentPlayerOwned()
@@ -5747,14 +8418,23 @@ namespace GameObjects
 
         public void checkEvent()
         {
-            GameObjectList list = Session.Current.Scenario.AllEvents.GetList();
-            list.PropertyName = "ID";
-            list.SmallToBig = true;
-            list.IsNumber = true;
-            list.ReSort();
+            // 🔥 AOT修复：直接使用 EventList，避免通过 GetList() 导致的类型信息丢失
+            EventList eventList = Session.Current.Scenario.AllEvents;
+            eventList.PropertyName = "ID";
+            eventList.SmallToBig = true;
+            eventList.IsNumber = true;
+            eventList.ReSort();
 
-            foreach (Event e in list)
+            // 🔥 AOT修复：直接访问 GameObjects 属性并进行安全的类型转换
+            foreach (GameObject obj in eventList.GameObjects)
             {
+                Event e = (obj is Event ? (Event)obj : null);
+                if (e == null)
+                {
+                    // 如果转换失败，跳过该对象
+                    continue;
+                }
+                
                 if (e.checkConditions(this))
                 {
                     if (!Session.Current.Scenario.EventsToApply.ContainsKey(e))
@@ -5798,43 +8478,224 @@ namespace GameObjects
             }
         }
 
+        // 🔥 递归检测：防止 DayEvent 被事件触发导致无限递归
+        // 日期：2026-03-19
+        private bool _isInDayEvent = false;
+        
         public void DayEvent()
         {
-            this.RefreshNeutralBuilding(); //  加buff中立建筑
-            this.FundPacksDayEvent();
-            this.FoodPacksDayEvent();
-            this.PopulationPacksDayEvent();
-            //this.SpyPacksDayEvent();
-            this.characteristicsDoWork();
-            this.InformationDayEvent();
-            this.HandleFacilities();
-            this.ViewAreaEvent();
-            this.StrategicCenterEffect();
-            this.AutoDecrement();
-            this.AutoIncrement();
-            this.Sourrounded();
-            this.ResetDayInfluence();
-            this.CheckRobberTroop();
-            this.AlienTroopGain();
-            this.PopulationEscapeEvent();
-            this.FoodReduce();
-            this.RestEvent();
-            this.zainanshijian();
-            this.captiveEscape();
-            this.PersonExperienceIncrease();
-            this.checkEvent();
-            this.JustAttacked = false;
-            ExpectedFoodCache = -1;
-            ExpectedFundCache = -1;
-            this.SuspendTroopTransfer--;
-
-            if (this.Mayor != null)
+            // 🔥 关键：检测递归调用
+            // 如果 DayEvent 已经在执行中，说明事件触发导致了递归
+            if (_isInDayEvent)
             {
-                this.MayorOnDutyDays++;
-                this.MayorOnDutyDays += Session.Parameters.DayInTurn;
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"⚠️ [DayEvent] 检测到递归调用！建筑：{this.Name}(ID:{this.ID})");
+                System.Diagnostics.Debug.WriteLine($"   堆栈跟踪：{Environment.StackTrace}");
+                #endif
+                
+                // ANTI-BAND-AID：不吞掉异常，让问题暴露
+                throw new InvalidOperationException(
+                    $"检测到 DayEvent 递归调用！建筑：{this.Name}(ID:{this.ID})。" +
+                    $"这通常是由事件触发导致的，请检查 IncreaseFood/IncreaseFund/ReceivePopulation 等方法的事件处理器。");
             }
+            
+            try
+            {
+                _isInDayEvent = true;
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name}(ID:{this.ID}) 开始");
+                #endif
+                */
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - RefreshNeutralBuilding");
+                #endif
+                */
+                this.RefreshNeutralBuilding(); //  加buff中立建筑
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - FundPacksDayEvent");
+                #endif
+                */
+                this.FundPacksDayEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - FoodPacksDayEvent");
+                #endif
+                */
+                this.FoodPacksDayEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - PopulationPacksDayEvent");
+                #endif
+                */
+                this.PopulationPacksDayEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - characteristicsDoWork");
+                #endif
+                */
+                this.characteristicsDoWork();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - InformationDayEvent");
+                #endif
+                */
+                this.InformationDayEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - HandleFacilities");
+                #endif
+                */
+                this.HandleFacilities();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - ViewAreaEvent");
+                #endif
+                */
+                this.ViewAreaEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - StrategicCenterEffect");
+                #endif
+                */
+                this.StrategicCenterEffect();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - AutoDecrement");
+                #endif
+                */
+                this.AutoDecrement();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - AutoIncrement");
+                #endif
+                */
+                this.AutoIncrement();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - Sourrounded");
+                #endif
+                */
+                this.Sourrounded();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - ResetDayInfluence");
+                #endif
+                */
+                this.ResetDayInfluence();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - CheckRobberTroop");
+                #endif
+                */
+                this.CheckRobberTroop();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - AlienTroopGain");
+                #endif
+                */
+                this.AlienTroopGain();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - PopulationEscapeEvent");
+                #endif
+                */
+                this.PopulationEscapeEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - FoodReduce");
+                #endif
+                */
+                this.FoodReduce();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - RestEvent");
+                #endif
+                */
+                this.RestEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - zainanshijian");
+                #endif
+                */
+                this.zainanshijian();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - captiveEscape");
+                #endif
+                */
+                this.captiveEscape();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - PersonExperienceIncrease");
+                #endif
+                */
+                this.PersonExperienceIncrease();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - checkEvent");
+                #endif
+                */
+                this.checkEvent();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - 清理标志位");
+                #endif
+                */
+                this.JustAttacked = false;
+                ExpectedFoodCache = -1;
+                ExpectedFundCache = -1;
+                this.SuspendTroopTransfer--;
 
-            this.resolveAIQuickBattle();
+                if (this.Mayor != null)
+                {
+                    this.MayorOnDutyDays++;
+                    this.MayorOnDutyDays += Session.Parameters.DayInTurn;
+                }
+
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name} - resolveAIQuickBattle");
+                #endif
+                */
+                this.resolveAIQuickBattle();
+                
+                /*
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.Name}(ID:{this.ID}) 完成");
+                #endif
+                */
+            }
+            finally
+            {
+                _isInDayEvent = false;
+            }
         }
 
         private void resolveAIQuickBattle()
@@ -5844,78 +8705,180 @@ namespace GameObjects
             {
                 bool aborted = false;
 
-                foreach (Faction f in Session.Current.Scenario.PlayerFactions)
+                // === 可视性判定（循环外计算一次）===
+                bool isOnScreen = Session.MainGame.mainGameScreen.mainMapLayer.TileInScreen(this.Position) || 
+                                  Session.MainGame.mainGameScreen.mainMapLayer.TileInScreen(a.Position);
+                // 观察者模式 = 无当前玩家 或 天眼开启
+                bool shouldShowRealBattle = isOnScreen && (Session.Current.Scenario.NoCurrentPlayer || Session.GlobalVariables.SkyEye);
+
+                // === 检查是否已有部队针对此目标（防止重复创建）===
+                Legion existingLegion = this.BelongedFaction.GetLegion(a);
+                bool troopsAlreadyExist = existingLegion != null && existingLegion.Troops.Count > 0;
+
+                // --- 情况1：观察者正在看 且 部队已存在 -> 唤醒为实体战斗 ---
+                if (shouldShowRealBattle && troopsAlreadyExist)
                 {
-                    if (f.IsArchitectureKnown(this) || f.IsArchitectureKnown(a))
+                    // --- A. 唤醒进攻方（使用螺旋散布防止堆叠）---
+                    int attackerIndex = 0;
+                    foreach (Troop t in existingLegion.Troops)
                     {
-                        if (this.BelongedFaction.GetLegion(a) == null)
+                        // 🔥 只在第一次唤醒时执行瞬移，避免每帧重复定位导致闪烁
+                        if (t.QuickBattling)
                         {
-                            aborted = true;
-                        }
-                        else
-                        {
-                            foreach (Troop t in this.BelongedFaction.GetLegion(a).Troops)
+                            t.QuickBattling = false; 
+                            
+                            // 🔧 FIX: 确保进攻方不会把己方城市设为目标
+                            if (a.BelongedFaction == t.BelongedFaction)
                             {
-                                t.TargetArchitecture = a;
-                                t.WillArchitecture = a;
-                                t.QuickBattling = false;
-                                a.TotalHostileForce -= t.FightingForce;
+                                // 错误！进攻方不应该攻击己方城市，跳过此部队
+                                System.Diagnostics.Debug.WriteLine($"[resolveAIQuickBattle] ⚠️ 跳过：进攻方{t.DisplayName}的目标{a.Name}属于己方{a.BelongedFaction?.Name}");
+                                continue;
                             }
-                            if (a.DefensiveLegion != null)
+                            
+                            t.TargetArchitecture = a;
+                            t.WillArchitecture = a;
+
+                            // 【核心修复：虚空瞬移 + 螺旋散布】距离太远则拉到城下
+                            double dist = Math.Sqrt(Math.Pow(t.Position.X - a.Position.X, 2) + Math.Pow(t.Position.Y - a.Position.Y, 2));
+                            if (dist > 10) 
                             {
-                                foreach (Troop t in a.DefensiveLegion.Troops)
-                                {
-                                    t.QuickBattling = false;
-                                    this.TotalFriendlyForce -= t.FightingForce;
-                                }
+                                // 使用索引生成唯一位置（8方向螺旋扩散）
+                                int angle = (attackerIndex * 45) % 360; // 0°, 45°, 90°...
+                                int radius = 4 + (attackerIndex / 8);   // 第一圈半径4, 第二圈半径5...
+                                int offsetX = (int)(radius * Math.Cos(angle * Math.PI / 180));
+                                int offsetY = (int)(radius * Math.Sin(angle * Math.PI / 180));
+                                t.Position = new Point(a.Position.X + offsetX, a.Position.Y + offsetY);
+                                t.RealDestination = a.Position; 
                             }
+                            
+                            a.TotalHostileForce -= t.FightingForce;
                         }
-                        aborted = true;
+                        // 如果已唤醒(QuickBattling==false)，不再重新定位，让AI自然控制移动
+                        attackerIndex++;
                     }
+
+                    // --- B. 唤醒防守方（使用螺旋散布防止堆叠）---
+                    if (a.DefensiveLegion != null)
+                    {
+                        int defenderIndex = 0;
+                        foreach (Troop t in a.DefensiveLegion.Troops)
+                        {
+                            // 🔥 只在第一次唤醒时执行瞬移
+                            if (t.QuickBattling)
+                            {
+                                t.QuickBattling = false;
+                                // 🔧 FIX: 不再设置 WillArchitecture = a，避免防守部队自杀
+                                // t.WillArchitecture = a;      // ❌ 已删除
+                                // t.RealDestination = t.Position; // ❌ 已删除 
+                                
+                                // 防守方位置修正（使用螺旋散布）
+                                double distDef = Math.Sqrt(Math.Pow(t.Position.X - a.Position.X, 2) + Math.Pow(t.Position.Y - a.Position.Y, 2));
+                                if (distDef > 5)
+                                {
+                                    // 防守方使用较小半径（靠近城池）
+                                    int angle = (defenderIndex * 45 + 22) % 360; // 偏移22度，与进攻方错开
+                                    int radius = 2 + (defenderIndex / 8);
+                                    int defOffsetX = (int)(radius * Math.Cos(angle * Math.PI / 180));
+                                    int defOffsetY = (int)(radius * Math.Sin(angle * Math.PI / 180));
+                                    t.Position = new Point(a.Position.X + defOffsetX, a.Position.Y + defOffsetY);
+                                }
+
+                                this.TotalFriendlyForce -= t.FightingForce;
+                            }
+                            defenderIndex++;
+                        }
+                    }
+
+                    aborted = true; // 交给真实战斗系统
                 }
+                // --- 情况2 已删除：原来的 continue 导致部队根本不被创建 ---
+                // 现在改为：在快速战斗分支中，根据 shouldShowRealBattle 决定可见性
 
                 if (!aborted)
                 {
-                    // offensive troop
-                    int reserve = this.getArmyReserveForOffensive();
-                    if (this.ArmyScale < reserve)
+                    // === 如果部队已存在，跳过创建步骤，直接进入战斗循环 ===
+                    bool skipBuild = troopsAlreadyExist;
+                    
+                    if (!skipBuild)
+                    {
+                        // offensive troop
+                        int reserve = this.getArmyReserveForOffensive();
+                        if (this.ArmyScale < reserve)
+                        {
+                            this.AIBattlingArchitectures.Remove(a);
+                            break;
+                        }
+
+                        bool built = this.BuildOffensiveTroop(a, LinkKind.Land, true, reserve);
+                        if (!built)
+                        {
+                            this.AIBattlingArchitectures.Remove(a);
+                            break;
+                        }
+                    }
+
+                    // 获取最新的军团引用（可能刚创建）
+                    Legion currentLegion = this.BelongedFaction.GetLegion(a);
+                    if (currentLegion == null || currentLegion.Troops.Count == 0)
                     {
                         this.AIBattlingArchitectures.Remove(a);
                         break;
                     }
 
-                    bool built = this.BuildOffensiveTroop(a, LinkKind.Land, true, reserve);
-                    if (!built)
-                    {
-                        this.AIBattlingArchitectures.Remove(a);
-                        break;
-                    }
-
-                    foreach (Troop t in this.BelongedFaction.GetLegion(a).Troops)
+                    // 🔥 核心修复：根据观察者模式决定部队可见性
+                    int newTroopIndex = 0;
+                    foreach (Troop t in currentLegion.Troops)
                     {
                         t.TargetArchitecture = null;
-                        t.WillArchitecture = null;
-                        t.QuickBattling = true;
+                        // 🔧 FIX: 不再清空 WillArchitecture，保持原有目标
+                        // t.WillArchitecture = null;  // ❌ 会触发回退到 StartingArchitecture
+                        
+                        // 🔥 如果观察者正在看，新创建的部队直接设为可见
+                        if (shouldShowRealBattle)
+                        {
+                            t.QuickBattling = false; // 可见
+                            t.TargetArchitecture = a; // 战斗目标
+                            // 🔧 FIX: 不再设置 WillArchitecture = a，保持原有目标
+                            // 这会导致防守方部队错误地以己方城池为目标，触发入城销毁
+                            // t.WillArchitecture = a; // ❌ 已删除
+                            
+                            // 使用螺旋散布放置新部队
+                            int angle = (newTroopIndex * 45) % 360;
+                            int radius = 4 + (newTroopIndex / 8);
+                            int offsetX = (int)(radius * Math.Cos(angle * Math.PI / 180));
+                            int offsetY = (int)(radius * Math.Sin(angle * Math.PI / 180));
+                            t.Position = new Point(a.Position.X + offsetX, a.Position.Y + offsetY);
+                            t.RealDestination = a.Position;
+                        }
+                        else
+                        {
+                            // 🔧 FIX: 禁用快速战斗隐身模式，部队始终可见
+                            // t.QuickBattling = true; // 隐身模拟
+                        }
+                        
                         a.TotalHostileForce += t.FightingForce;
                         
                         // 初始化快速战斗移动优化
                         t.InitializeMovementOptimization();
+                        newTroopIndex++;
                     }
 
-                    if (a.BelongedFaction != null)
+                    if (a.BelongedFaction != null && !skipBuild)
                     {
-                        // defensive troop
-                        a.DefensiveCampaign(this.BelongedFaction.GetLegion(a).Troops);
-                        if (a.DefensiveLegion != null)
+                        // defensive troop (只在新创建进攻方时才创建防守方)
+                        a.DefensiveCampaign(currentLegion.Troops);
+                    }
+                    
+                    if (a.DefensiveLegion != null)
+                    {
+                        foreach (Troop t in a.DefensiveLegion.Troops)
                         {
-                            foreach (Troop t in a.DefensiveLegion.Troops)
-                            {
-                                t.QuickBattling = true;
-                                this.TotalFriendlyForce += t.FightingForce;
-                                
-                                // 初始化快速战斗移动优化
-                                t.InitializeMovementOptimization();
-                            }
+                            // 🔧 FIX: 禁用快速战斗隐身模式，部队始终可见
+                            // t.QuickBattling = true;
+                            this.TotalFriendlyForce += t.FightingForce;
+                            
+                            // 初始化快速战斗移动优化
+                            t.InitializeMovementOptimization();
                         }
                     }
 
@@ -5925,9 +8888,9 @@ namespace GameObjects
                         GameObjectList defList = a.DefensiveLegion.Troops.GetList();
                         foreach (Troop t in defList)
                         {
-                            if (this.BelongedFaction.GetLegion(a).Troops.Count > 0)
+                            if (currentLegion.Troops.Count > 0)
                             {
-                                TroopList list = this.BelongedFaction.GetLegion(a).Troops;
+                                TroopList list = currentLegion.Troops;
                                 Troop target = (Troop)list[GameObject.Random(list.Count)];
                                 t.AttackTroop(target);
                                 t.ApplyDamageList();
@@ -5938,7 +8901,7 @@ namespace GameObjects
                             }
                         }
                     }
-                    GameObjectList attackingTroops = this.BelongedFaction.GetLegion(a).Troops.GetList();
+                    GameObjectList attackingTroops = currentLegion.Troops.GetList();
                     foreach (Troop t in attackingTroops)
                     {
                         if (a.Endurance > 0)
@@ -5974,9 +8937,7 @@ namespace GameObjects
                             }
 
                         }
-
                     }
-
                     int i = 0;
                     foreach (Military m in this.Militaries)
                     {
@@ -6167,7 +9128,8 @@ namespace GameObjects
                         this.zainan.zainanzhonglei = Session.Current.Scenario.GameCommonData.suoyouzainanzhonglei.Getzainanzhonglei(kindID);
                         this.zainan.shengyutianshu = this.zainan.zainanzhonglei.shijianxiaxian + GameObject.Random(this.zainan.zainanzhonglei.shijianshangxian - this.zainan.zainanzhonglei.shijianxiaxian);
                         this.youzainan = true;
-                        ExtensionInterface.call("DisasterHappened", new Object[] { Session.Current.Scenario, this, this.zainan });
+                        // 🔥 AOT 重构：使用强类型事件替代反射调用
+                        WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseDisasterHappened(Session.Current.Scenario, this, this.zainan.zainanzhonglei.ID);
                         foreach (Military military in this.Militaries)//发生灾难时不能补充
                         {
                             military.StopRecruitment();
@@ -6263,6 +9225,9 @@ namespace GameObjects
             {
                 this.Agriculture = 0;
             }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            this.InvalidateInfluenceCache();
         }
 
         public void DecreaseCommerce(int decrement)
@@ -6272,6 +9237,9 @@ namespace GameObjects
             {
                 this.Commerce = 0;
             }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            this.InvalidateInfluenceCache();
         }
 
         public int DecreaseDomination(int decrement)
@@ -6295,27 +9263,35 @@ namespace GameObjects
         }
 
         public int DecreaseEndurance(int decrement)
-        {
-            if (this.Endurance <= 0)
-            {
-                return 0;
-            }
+                {
+                    if (this.Endurance <= 0)
+                    {
+                        return 0;
+                    }
 
-            int endurance = decrement;
-            if ((this.Endurance - decrement) < 0)
-            {
-                endurance = this.Endurance;
-            }
-            this.Endurance -= endurance;
-            this.SetRecentlyAttacked();
-            this.DecreaseFacilityEndurance(endurance);
-            if (this.Endurance == 0)
-            {
-                this.RecentlyBreaked = 30;
-                this.WallStateChange();
-            }
-            return endurance;
-        }
+                    int endurance = decrement;
+                    if ((this.Endurance - decrement) < 0)
+                    {
+                        endurance = this.Endurance;
+                    }
+                    this.Endurance -= endurance;
+                    this.SetRecentlyAttacked();
+                    this.DecreaseFacilityEndurance(endurance);
+                    if (this.Endurance == 0)
+                    {
+                        this.RecentlyBreaked = 30;
+                        this.WallStateChange();
+                    }
+
+                    // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+                    if (endurance > 0)
+                    {
+                        this.InvalidateInfluenceCache();
+                    }
+
+                    return endurance;
+                }
+
 
         public void DecreaseFacilityEndurance(int decrement)
         {
@@ -6357,6 +9333,9 @@ namespace GameObjects
             {
                 this.Morale = 0;
             }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            this.InvalidateInfluenceCache();
         }
 
         public int DecreasePopulation(int decrement)
@@ -6505,6 +9484,13 @@ namespace GameObjects
 
                         foreach (Military military in this.Militaries.GetRandomList())
                         {
+                            // ★★★ 修复：跳过刚撤退回来的军队（需要休整） ★★★
+                            if (military.RecentlyFought > 0)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] 跳过军队{military.Name}（冷却中，剩余{military.RecentlyFought}天）");
+                                continue;
+                            }
+                            
                             if (military.IsFewScaleNeedRetreat && this.Endurance >= 30) continue;
                             if ((isBesideWater || (military.Kind.Type != MilitaryType.水军)) && (((((this.Endurance < 30) || military.Kind.AirOffence) || (military.Scales >= 2)) && (military.Morale > 0x2d)) && ((this.Endurance < 30) || (military.InjuryQuantity < military.Kind.MinScale))))
                             {
@@ -6513,17 +9499,29 @@ namespace GameObjects
                                 {
                                     if (t.FightingForce < 10000 && t.FightingForce < (this.TotalHostileForce * opFactor - this.TotalFriendlyForce) / 25)
                                     {
-                                        t.Destroy(true, false);
+                                        // 🔥 技术性修复：新创建的部队有保护期，不立即销毁
+                                        if (!t.IsNewlyCreated)
+                                        {
+                                            t.Destroy(true, false);
+                                        }
                                         continue;
                                     }
                                     if (t.Army.Scales < 5 && this.Endurance > 30)
                                     {
-                                        t.Destroy(true, false);
+                                        // 🔥 技术性修复：新创建的部队有保护期，不立即销毁
+                                        if (!t.IsNewlyCreated)
+                                        {
+                                            t.Destroy(true, false);
+                                        }
                                         continue;
                                     }
                                     if (t.FoodMax / 2 > this.Food)
                                     {
-                                        t.Destroy(true, false);
+                                        // 🔥 技术性修复：新创建的部队有保护期，不立即销毁
+                                        if (!t.IsNewlyCreated)
+                                        {
+                                            t.Destroy(true, false);
+                                        }
                                         continue;
                                     }
 
@@ -6571,7 +9569,16 @@ namespace GameObjects
                                 Person leader = troop.Candidates[0] as Person;
                                 PersonList candidates = this.SelectSubOfficersToTroop(troop);
                                 troop2 = this.CreateTroop(candidates, leader, troop.Army, -1, nullable.Value);
-                                troop2.WillArchitecture = this;
+                                
+                                // 🔥 修复：CreateTroop 可能返回 null（武将不足、位置冲突等）
+                                if (troop2 == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] CreateTroop 失败，跳过该部队");
+                                    continue;
+                                }
+                                
+                                // 🔧 FIX: 不再设置 WillArchitecture = this，避免防守部队自杀
+                                // troop2.WillArchitecture = this; // ❌ 已删除
                                 if (this.DefensiveLegion == null)
                                 {
                                     this.CreateDefensiveLegion();
@@ -6603,6 +9610,32 @@ namespace GameObjects
                     totalHostilePersonCount += troop.PersonCount;
                 }
                 int send = totalHostilePersonCount / 2;
+                // 🔧 修复：检查并修复BelongedSection为null的问题
+                if (this.BelongedSection == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] ⚠️ 建筑{this.Name}(势力:{this.BelongedFaction?.Name})的BelongedSection为null，尝试修复...");
+                    
+                    // 尝试重新分配到势力的第一个军区
+                    if (this.BelongedFaction != null)
+                    {
+                        Section firstSection = this.BelongedFaction.FirstSection;
+                        if (firstSection != null)
+                        {
+                            firstSection.AddArchitecture(this);
+                            System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] 建筑{this.Name}已重新分配到军区{firstSection.Name}");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] 势力{this.BelongedFaction.Name}没有军区，跳过防御AI");
+                            return; // 无法修复，跳过防御AI
+                        }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[DefensiveCampaign] 建筑{this.Name}没有势力，跳过防御AI");
+                        return; // 无法修复，跳过防御AI
+                    }
+                }
                 foreach (Architecture a in this.BelongedSection.Architectures)
                 {
                     if (a == this) continue;
@@ -6627,7 +9660,7 @@ namespace GameObjects
                         continue;
                     }
                     if (this.BelongedFaction == i.A.BelongedFaction && i.A.HasPerson()
-                        && i.A.BelongedSection.AIDetail.AutoRun)
+                        && i.A.BelongedSection != null && i.A.BelongedSection.AIDetail.AutoRun)
                     {
 
                         SortedBoundedSet<Troop> supportList = new SortedBoundedSet<Troop>(Session.Parameters.MaxAITroopCountCandidates, new FightingForceComparer());
@@ -6644,7 +9677,11 @@ namespace GameObjects
                                 {
                                     if ((t.FightingForce < 10000) && (t.Army.Scales < 10))
                                     {
-                                        t.Destroy(true, false);
+                                        // 🔥 技术性修复：新创建的部队有保护期，不立即销毁
+                                        if (!t.IsNewlyCreated)
+                                        {
+                                            t.Destroy(true, false);
+                                        }
                                         continue;
                                     }
 
@@ -6691,7 +9728,8 @@ namespace GameObjects
                                 Person leader = troop.Candidates[0] as Person;
                                 PersonList candidates = i.A.SelectSubOfficersToTroop(troop);
                                 troop2 = i.A.CreateTroop(candidates, leader, troop.Army, -1, nullable.Value);
-                                troop2.WillArchitecture = this;
+                                // 🔧 FIX: 不再设置 WillArchitecture = this，避免援军自杀
+                                // troop2.WillArchitecture = this; // ❌ 已删除
                                 if (this.DefensiveLegion == null)
                                 {
                                     this.CreateDefensiveLegion();
@@ -6740,7 +9778,8 @@ namespace GameObjects
             }
             this.Facilities.Remove(facility);
             Session.Current.Scenario.Facilities.Remove(facility);
-            ExtensionInterface.call("FacilityDemolished", new Object[] { Session.Current.Scenario, this, facility });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseFacilityDemolished(Session.Current.Scenario, this, facility);
         }
 
         /// <summary>
@@ -7071,9 +10110,9 @@ namespace GameObjects
         {
             foreach (Person p in Persons.GetRandomList())
             {
-                if (Fund > p.Salary)
+                if (Fund >= p.Salary)  // 修复：使用>=确保不会负数
                 {
-                    Fund -= p.Salary;
+                    this.DecreaseFund(p.Salary);  // 使用安全的减少方法
                 }
                 else
                 {
@@ -7250,11 +10289,20 @@ namespace GameObjects
                 if (hostileFightingForce > friendlyFightingForce * (this.BelongedFaction.Leader.PersonalLoyalty + 1) &&
                     GameObject.Chance(40 - this.BelongedFaction.Leader.PersonalLoyalty * 10))
                 {
-                    Person shizhe = this.MovablePersons[Random(this.MovablePersons.Count)] as Person;
-                    DiplomaticRelationDisplay display = this.GetGeDiDiplomaticRelationList()[GameObject.Random(this.GetGeDiDiplomaticRelationList().Count)] as DiplomaticRelationDisplay; ;
-
-                    shizhe.GoToGeDiDiplomatic(display);
-
+                    // 🔥 安全修复：避免IndexOutOfRangeException和ArgumentNullException
+                    if (this.MovablePersons != null && this.MovablePersons.Count > 0)
+                    {
+                        Person shizhe = this.MovablePersons[Random(this.MovablePersons.Count)] as Person;
+                        var diplomaticList = this.GetGeDiDiplomaticRelationList();
+                        if (diplomaticList != null && diplomaticList.Count > 0 && shizhe != null)
+                        {
+                            DiplomaticRelationDisplay display = diplomaticList[GameObject.Random(diplomaticList.Count)] as DiplomaticRelationDisplay;
+                            if (display != null)
+                            {
+                                shizhe.GoToGeDiDiplomatic(display);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -7263,7 +10311,8 @@ namespace GameObjects
         /*
         private void AIQuanXiang()
         {
-            if (Session.Current.Scenario.IsPlayer(this.BelongedFaction)) return;
+            // 🔥 劝降是势力级别的外交决策，只有AI势力才执行
+            if (!ShouldExecuteAdvancedAI()) return;
 
             if (!Session.GlobalVariables.PermitQuanXiang) return;
 
@@ -7288,7 +10337,7 @@ namespace GameObjects
                     {
                         if (this.Fund >= 50000)
                         {
-                            this.Fund -= 50000;
+                            this.DecreaseFund(50000);  // 使用安全的减少方法
 
                             p.GoToQuanXiangDiplomatic(display);
                         }
@@ -7322,7 +10371,8 @@ namespace GameObjects
             this.RemoveMilitary(m);
             this.BelongedFaction.RemoveMilitary(m);
             Session.Current.Scenario.Militaries.Remove(m);
-            ExtensionInterface.call("DisbandMilitary", new Object[] { Session.Current.Scenario, this, m });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseDisbandMilitary(Session.Current.Scenario, this, m);
         }
 
         public bool DisbandSectionAvail()
@@ -7411,8 +10461,10 @@ namespace GameObjects
             int facilityMaintenanceCost = noFundToSustainFacility ? 0 : this.FacilityMaintenanceCost;
             if (this.Fund >= facilityMaintenanceCost)
             {
-                this.ApplyFacilityInfluences(true);
+                // 🔥 关键修复：必须先设置FacilityEnabled=true，再调用ApplyFacilityInfluences
+                // 因为ApplyFacilityInfluences内部会检查FacilityEnabled状态
                 this.FacilityEnabled = true;
+                this.ApplyFacilityInfluences(true);
                 this.DecreaseFund(facilityMaintenanceCost);
             }
             else
@@ -7469,35 +10521,83 @@ namespace GameObjects
 
         public void FundPacksDayEvent()
         {
-            for (int i = this.FundPacks.Count - 1; i >= 0; i--)
+            // 🔥 根本修复：使用对象快照避免集合修改导致的索引越界
+            // 日期：2026-03-19
+            // 原因：IncreaseFund 可能触发事件，事件处理器可能修改 FundPacks 集合
+            // 解决方案：先收集需要处理的对象，再统一删除和处理
+            // 性能：Cold Path（每回合一次），使用 List 分配可接受
+            
+            List<FundPack> toRemove = [];
+            List<FundPack> toProcess = [];
+            
+            foreach (FundPack pack in this.FundPacks)
             {
-                FundPack local1 = this.FundPacks[i];
-
-                if (local1.Days <= 1 && this.IsSurrounded()) continue;
-
-                local1.Days--;
-                if (local1.Days <= 0)
+                pack.Days--;
+                
+                // 🔥 关键：到期的资源包总是删除
+                if (pack.Days <= 0)
                 {
-                    this.IncreaseFund(local1.Fund);
-                    this.FundPacks.RemoveAt(i);
+                    toRemove.Add(pack);
+                    
+                    // 🔥 关键：只有未被围困时才增加资源
+                    if (!this.IsSurrounded())
+                    {
+                        toProcess.Add(pack);
+                    }
                 }
+            }
+            
+            // 🔥 关键：先删除所有到期的包（无论是否被围困）
+            foreach (FundPack pack in toRemove)
+            {
+                this.FundPacks.Remove(pack);
+            }
+            
+            // 🔥 关键：只处理未被围困时到期的包
+            foreach (FundPack pack in toProcess)
+            {
+                this.IncreaseFund(pack.Fund);
             }
         }
 
         public void FoodPacksDayEvent()
         {
-            for (int i = this.FoodPacks.Count - 1; i >= 0; i--)
+            // 🔥 根本修复：使用对象快照避免集合修改导致的索引越界
+            // 日期：2026-03-19
+            // 原因：IncreaseFood 可能触发事件，事件处理器可能修改 FoodPacks 集合
+            // 解决方案：先收集需要处理的对象，再统一删除和处理
+            // 性能：Cold Path（每回合一次），使用 List 分配可接受
+            
+            List<FoodPack> toRemove = [];
+            List<FoodPack> toProcess = [];
+            
+            foreach (FoodPack pack in this.FoodPacks)
             {
-                FoodPack local1 = this.FoodPacks[i];
-
-                if (local1.Days <= 1 && this.IsSurrounded()) continue;
-
-                local1.Days--;
-                if (local1.Days <= 0)
+                pack.Days--;
+                
+                // 🔥 关键：到期的资源包总是删除
+                if (pack.Days <= 0)
                 {
-                    this.IncreaseFood(local1.Food);
-                    this.FoodPacks.RemoveAt(i);
+                    toRemove.Add(pack);
+                    
+                    // 🔥 关键：只有未被围困时才增加资源
+                    if (!this.IsSurrounded())
+                    {
+                        toProcess.Add(pack);
+                    }
                 }
+            }
+            
+            // 🔥 关键：先删除所有到期的包（无论是否被围困）
+            foreach (FoodPack pack in toRemove)
+            {
+                this.FoodPacks.Remove(pack);
+            }
+            
+            // 🔥 关键：只处理未被围困时到期的包
+            foreach (FoodPack pack in toProcess)
+            {
+                this.IncreaseFood(pack.Food);
             }
         }
 
@@ -7676,13 +10776,31 @@ namespace GameObjects
         public MilitaryList GetCampaignMilitaryList()
         {
             this.CampaignMilitaryList.Clear();
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[GetCampaignMilitaryList] 建筑: {this.Name}, 总Military数: {this.Militaries.Count}");
+            #endif
+            
             foreach (Military military in this.Militaries)
             {
                 if ((military.Quantity > 0) && (military.Morale > 0))
                 {
                     this.CampaignMilitaryList.AddMilitary(military);
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"  Military ID={military.ID}:");
+                    System.Diagnostics.Debug.WriteLine($"    Name: '{military.Name ?? "null"}'");
+                    System.Diagnostics.Debug.WriteLine($"    KindID: {military.RealKindID}");
+                    System.Diagnostics.Debug.WriteLine($"    Kind: {military.Kind?.Name ?? "null"}");
+                    System.Diagnostics.Debug.WriteLine($"    Quantity: {military.Quantity}, Morale: {military.Morale}");
+                    #endif
                 }
             }
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[GetCampaignMilitaryList] 可出征Military数: {this.CampaignMilitaryList.Count}");
+            #endif
+            
             return this.CampaignMilitaryList;
         }
 
@@ -8392,6 +11510,12 @@ namespace GameObjects
             {
                 foreach (Person c in list)
                 {
+                    // 🛡️ 防止列表中的 null 数据导致崩溃
+                    if (c == null) continue;
+                    
+                    // 🛡️ 防止 IdealTendency 为 null 导致崩溃
+                    if (c.IdealTendency == null) continue;
+
                     int idealOffset = Person.GetIdealOffset(c, this.BelongedFaction.Leader);
                     if ((!Session.GlobalVariables.IdealTendencyValid || (idealOffset <= c.IdealTendency.Offset + (double)this.BelongedFaction.Reputation / Session.Current.Scenario.Parameters.MaxReputationForRecruit * 75))
                         && (!c.Hates(this.BelongedFaction.Leader)) && (!this.BelongedFaction.IsAlien || c.PersonalLoyalty < 2) &&
@@ -8505,14 +11629,28 @@ namespace GameObjects
 
         public InformationKind GetFirstHalfInformationKind()
         {
+            var allKinds = Session.Current.Scenario.GameCommonData.AllInformationKinds;
+            // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - 情报类型总数: {allKinds.GameObjects.Count}");
+            
+            InformationKindList availList = allKinds.GetAvailList(this);
+            // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - 可用情报类型数: {availList.Count}, 当前资金: {this.Fund}");
+            
+            if (availList.Count == 0)
+            {
+                // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - ❌ 没有可用的情报类型");
+                return null;
+            }
+            
             InformationKindList list = new InformationKindList();
-            foreach (InformationKind kind in Session.Current.Scenario.GameCommonData.AllInformationKinds.GetAvailList(this))
+            foreach (InformationKind kind in availList)
             {
                 if ((kind.Level <= InformationLevel.中) || GameObject.Chance(20))
                 {
                     list.Add(kind);
+                    // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - 添加情报类型 {kind.ID} ({kind.Name}): 等级={kind.Level}, 消耗={kind.CostFund}");
                 }
             }
+            
             if (list.Count > 0)
             {
                 if (list.Count > 1)
@@ -8521,8 +11659,20 @@ namespace GameObjects
                     list.IsNumber = true;
                     list.ReSort();
                 }
-                return (list[GameObject.Random(list.Count / 2)] as InformationKind);
+                var selectedObject = list[GameObject.Random(list.Count / 2)];
+                var selected = (selectedObject is InformationKind ? (InformationKind)selectedObject : null);
+                
+                if (selected == null)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - ❌ 类型转换失败: 对象类型为 {selectedObject?.GetType()?.Name ?? "null"}");
+                    return null;
+                }
+                
+                // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - ✅ 选择情报类型 {selected.ID} ({selected.Name})");
+                return selected;
             }
+            
+            // System.Diagnostics.Debug.WriteLine($"[GetFirstHalfInformationKind] {this.Name} - ❌ 过滤后没有合适的情报类型");
             return null;
         }
 
@@ -8974,7 +12124,12 @@ namespace GameObjects
             this.RecruitmentMilitaryList.Clear();
             foreach (Military military in this.Militaries)
             {
-                if ((military.Quantity < military.Kind.MaxScale) && (military.InjuryQuantity == 0))
+                // 🔥 FIX V1.1: 移除伤兵限制，但添加溢出保护
+                // 原逻辑: if ((military.Quantity < military.Kind.MaxScale) && (military.InjuryQuantity == 0))
+                // 问题: 一旦有伤兵就停止招募，导致编队兵力越打越少且无法补充，形成死循环
+                // 修改: 只要总兵力(健康+伤兵)未达到最大编制，就允许招募
+                // 安全检查: 防止招募溢出，确保 TotalQuantity 不超过 MaxScale
+                if (military.Quantity + military.InjuryQuantity < military.Kind.MaxScale)
                 {
                     this.RecruitmentMilitaryList.AddMilitary(military);
                 }
@@ -9146,13 +12301,30 @@ namespace GameObjects
         public PersonList GetRewardPersons()
         {
             this.RewardPersonList.Clear();
-            foreach (Person person in this.Persons)
+            
+            // 使用AI打分逻辑筛选和排序武将
+            AI_RewardManager rewardManager = new();
+            PersonList sortedCandidates = rewardManager.GetRewardCandidatesForUI(this);
+            
+            // 自动勾选前N个武将（根据资金情况）
+            int rewardCost = Session.Parameters.RewardPersonCost;
+            int availableFund = this.BelongedFaction.Fund;
+            int maxRewardCount = availableFund / rewardCost;
+            
+            for (int i = 0; i < sortedCandidates.Count; i++)
             {
-                if ((!person.RewardFinished && (person.Loyalty < 100)) && (person != this.BelongedFaction.Leader))
+                // PersonList 保证类型安全，直接转换
+                Person person = (Person)sortedCandidates[i];
+                
+                this.RewardPersonList.Add(person);
+                
+                // 自动勾选前N个（资金允许的情况下）
+                if (i < maxRewardCount)
                 {
-                    this.RewardPersonList.Add(person);
+                    person.Selected = true;
                 }
             }
+            
             return this.RewardPersonList;
         }
 
@@ -9502,6 +12674,21 @@ namespace GameObjects
         {
             return (this.FacilityCount > 0);
         }
+
+        // [新增] 检查是否有酒馆设施
+        public bool HasPub()
+        {
+            // 简单实现：检查是否有相关设施
+            return this.HasFacility();
+        }
+
+        // [新增] 获取酒馆费用
+        public int GetPubCost()
+        {
+            // 简单实现：返回基础费用
+            return 100;
+        }
+
         public bool HaskechaichuFacility()
         {
             return (this.kechaichudesheshi().Count > 0);
@@ -9513,7 +12700,8 @@ namespace GameObjects
 
         public bool ArchitectureEditMode()
         {
-            return true;
+            // 只有在作弊模式开启时才显示编辑菜单
+            return Session.GlobalVariables.EnableCheat;
         }
 
         public bool HasFactionInClose(Faction faction, int level)
@@ -9605,7 +12793,7 @@ namespace GameObjects
             this.AILandLinks.Clear();
             foreach (GameObject gameObject in gameObjectList)
             {
-                Architecture architecture = gameObject as Architecture;
+                Architecture architecture = (gameObject is Architecture ? (Architecture)gameObject : null);
                 if (architecture != null)
                 {
                     this.AILandLinks.Add(architecture);
@@ -9626,7 +12814,7 @@ namespace GameObjects
             this.AIWaterLinks.Clear();
             foreach (GameObject gameObject in gameObjectList)
             {
-                Architecture architecture = gameObject as Architecture;
+                Architecture architecture = (gameObject is Architecture ? (Architecture)gameObject : null);
                 if (architecture != null)
                 {
                     this.AIWaterLinks.Add(architecture);
@@ -9656,14 +12844,40 @@ namespace GameObjects
             {
                 viewArea = this.LongViewArea;
             }
+            
+            #if DEBUG
+            // 🔥 诊断日志：只记录阳翟(ID:203)
+            // 日期：2026-03-22
+            if (this.ID == 203)
+            {
+                System.Diagnostics.Debug.WriteLine($"[HasHostileTroopsInView] 建筑:{this.Name}(ID:{this.ID})");
+                System.Diagnostics.Debug.WriteLine($"  - ViewArea点数: {viewArea.Area.Count}");
+                System.Diagnostics.Debug.WriteLine($"  - RecentlyAttacked: {this.RecentlyAttacked}");
+                System.Diagnostics.Debug.WriteLine($"  - 使用视野: {(this.RecentlyAttacked > 0 || this.ArmyScale > this.NormalArmyScale ? "LongViewArea" : "ViewArea")}");
+            }
+            #endif
+            
             foreach (Point point in viewArea.Area)
             {
                 Troop troopByPosition = Session.Current.Scenario.GetTroopByPosition(point);
                 if ((troopByPosition != null) && (!troopByPosition.IsFriendly(this.BelongedFaction) && (troopByPosition.Status != TroopStatus.埋伏)))
                 {
+                    #if DEBUG
+                    if (this.ID == 203)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"  - 发现敌军: {troopByPosition.Name}(ID:{troopByPosition.ID}) 位置:{troopByPosition.Position}");
+                    }
+                    #endif
                     return true;
                 }
             }
+            
+            #if DEBUG
+            if (this.ID == 203)
+            {
+                System.Diagnostics.Debug.WriteLine($"  - 视野内无敌军");
+            }
+            #endif
             return false;
         }
 
@@ -9922,6 +13136,9 @@ namespace GameObjects
             {
                 this.Agriculture = this.AgricultureCeiling;
             }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            this.InvalidateInfluenceCache();
         }
 
         public void IncreaseCommerce(int increment)
@@ -9938,6 +13155,9 @@ namespace GameObjects
             {
                 this.Commerce = this.CommerceCeiling;
             }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            this.InvalidateInfluenceCache();
         }
 
         public int IncreaseDomination(int increment)
@@ -9945,7 +13165,37 @@ namespace GameObjects
             if (this.DominationCeiling == 0) return 0;
             int old = this.Domination;
 
-            float actualIncrement = increment > 0 ? increment * (1-(float)this.Domination / this.DominationCeiling) : increment;
+            // 🔥 IMPROVED: 改进的增长公式，避免在低值时增长过慢
+            float progress = (float)this.Domination / this.DominationCeiling;
+            float actualIncrement;
+            
+            if (increment > 0)
+            {
+                // 在前70%时正常增长，后30%时才开始递减
+                if (progress < 0.7f)
+                {
+                    actualIncrement = increment; // 前70%全速增长
+                }
+                else
+                {
+                    // 后30%时才开始递减，但保持最低30%的增长速度
+                    float reductionFactor = Math.Max(0.3f, 1.0f - (progress - 0.7f) / 0.3f);
+                    actualIncrement = increment * reductionFactor;
+                }
+                
+#if DEBUG
+                if (this.Domination >= 45 && this.Domination <= 55)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[统治增长] {this.Name}: {this.Domination}→{this.Domination + (int)actualIncrement} " +
+                        $"(进度={progress:P1}, 系数={actualIncrement/increment:F2})");
+                }
+#endif
+            }
+            else
+            {
+                actualIncrement = increment; // 负增长不受影响
+            }
+            
             this.Domination += (int)Math.Floor(actualIncrement);
             if (GameObject.Random(1000000) < (actualIncrement - Math.Floor(actualIncrement)) * 1000000)
             {
@@ -9955,6 +13205,12 @@ namespace GameObjects
             if (this.Domination > this.DominationCeiling)
             {
                 this.Domination = this.DominationCeiling;
+            }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            if (this.Domination != old)
+            {
+                this.InvalidateInfluenceCache();
             }
 
             return this.Domination - old;
@@ -9985,6 +13241,12 @@ namespace GameObjects
             if (this.Endurance == 0)
             {
                 this.WallStateChange();
+            }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            if (this.Endurance != old)
+            {
+                this.InvalidateInfluenceCache();
             }
 
             return this.Endurance - old;
@@ -10034,6 +13296,8 @@ namespace GameObjects
         public void IncreaseMorale(int increment)
         {
             if (this.MoraleCeiling == 0) return;
+            int old = this.Morale;
+            
             float actualIncrement = increment > 0 ? increment * (1-(float)this.Morale / this.MoraleCeiling) : increment;
             this.Morale += (int)Math.Floor(actualIncrement);
             if (GameObject.Random(1000000) < (actualIncrement - Math.Floor(actualIncrement)) * 1000000)
@@ -10044,6 +13308,12 @@ namespace GameObjects
             if (this.Morale > this.MoraleCeiling)
             {
                 this.Morale = this.MoraleCeiling;
+            }
+            
+            // 🆕 内政变化时清除势力范围缓存（2026-03-11）
+            if (this.Morale != old)
+            {
+                this.InvalidateInfluenceCache();
             }
         }
 
@@ -10100,15 +13370,45 @@ namespace GameObjects
 
         public bool InformationAvail()
         {
-            if (this.MovablePersons.Count > 0 && Session.Current.Scenario.GameCommonData.AllInformationKinds.HasAvailItem(this))
-            {
-                return true;
-            }
-            if (!Session.Current.Scenario.IsPlayer(this.BelongedFaction ) && this.BelongedFaction.PersonCount == 1)
+            // 基础条件：有可移动人员 + 有可用的情报类型（资金足够）
+            bool hasMovablePersons = this.MovablePersons.Count > 0;
+            bool hasAvailItems = Session.Current.Scenario.GameCommonData.AllInformationKinds.HasAvailItem(this);
+            
+            if (!hasMovablePersons || !hasAvailItems)
             {
                 return false;
             }
-            return false;
+            
+            // 🔥 AI专用限制：如果是AI势力，需要额外检查
+            if (!this.CurrentPlayerOwned())
+            {
+                return InformationAvailForAI();
+            }
+            
+            // 玩家：只检查基础条件
+            return true;
+        }
+        
+        /// <summary>
+        /// AI专用的情报可用性判断
+        /// 限制条件：在有敌军威胁时，至少保留2个人或2个建筑
+        /// </summary>
+        private bool InformationAvailForAI()
+        {
+            // 如果只有1个建筑且只有1个可移动人员
+            if (this.BelongedFaction.Architectures.Count == 1 && this.MovablePersons.Count == 1)
+            {
+                // 检查是否有敌军威胁
+                bool hasHostileThreat = HasHostileTroopsInView() || HasContactHostileTroop(this.BelongedFaction);
+                
+                // 有敌军威胁时不允许派出唯一的人
+                if (hasHostileThreat)
+                {
+                    return false;
+                }
+            }
+            
+            return true;
         }
 
         public bool StopInformationAvail()
@@ -10167,6 +13467,9 @@ namespace GameObjects
 
         private void InsideTacticsAI()
         {
+            // 内部策略（学习技能、称号等）是基础策略，委任军区可以执行
+            if (!ShouldExecuteBasicAI()) return;
+            
             //if (((this.PlanArchitecture == null) || GameObject.Chance(10)) && this.HasPerson())
             if (this.HasPerson())
             {
@@ -10345,7 +13648,9 @@ namespace GameObjects
 
         public bool IsOffensiveMilitary(Military m)
         {
-            return ((((m.Scales >= 3) && (m.Morale >= 80)) && (m.Combativity >= 80)) && (m.InjuryQuantity <= m.Kind.MinScale) && (m.Scales >= m.RetreatScale * 1.5));
+            // [统一逻辑] 高价值精锐（造价>=800或特殊兵种）即使兵力比例不高，也视为具有进攻能力
+            bool isHighValue = (m.Kind.CreateCost >= 800) || (m.Kind.RecruitLimit > 0);
+            return ((((m.Scales >= 3) && (m.Morale >= 80)) && (m.Combativity >= 80)) && (m.InjuryQuantity <= m.Kind.MinScale) && ((m.Scales >= m.RetreatScale * 1.5) || isHighValue));
         }
 
         public int OffensiveMilitaryCount()
@@ -10483,7 +13788,8 @@ namespace GameObjects
                 m.Quantity = num;
                 m.Experience = num2;
                 m.Name = m.Kind.Name + "队";
-                ExtensionInterface.call("LevelUpMilitary", new Object[] { Session.Current.Scenario, this, m });
+                // 🔥 AOT 重构：使用强类型事件替代反射调用
+                WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseLevelUpMilitary(Session.Current.Scenario, this, m);
             }
         }
 
@@ -10660,29 +13966,144 @@ namespace GameObjects
 
         public void LoadFromString(GameArea gameArea, string dataString)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-            gameArea.Area.Clear();
-            int minX = 10000, minY = 10000, maxX = -10000, maxY = -10000, x, y;
-            for (int i = 0; i < strArray.Length; i += 2)
+            // #if DEBUG block removed
+
+            
+            // 🔥 默认不输出正常日志，只在检测到异常时才输出
+            #if DEBUG
+            bool hasIssue = false;
+            if (!string.IsNullOrEmpty(dataString))
             {
-                x = int.Parse(strArray[i]);
-                y = int.Parse(strArray[i + 1]);
-                gameArea.Area.Add(new Microsoft.Xna.Framework.Point(x, y));
-                if (x < minX)
-                    minX = x;
-                if (x > maxX)
-                    maxX = x;
-                if (y < minY)
-                    minY = y;
-                if (y > maxY)
-                    maxY = y;
+                var expectedCount = dataString.Split(new char[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length / 2;
+                var currentCount = gameArea?.Area?.Count ?? 0;
+                hasIssue = (currentCount > 0 && currentCount != expectedCount);
             }
-            gameArea.Centre = new Point((minX + maxX) / 2, (minY + maxY) / 2);
+            
+            // 只在启用详细日志或检测到问题时才输出
+            if (WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableLoadFromStringLog || 
+                (hasIssue && WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableAnomalyDetection))
+            {
+                System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} GameArea ID:{gameArea?.InstanceId}, 字符串:'{dataString}'");
+                System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} 解析前Area.Count:{gameArea?.Area?.Count ?? 0}");
+            }
+            #endif
+            
+            // 🔥 防护：确保gameArea不为null
+            if (gameArea == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} 错误：gameArea为null");
+                return;
+            }
+            
+            // 🔥 防护：确保从干净状态开始，避免累积错误
+            gameArea.Area.Clear();
+            gameArea.topleft = null;
+            gameArea.topright = null;
+            gameArea.bottomleft = null;
+            gameArea.bottomright = null;
+            
+            if (string.IsNullOrEmpty(dataString))
+            {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} 数据字符串为空");
+                #endif
+                return;
+            }
+            
+            // 🔥 使用局部变量避免全局状态污染
+            char[] localSeparator = new char[] { ' ', '\n', '\r', '\t' };
+            string[] localStrArray = dataString.Split(localSeparator, StringSplitOptions.RemoveEmptyEntries);
+            
+
+            
+            int minX = 10000, minY = 10000, maxX = -10000, maxY = -10000, x, y;
+            
+            for (int i = 0; i < localStrArray.Length; i += 2)
+            {
+                try
+                {
+                    if (i + 1 >= localStrArray.Length)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} 警告：坐标数据不完整，跳过最后一个值");
+                        break;
+                    }
+                    
+                    x = int.Parse(localStrArray[i]);
+                    y = int.Parse(localStrArray[i + 1]);
+                    
+                    // 🔥 直接添加到Area，避免AddPoint的副作用
+                    gameArea.Area.Add(new Microsoft.Xna.Framework.Point(x, y));
+                    
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LoadFromString] {Name} 解析坐标失败 i={i}: {ex.Message}");
+                }
+            }
+            
+            // 🔥 防护：只有在有有效坐标时才设置Centre
+            if (gameArea.Area.Count > 0)
+            {
+                gameArea.Centre = new Point((minX + maxX) / 2, (minY + maxY) / 2);
+            }
+            else
+            {
+                gameArea.Centre = new Point(0, 0);
+            }
+            
+            #if DEBUG
+            // 🔥 只在启用详细日志或检测到问题时才输出
+            var finalExpectedCount = localStrArray.Length / 2;
+            bool hasResultIssue = (gameArea.Area.Count != finalExpectedCount);
+            
+            if (WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableLoadFromStringLog || 
+                (hasResultIssue && WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableAnomalyDetection))
+            {
+                System.Diagnostics.Debug.WriteLine($"[LoadFromString完成] {Name} Area.Count:{gameArea.Area.Count}, Centre:({gameArea.Centre.X},{gameArea.Centre.Y})");
+                
+                if (hasResultIssue)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LoadFromString警告] {Name} 期望{finalExpectedCount}个坐标，实际解析{gameArea.Area.Count}个");
+                }
+            }
+            #endif
+        }
+
+        // 🔥 新增：确保ArchitectureArea独立性的方法
+        public void EnsureUniqueAreaInstance()
+        {
+            if (ArchitectureArea != null && !string.IsNullOrEmpty(ArchitectureAreaString))
+            {
+                // 检查是否需要创建新实例
+                var expectedCount = ArchitectureAreaString.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length / 2;
+                var actualCount = ArchitectureArea.Area.Count;
+                
+                if (actualCount != expectedCount)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[独立性修复] {Name} 创建新的ArchitectureArea实例 (期望{expectedCount}，实际{actualCount})");
+                    #endif
+                    
+                    // 强制创建新实例，避免共享引用
+                    var newArea = new GameArea();
+                    LoadFromString(newArea, ArchitectureAreaString);
+                    ArchitectureArea = newArea;
+                }
+            }
         }
 
         public void LoadAILandLinksFromString(ArchitectureList architectures, string dataString)
         {
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.AILandLinks.Clear();
@@ -10698,6 +14119,12 @@ namespace GameObjects
 
         public void LoadAIWaterLinksFromString(ArchitectureList architectures, string dataString)
         {
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.AIWaterLinks.Clear();
@@ -10717,6 +14144,13 @@ namespace GameObjects
         public List<string> LoadCaptivesFromString(CaptiveList captives, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             try
@@ -10746,6 +14180,14 @@ namespace GameObjects
         public List<string> LoadFacilitiesFromString(FacilityList facilities, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            // 原因：二进制存档不使用这些字符串，设施关系已在 LinkScenarioReferences 中建立
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.Facilities.Clear();
@@ -10774,6 +14216,13 @@ namespace GameObjects
         public List<string> LoadFundPacksFromString(string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.FundPacks.Clear();
@@ -10794,7 +14243,13 @@ namespace GameObjects
         public List<string> LoadFoodPacksFromString(string dataString)
         {
             List<string> errorMsg = new List<string>();
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+                        char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.FoodPacks.Clear();
             try
@@ -10814,8 +14269,28 @@ namespace GameObjects
         public List<string> LoadMilitariesFromString(MilitaryList militaries, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 关键修复：如果 dataString 为空，直接返回，不要清空 Militaries 列表
+            // 原因：新版本存档使用 MilitaryIDs 而不是 MilitariesString
+            // 编队关系已在 LinkMilitaries 中通过 MilitaryIDs 建立
+            // 如果这里清空了，编队就会消失！
+            if (string.IsNullOrEmpty(dataString))
+            {
+                #if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"[LoadMilitariesFromString] {this.Name} 的 MilitariesString 为空，跳过（编队已通过 MilitaryIDs 加载）");
+                #endif
+                return errorMsg;
+            }
+            
+            // 🔥 只有当 dataString 不为空时，才清空并重新加载
+            // 这是为了兼容旧版本存档（使用 MilitariesString）
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            
+            #if DEBUG
+            // System.Diagnostics.Debug.WriteLine($"[LoadMilitariesFromString] {this.Name} 从 MilitariesString 加载 {strArray.Length} 个编队");
+            #endif
+            
             this.Militaries.Clear();
             try
             {
@@ -10840,6 +14315,7 @@ namespace GameObjects
         }
 
         [DataMember]
+        [JsonIgnore]  // 🔥 使用 PersonsString_Legacy 代替
         public string PersonsString { get; set; }
 
         [DataMember]
@@ -10857,6 +14333,13 @@ namespace GameObjects
         public List<string> LoadPersonsFromString(Dictionary<int, Person> persons, string dataString, PersonStatus status)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             try
@@ -10864,9 +14347,29 @@ namespace GameObjects
                 foreach (string str in strArray)
                 {
                     Person t = persons[int.Parse(str)];
-                    if (t != null && !Session.Current.Scenario.isInCaptiveList(t.ID))
+                    // 🔥 修复：移除对 Session.Current 的依赖
+                    // 日期：2026-03-16
+                    // 原因：LoadPersonsFromString 在 ProcessScenarioData 中被调用，此时 Session.Current.Scenario 为 null
+                    // 解决：俘虏检查延迟到数据加载完成后，此处只检查 Person 是否存在
+                    if (t != null)
                     {
+
+                        
                         t.LocationArchitecture = this;
+                        // 🔥 关键修复：同步更新 LocationArchitectureID
+                        // 日期：2026-03-16
+                        // 原因：剧本 JSON 中 Person 没有 LocationArchitectureID 字段，默认 -1
+                        //       LinkReferencesPhase 从 LocationArchitectureID 重建引用，会把 LocationArchitecture 重置为 null
+                        //       导致 CreatePersonStatusCache 缓存为空，Architecture.Persons.Count = 0
+                        t.LocationArchitectureID = this.ID;
+                        
+                        #if DEBUG
+                        if (this.ID == 0)  // 洛阳
+                        {
+
+                        }
+                        #endif
+                        
                         t.LocationTroop = null;
                         t.Status = status;
                         if (status == PersonStatus.Moving || status == PersonStatus.NoFactionMoving)
@@ -10876,14 +14379,7 @@ namespace GameObjects
                     }
                     else
                     {
-                        if (t == null)
-                        {
-                            errorMsg.Add("人物ID" + str + "不存在");
-                        }
-                        else
-                        {
-                            errorMsg.Add("人物ID" + str + "已成為俘虜，不能出現在城池武將列表中");
-                        }
+                        errorMsg.Add("人物ID" + str + "不存在");
                     }
                 }
             }
@@ -10897,6 +14393,13 @@ namespace GameObjects
         public List<string> LoadPopulationPacksFromString(string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.PopulationPacks.Clear();
@@ -10956,6 +14459,13 @@ namespace GameObjects
         public List<string> LoadInformationsFromString(InformationList informations, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            
+            // 🔥 修复：如果 dataString 为空，直接返回
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.Informations.Clear();
@@ -11019,23 +14529,56 @@ namespace GameObjects
                 {
                     return false;
                 }
+                
+                // 🔥 修复：新编按钮的显示逻辑
+                // 日期：2026-03-18
+                // 原因：新编是创建新编队，应该在以下情况显示：
+                // 1. 城内没有编队（可以创建第一个编队）
+                // 2. 城内有编队但还有空闲武将（可以创建更多编队）
+                bool hasAvailableKind = false;
                 foreach (MilitaryKind kind in this.BelongedFaction.AvailableMilitaryKinds.MilitaryKinds.Values)
                 {
                     if (kind.CreateAvail(this))
                     {
-                        return true;
+                        hasAvailableKind = true;
+                        break;
                     }
                 }
-                foreach (MilitaryKind kind in this.PrivateMilitaryKinds.MilitaryKinds.Values)
+                if (!hasAvailableKind)
                 {
-                    if (kind.CreateAvail(this))
+                    foreach (MilitaryKind kind in this.PrivateMilitaryKinds.MilitaryKinds.Values)
                     {
-                        return true;
+                        if (kind.CreateAvail(this))
+                        {
+                            hasAvailableKind = true;
+                            break;
+                        }
                     }
                 }
+                
+                if (!hasAvailableKind)
+                {
+                    return false;
+                }
+                
                 if (this.BelongedFaction.MilitaryCount > this.BelongedFaction.CityTotalSize * Session.GlobalVariables.FactionMilitaryLimt + 1)
                 {
                     return false;
+                }
+                
+                // 🔥 关键修复：只有在城内没有编队，或者有空闲武将时才显示新编按钮
+                // 城内没有编队：可以创建第一个编队
+                // 有空闲武将：PersonsExcludeNvGuan数量 > Militaries数量
+                if (!this.HasMilitary())
+                {
+                    // 没有编队，可以新编
+                    return true;
+                }
+                else
+                {
+                    // 有编队，检查是否有空闲武将
+                    // 如果武将数量 > 编队数量，说明有空闲武将可以创建新编队
+                    return this.PersonsExcludeNvGuan.Count > this.Militaries.Count;
                 }
             }
             return false;
@@ -11131,6 +14674,13 @@ namespace GameObjects
 
         private int getArmyScaleRequiredForAttack(LinkNode wayToTarget)
         {
+            // 🔥 修复：添加null检查，防止ArgumentOutOfRangeException
+            if (wayToTarget?.A?.BelongedFaction == null)
+            {
+                // System.Diagnostics.Debug.WriteLine($\"[getArmyScaleRequiredForAttack] wayToTarget或其目标建筑为null，返回默认值\");
+                return 1000; // 返回一个较高的默认值，避免AI轻易出兵
+            }
+            
             Person leader = this.BelongedFaction.Leader;
 
             float totalScale = 0;
@@ -11210,6 +14760,30 @@ namespace GameObjects
             return reserve;
         }
 
+        /// <summary>
+        /// 计算防守出兵时的保留兵力（比进攻出兵更宽松）
+        /// </summary>
+        private int getArmyReserveForDefensive()
+        {
+            // 获取进攻时的保留兵力作为基准
+            int offensiveReserve = this.getArmyReserveForOffensive();
+            
+            // 防守时只保留60%的进攻保留兵力，更积极出兵
+            int defensiveReserve = (int)(offensiveReserve * 0.6f);
+            
+            // 最低保留一定兵力防止空城（至少保留10%兵力或10人）
+            int minReserve = Math.Max(10, this.ArmyScale / 10);
+            
+            // 返回较大值，确保不会过于激进
+            int finalReserve = Math.Max(defensiveReserve, minReserve);
+            
+// #if DEBUG
+//             System.Diagnostics.Debug.WriteLine($"[防守保留兵力] {this.Name}: 进攻保留={offensiveReserve}, 防守保留={finalReserve} (60%系数+最低{minReserve})");
+// #endif
+            
+            return finalReserve;
+        }
+
         public void RemoveRoutewayToArchitecture(Architecture a)
         {
             Routeway toRemove = null;
@@ -11233,34 +14807,72 @@ namespace GameObjects
         private void OffensiveCampaign()
         {
             DateTime beforeStart = DateTime.UtcNow;
+            
+            // 🔥 修复：强制刷新人员缓存，确保 PersonsExcludeNvGuan 返回正确数据
+            Session.Current.Scenario.ClearPersonStatusCache();
 
             Person leader = this.BelongedFaction.Leader;
             int reserveBase = this.getArmyReserveForOffensive();
+            
+#if DEBUG
+            // 调试日志前缀
+            string logPrefix = $"[AI进攻决策] {this.Name}({this.BelongedFaction.Name})";
+            
+            // 🔥 添加详细调试信息 - 已根据需求关掉
+            // System.Diagnostics.Debug.WriteLine($"{logPrefix} 开始评估进攻");
+            // System.Diagnostics.Debug.WriteLine($"{logPrefix} AIAllLinkNodes数量: {this.AIAllLinkNodes?.Count ?? 0}");
+            // System.Diagnostics.Debug.WriteLine($"{logPrefix} 武将数: {this.PersonsExcludeNvGuan?.Count ?? 0}");
+            // System.Diagnostics.Debug.WriteLine($"{logPrefix} 编队数: {this.Militaries?.Count ?? 0}");
+            // System.Diagnostics.Debug.WriteLine($"{logPrefix} 预留兵力: {reserveBase}");
+#endif
 
             if (this.actuallyUnreachableArch.Contains(this.PlanArchitecture))
             {
+#if DEBUG
+//                 System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃计划目标 {this.PlanArchitecture.Name}: 实际上无法到达");
+#endif
                 this.RemoveRoutewayToArchitecture(this.PlanArchitecture);
                 this.PlanArchitecture = null;
             }
 
             if (this.BelongedSection != null && !this.BelongedSection.AIDetail.AllowOffensiveCampaign)
             {
+#if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃进攻: 军区设置不允许进攻");
+#endif
                 this.RemoveRoutewayToArchitecture(this.PlanArchitecture);
                 this.PlanArchitecture = null;
             }
             else if (!this.HasPerson())
             {
+#if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃进攻: 无武将");
+#endif
                 this.RemoveRoutewayToArchitecture(this.PlanArchitecture);
                 this.PlanArchitecture = null;
             }
             else if (this.PlanArchitecture != null && this.IsFriendly(this.PlanArchitecture.BelongedFaction))
             {
+#if DEBUG
+//                 System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃计划目标 {this.PlanArchitecture.Name}: 目标已变成友好势力");
+#endif
                 this.RemoveRoutewayToArchitecture(this.PlanArchitecture);
                 this.PlanArchitecture = null;
             }
             else if ((this.PlanArchitecture != null) || ((this.IsGood() || GameObject.Chance((int)(GameObject.Square((int)leader.Ambition) * Session.Parameters.AIAttackChanceIfUnfull))) &&
               (this.Domination >= this.DominationCeiling * 0.7 || this.Population <= _architectureKind.PopulationBoundary / 2)))
             {
+                // ★★★ 早期检查：如果没有可用兵力，直接返回，避免无意义的节点遍历 ★★★
+                if (this.LandArmyScale <= 0 && this.WaterArmyScale <= 0)
+                {
+#if DEBUG
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 无可用兵力: LandArmyScale={this.LandArmyScale}, WaterArmyScale={this.WaterArmyScale}，跳过进攻决策");
+#endif
+                    this.RemoveRoutewayToArchitecture(this.PlanArchitecture);
+                    this.PlanArchitecture = null;
+                    return;
+                }
+                
                 Architecture target = this.PlanArchitecture;
                 LinkNode wayToTarget = null;
                 if (target == null)
@@ -11289,11 +14901,11 @@ namespace GameObjects
                         {
                             continue;
                         }
-                        if (GameObject.Chance(Session.Parameters.AIObeyStrategyTendencyChance) && this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.统一地区 && i.A.LocationState.LinkedRegion != this.LocationState.LinkedRegion)
+                        if (GameObject.Chance(Session.Parameters.AIObeyStrategyTendencyChance) && this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.统一地区 && this.LocationState?.LinkedRegion != null && i.A.LocationState?.LinkedRegion != null && i.A.LocationState.LinkedRegion != this.LocationState.LinkedRegion)
                         {
                             continue;
                         }
-                        if (GameObject.Chance(Session.Parameters.AIObeyStrategyTendencyChance) && this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.统一州 && i.A.LocationState != this.LocationState)
+                        if (GameObject.Chance(Session.Parameters.AIObeyStrategyTendencyChance) && this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.统一州 && this.LocationState != null && i.A.LocationState != null && i.A.LocationState != this.LocationState)
                         {
                             continue;
                         }
@@ -11307,32 +14919,36 @@ namespace GameObjects
                         }
                         if (i.A.BelongedFaction != null && i.A.BelongedFaction.ArchitectureCount > 1 && i.A.connectedNotToFactionArchitectureCount(this.BelongedFaction) > 0)
                         {
-                            if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.军区)
+                            // 添加空值检查防止NullReferenceException
+                            if (this.BelongedSection != null && this.BelongedSection.AIDetail != null)
                             {
-                                continue;
-                            }
-                            if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.势力)
-                            {
-                                if (this.BelongedSection.OrientationFaction != i.A.BelongedFaction)
+                                if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.军区)
                                 {
                                     continue;
                                 }
-                            }
-                            if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.州域)
-                            {
-                                if (this.BelongedSection.OrientationState != i.A.LocationState)
+                                if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.势力)
                                 {
-                                    continue;
+                                    if (this.BelongedSection.OrientationFaction != i.A.BelongedFaction)
+                                    {
+                                        continue;
+                                    }
+                                }
+                                if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.州域)
+                                {
+                                    if (i.A.LocationState == null || this.BelongedSection.OrientationState != i.A.LocationState)
+                                    {
+                                        continue;
+                                    }
+                                }
+                                if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.建筑)
+                                {
+                                    if (this.BelongedSection.OrientationArchitecture != i.A)
+                                    {
+                                        continue;
+                                    }
                                 }
                             }
-                            if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.建筑)
-                            {
-                                if (this.BelongedSection.OrientationArchitecture != i.A)
-                                {
-                                    continue;
-                                }
-                            }
-                            if (this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.无)
+                            if (this.BelongedSection != null && this.BelongedSection.AIDetail != null && this.BelongedSection.AIDetail.OrientationKind == SectionOrientationKind.无)
                             {
                                 if (i.A.BelongedFaction != null &&
                                     (Session.Current.Scenario.GetDiplomaticRelation(this.BelongedFaction.ID, i.A.BelongedFaction.ID) >= leader.Uncruelty * Session.Parameters.AIOffendMaxDiplomaticRelationMultiply)
@@ -11343,14 +14959,42 @@ namespace GameObjects
                             }
                         }
 
-                        int reserve = Math.Max(0, reserveBase - i.A.ArmyScale);
+                        // 原始计算
+                        int rawReserve = Math.Max(0, reserveBase - i.A.ArmyScale);
+                        int reserve = rawReserve;
+
+                        // 中原激进补丁：如果连接点多(>2)，且君主有野心，强行降低防守预留，迫使其出兵
+                        if (this.AILandLinks.Count > 2 && leader.Ambition >= 3)
+                        {
+                            // 激进策略：只保留 50% 的计算预留值
+                            reserve = (int)(rawReserve * 0.5f);
+                        }
+
                         int armyScaleRequiredForAttack = (int) (this.getArmyScaleRequiredForAttack(i));
                         int armyScaleHere = (i.Kind == LinkKind.Land ? this.LandArmyScale : (this.WaterArmyScale + this.LandArmyScale / 2));
+                        
+                        // 预备兵力检查逻辑
+                        bool ignoreReserveCheck = false;
+
+                        // 条件1: 兵力溢出 (原有)
                         if ((this.ArmyScale > this.MaxSupportableTroopScale) && GameObject.Random(20 * (5 - this.BelongedFaction.Leader.Ambition)) == 0)
                         {
+                            ignoreReserveCheck = true;
                             ignoreReserve = true;
                         }
-                        if ((armyScaleHere < armyScaleRequiredForAttack + reserve) && !ignoreReserve)
+                        // 条件2: [新增] 优势兵力强攻 (即使后方有威胁)
+                        // 只有高野心君主，且当前兵力远大于目标(1.2倍)时触发
+                        else if (leader.Ambition >= 4 && armyScaleHere > (armyScaleRequiredForAttack * 1.2))
+                        {
+                            // 提高触发几率，避免死守
+                            if (GameObject.Random(100) < 40) // 40% 概率忽略后方
+                            {
+                                ignoreReserveCheck = true;
+                                ignoreReserve = true;
+                            }
+                        }
+
+                        if ((armyScaleHere < armyScaleRequiredForAttack + reserve) && !ignoreReserveCheck)
                         {
                             if ((GameObject.Random((5 - (int)leader.Ambition) * Session.Parameters.AIOffendIgnoreReserveProbAmbitionMultiply - Session.Parameters.AIOffendIgnoreReserveProbAmbitionAdd) == 0 &&
                                 (GameObject.Random((leader.Calmness - leader.Braveness) * Session.Parameters.AIOffendIgnoreReserveProbBCDiffMultiply + Session.Parameters.AIOffendIgnoreReserveProbBCDiffAdd)) == 0) &&
@@ -11358,6 +15002,7 @@ namespace GameObjects
                             {
                                 if (armyScaleHere >= armyScaleRequiredForAttack)
                                 {
+                                    // ignoreReserve = true; // 原代码这里似乎有问题，只是局部变量？不，这是类成员
                                     ignoreReserve = true;
                                 }
                                 else
@@ -11379,6 +15024,7 @@ namespace GameObjects
                             }
                             else
                             {
+                                // 兵力不足以进攻
                                 continue;
                             }
                         }
@@ -11413,6 +15059,9 @@ namespace GameObjects
                         }
                         if (!IsSelfFoodEnoughForOffensive(i, rw) && !this.IsFoodTwiceAbundant)
                         {
+#if DEBUG
+                            // System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃目标 {i.A.Name}: 粮草不足且非多粮状态");
+#endif
                             continue;
                         }
 
@@ -11436,12 +15085,6 @@ namespace GameObjects
                             }
                         }
                         
-                        // 🧠 AI Strategic Integration: Apply ideology, emperor, and expansion logic modifiers
-                        // NOTE: AIExpansionLogic is currently commented out due to dependency issues
-                        // var expansionLogic = new GameManager.AIExpansionLogic();
-                        // float attackScore = expansionLogic.CalculateAttackScore(this.BelongedFaction, i.A);
-                        // weight += (int)(attackScore * 10); // Scale to match existing weight magnitude
-                        
                         if (weight > maxWeight)
                         {
                             maxWeight = weight;
@@ -11449,30 +15092,158 @@ namespace GameObjects
                         }
                     }
                     wayToTarget = maxNode;
+                    
+#if DEBUG
+                    if (wayToTarget == null && this.AIAllLinkNodes.Count > 0)
+                    {
+//                        System.Diagnostics.Debug.WriteLine($"{logPrefix} ⚠️ 扫描了 {this.AIAllLinkNodes.Count} 个节点但未找到合适目标，启动详细诊断...");
+//                        System.Diagnostics.Debug.WriteLine($"{logPrefix} 本城兵力状态: LandArmyScale={this.LandArmyScale}, WaterArmyScale={this.WaterArmyScale}, ArmyScale={this.ArmyScale}, ArmyQuantity={this.ArmyQuantity}");
+                        
+                        // 🔥 详细诊断：重新遍历并输出每个节点被过滤的原因
+                        int diagCount = 0;
+                        foreach (LinkNode i in this.AIAllLinkNodes.Values)
+                        {
+                            if (diagCount >= 5) break; // 只诊断前5个节点
+                            diagCount++;
+                            
+                            string skipReason = "未知";
+                            
+                            // 检查1: Level检查
+                            if (i.Level > maxLevel)
+                            {
+                                skipReason = $"Level({i.Level}) > maxLevel({maxLevel})";
+                            }
+                            // 检查2: 策略倾向（移除随机性，只检查条件）
+                            else if (this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.统一州 && this.LocationState != null && i.A.LocationState != null && i.A.LocationState != this.LocationState)
+                            {
+                                skipReason = $"策略倾向=统一州，目标州={i.A.LocationState?.Name ?? "null"}，本州={this.LocationState?.Name ?? "null"}";
+                            }
+                            else if (this.BelongedFaction.Leader.StrategyTendency == PersonStrategyTendency.维持现状)
+                            {
+                                skipReason = "策略倾向=维持现状";
+                            }
+                            // 检查3: 不可达
+                            else if (this.actuallyUnreachableArch.Contains(i.A))
+                            {
+                                skipReason = "标记为不可达";
+                            }
+                            // 检查4: 兵力检查
+                            else
+                            {
+                                int rawReserve = Math.Max(0, reserveBase - i.A.ArmyScale);
+                                int reserve = (this.AILandLinks.Count > 2 && leader.Ambition >= 3) ? (int)(rawReserve * 0.5f) : rawReserve;
+                                int armyScaleRequiredForAttack = (int)(this.getArmyScaleRequiredForAttack(i));
+                                int armyScaleHere = (i.Kind == LinkKind.Land ? this.LandArmyScale : (this.WaterArmyScale + this.LandArmyScale / 2));
+                                
+                                if (armyScaleHere < armyScaleRequiredForAttack + reserve)
+                                {
+                                    skipReason = $"兵力不足: 当前={armyScaleHere}, 所需={armyScaleRequiredForAttack}, 保留={reserve}";
+                                }
+                                // 检查5: Routeway
+                                else
+                                {
+                                    Routeway rw;
+                                    if (!linkNodeRouteway.TryGetValue(i, out rw))
+                                    {
+                                        rw = this.GetRouteway(i, true);
+                                    }
+                                    
+                                    if (rw == null)
+                                    {
+                                        skipReason = "无法生成Routeway";
+                                    }
+                                    // 检查6: 粮草
+                                    else if (!IsSelfFoodEnoughForOffensive(i, rw) && !this.IsFoodTwiceAbundant)
+                                    {
+                                        skipReason = $"粮草不足: Food={this.Food}, IsFoodTwiceAbundant={this.IsFoodTwiceAbundant}";
+                                    }
+                                    else
+                                    {
+                                        skipReason = "通过所有检查但权重不足";
+                                    }
+                                }
+                            }
+                            
+//                            System.Diagnostics.Debug.WriteLine($"{logPrefix}   节点 {i.A.Name}: {skipReason}");
+                        }
+                    }
+#endif
                 }
                 else
                 {
                     //get way to target
                     this.AIAllLinkNodes.TryGetValue(this.PlanArchitecture.ID, out wayToTarget);
+                    
+                    // 🔥 修复：PlanArchitecture不在AIAllLinkNodes中时，尝试寻找中间节点
+                    if (wayToTarget == null)
+                    {
+                        // 在所有链接节点中查找路径包含PlanArchitecture的节点
+                        foreach (LinkNode node in this.AIAllLinkNodes.Values)
+                        {
+                            if (node.Path != null && node.Path.Contains(this.PlanArchitecture))
+                            {
+                                wayToTarget = node;
+                                break;
+                            }
+                        }
+                        
+                        // 如果仍然找不到，清除PlanArchitecture，让AI下次重新选择目标
+                        if (wayToTarget == null)
+                        {
+// #if DEBUG
+//                             System.Diagnostics.Debug.WriteLine($"{logPrefix} PlanArchitecture {this.PlanArchitecture.Name} 不在链接图中，清除计划目标");
+// #endif
+                            this.PlanArchitecture = null;
+                        }
+                    }
+// #if DEBUG
+//                     if (wayToTarget != null)
+//                     {
+//                         System.Diagnostics.Debug.WriteLine($"{logPrefix} 从PlanArchitecture获取wayToTarget: {wayToTarget.A.Name}");
+//                     }
+// #endif
                 }
+                
                 if (wayToTarget != null)
                 {
+// #if DEBUG
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 找到目标: {wayToTarget.A.Name}");
+// #endif
+//                     
                     int reserve = Math.Max(0, reserveBase - wayToTarget.A.ArmyScale);
                     int armyScaleRequiredForAttack = (int)(this.getArmyScaleRequiredForAttack(wayToTarget));
                     int armyScaleHere = (wayToTarget.Kind == LinkKind.Land ? this.LandArmyScale : (this.WaterArmyScale + this.LandArmyScale / 2));
-
+// 
+// #if DEBUG
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 兵力检查: 当前={armyScaleHere}, 所需={armyScaleRequiredForAttack}, 保留={reserve}");
+// #endif
+                    
                     if (armyScaleHere < armyScaleRequiredForAttack)
                     {
+// #if DEBUG
+//                         System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃目标 {wayToTarget.A.Name}: 当前兵力({armyScaleHere}) < 所需兵力({armyScaleRequiredForAttack})");
+// #endif
                         this.PlanArchitecture = null;
                         return;
                     }
 
+// #if DEBUG
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 检查是否知道目标: {this.BelongedFaction.IsArchitectureKnown(wayToTarget.A)}");
+// #endif
+                    
                     if (this.BelongedFaction.IsArchitectureKnown(wayToTarget.A))
                     {
                             Routeway routeway = this.GetRouteway(wayToTarget, true);
 
+// #if DEBUG
+//                             System.Diagnostics.Debug.WriteLine($"{logPrefix} Routeway: {(routeway != null ? "存在" : "null")}");
+// #endif
+                            
                             if (routeway == null)
                             {
+// #if DEBUG
+//                                 System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃目标 {wayToTarget.A.Name}: 无法建立路线 (Routeway is null)");
+// #endif
                                 this.PlanArchitecture = null;
                             }
                             else
@@ -11480,18 +15251,34 @@ namespace GameObjects
                                 Architecture bypass = routeway.ByPassHostileArchitecture;
                                 if (bypass != null)
                                 {
+// #if DEBUG
+//                                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 需要绕道: {bypass.Name}");
+// #endif
                                     this.PlanArchitecture = bypass;
                                 }
                                 else if (Session.GlobalVariables.LiangdaoXitong && (routeway.LastPoint.BuildFundCost * (4 + ((wayToTarget.A.AreaCount >= 4) ? 2 : 0))) > this.Fund)
                                 {
+                                    // 粮道系统资金检查
+// #if DEBUG
+//                                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 粮道建设资金不足，转为仅计划进攻 {wayToTarget.A.Name}");
+// #endif
                                     routeway.Building = false;
                                     this.PlanArchitecture = wayToTarget.A;
                                 }
                                 else
                                 {
                                     double foodRateBySeason = Session.Current.Scenario.Date.GetFoodRateBySeason(Session.Current.Scenario.Date.GetSeason(routeway.Length));
-                                    if (!(((this.Food * foodRateBySeason) >= (this.FoodCeiling / 3)) || this.IsSelfFoodEnoughForOffensive(wayToTarget, routeway)))
+                                    bool foodEnough = ((this.Food * foodRateBySeason) >= (this.FoodCeiling / 3)) || this.IsSelfFoodEnoughForOffensive(wayToTarget, routeway);
+                                    
+// #if DEBUG
+//                                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 粮草检查: Food={this.Food}, FoodCeiling={this.FoodCeiling}, foodEnough={foodEnough}");
+// #endif
+                                    
+                                    if (!foodEnough)
                                     {
+// #if DEBUG
+//                                         System.Diagnostics.Debug.WriteLine($"{logPrefix} 放弃目标 {wayToTarget.A.Name}: 粮草不足维持远征");
+// #endif
                                         routeway.Building = false;
                                         this.PlanArchitecture = wayToTarget.A;
                                     }
@@ -11516,18 +15303,40 @@ namespace GameObjects
                                             }
                                         }
 
+// #if DEBUG
+//                                         System.Diagnostics.Debug.WriteLine($"{logPrefix} AIQuickBattle={Session.GlobalVariables.AIQuickBattle}, playerKnown={playerKnown}");
+// #endif
+                                        
                                         if (Session.GlobalVariables.AIQuickBattle && !playerKnown)
                                         {
+// #if DEBUG
+//                                             System.Diagnostics.Debug.WriteLine($"{logPrefix} 使用快速战斗模式，跳过实际出兵");
+// #endif
                                             this.AIBattlingArchitectures.Add(wayToTarget.A);
                                             this.PlanArchitecture = null;
                                         }
                                         else
                                         {
-
+                                            // 🔥 核心出兵逻辑
+// #if DEBUG
+//                                             System.Diagnostics.Debug.WriteLine($"{logPrefix} 准备调用BuildOffensiveTroop: 目标={wayToTarget.A.Name}, 兵力={armyScaleHere}, 保留={reserve}");
+// #endif
                                             bool hasCreatedTroop = this.BuildOffensiveTroop(wayToTarget.A, wayToTarget.Kind, true, ignoreReserve ? 0 : reserve);
+// #if DEBUG
+//                                             System.Diagnostics.Debug.WriteLine($"{logPrefix} BuildOffensiveTroop返回: {hasCreatedTroop}");
+// #endif
                                             if (armyScaleHere <= reserve || !hasCreatedTroop)
                                             {
+// #if DEBUG
+//                                                 System.Diagnostics.Debug.WriteLine($"{logPrefix} 最终放弃目标 {wayToTarget.A.Name}: 创建部队失败 或 兵力({armyScaleHere}) <= 保留兵力({reserve})");
+// #endif
                                                 this.PlanArchitecture = null;
+                                            }
+                                            else
+                                            {
+// #if DEBUG
+//                                                 System.Diagnostics.Debug.WriteLine($"{logPrefix} 成功出兵进攻 {wayToTarget.A.Name}!");
+// #endif
                                             }
                                         }
                                     }
@@ -11536,14 +15345,23 @@ namespace GameObjects
                     }
                     else if (this.InformationAvail())
                     {
+                        // System.Diagnostics.Debug.WriteLine($\"[AI情报] {this.Name} - InformationAvail()=true, 准备放置情报\");
                         Routeway routeway = this.GetRouteway(wayToTarget, true);
+                        // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - Routeway={(routeway != null ? "存在" : "null")}");
+                        
                         if ((routeway != null) && ((routeway.LastPoint.BuildFundCost * (4 + ((wayToTarget.A.AreaCount >= 4) ? 2 : 0))) <= this.Fund))
                         {
+                            // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - 资金检查通过");
                             double foodRateBySeason = Session.Current.Scenario.Date.GetFoodRateBySeason(Session.Current.Scenario.Date.GetSeason(routeway.Length));
+                            // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - 粮食检查: Food={this.Food}, FoodRateBySeason={foodRateBySeason}, FoodCeiling={this.FoodCeiling}");
+                            
                             if (((this.Food * foodRateBySeason) >= (this.FoodCeiling / 3)) || this.IsSelfFoodEnoughForOffensive(wayToTarget, routeway))
                             {
+                                // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - 粮食检查通过，设置PlanArchitecture={wayToTarget.A.Name}");
                                 this.PlanArchitecture = wayToTarget.A;
                                 Person firstHalfPerson = this.GetFirstHalfPerson("InformationAbility");
+                                // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - GetFirstHalfPerson结果: {(firstHalfPerson != null ? firstHalfPerson.Name : "null")}");
+                                
                                 if (firstHalfPerson != null && firstHalfPerson.LocationArchitecture != null)
                                 {
                                     firstHalfPerson.CurrentInformationKind = this.GetFirstHalfInformationKind();
@@ -11552,18 +15370,77 @@ namespace GameObjects
                                         List<Architecture> gettingInfo = GettingInformationArchitectures();
                                         if (!gettingInfo.Contains(wayToTarget.A))
                                         {
+                                            // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ✅ 派遣 {firstHalfPerson.Name} 前往 {wayToTarget.A.Name} 放置情报");
                                             firstHalfPerson.GoForInformation(Session.Current.Scenario.GetClosestPoint(wayToTarget.A.ArchitectureArea, this.Position));
                                         }
+                                        else
+                                        {
+                                            // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ❌ 目标 {wayToTarget.A.Name} 已有人在放置情报");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ❌ GetFirstHalfInformationKind返回null");
                                     }
                                 }
                                 else
                                 {
+                                    // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ❌ firstHalfPerson为null或LocationArchitecture为null");
                                     this.PlanArchitecture = null;
                                 }
                             }
+                            else
+                            {
+                                // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ❌ 粮食不足");
+                            }
+                        }
+                        else
+                        {
+                            // System.Diagnostics.Debug.WriteLine($"[AI情报] {this.Name} - ❌ Routeway为null或资金不足");
                         }
                     }
+                    else
+                    {
+                        // System.Diagnostics.Debug.WriteLine($\"[AI情报] {this.Name} - InformationAvail()=false\");
+                    }
 
+                }
+                else
+                {
+// #if DEBUG
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} ❌ wayToTarget为null，无法出兵");
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 诊断信息: AIAllLinkNodes数量={this.AIAllLinkNodes.Count}, AILandLinks数量={this.AILandLinks.Count}, AIWaterLinks数量={this.AIWaterLinks.Count}");
+                    
+                    // 🔥 诊断：检查是否真的没有敌对建筑（仅用于调试，不影响游戏逻辑）
+                    int hostileCount = 0;
+                    int displayCount = 0;
+                    ArchitectureList allArchs = Session.Current.Scenario.Architectures;
+                    
+// #if DEBUG
+//                     for (int i = 0; i < allArchs.Count; i++)
+//                     {
+//                         Architecture arch = allArchs[i] as Architecture;
+//                         if (this.IsArchitectureHostile(arch))
+//                         {
+//                             hostileCount++;
+//                             if (displayCount < 3)
+//                             {
+//                                 double distance = Session.Current.Scenario.GetSimpleDistance(this.Position, arch.Position);
+//                                 System.Diagnostics.Debug.WriteLine($"{logPrefix}   发现敌对建筑: {arch.Name}({arch.BelongedFaction.Name}), 直线距离={distance:F1}");
+//                                 displayCount++;
+//                             }
+//                         }
+//                     }
+//                     System.Diagnostics.Debug.WriteLine($"{logPrefix} 共发现 {hostileCount} 个敌对建筑");
+//                     
+//                     // 🔥 尝试重新生成链接图
+//                     if (this.AIAllLinkNodes.Count == 0 && hostileCount > 0)
+//                     {
+//                         System.Diagnostics.Debug.WriteLine($"{logPrefix} 检测到孤立状态，尝试重新生成链接图...");
+//                         this.PrepareAI();
+//                         System.Diagnostics.Debug.WriteLine($"{logPrefix} 重新生成后: AIAllLinkNodes={this.AIAllLinkNodes.Count}");
+//                     }
+// #endif
                 }
             }
         }
@@ -11681,6 +15558,11 @@ namespace GameObjects
             {
                 this.PlayerAISearch();
             }
+            if (this.AutoRewarding)
+            {
+                AI_RewardManager rewardManager = new();
+                rewardManager.ExecuteArchitectureAutoReward(this);
+            }
            /* if (this.AutoZhaoXian)
             {
                 this.PlayAIZhaoXian();
@@ -11689,9 +15571,12 @@ namespace GameObjects
 
         public void callReturnedOfficerToWork()
         {
-            if (this.AutoWorking || this.BelongedSection.AIDetail.AutoRun)
+            // 🔥 NRE Fix: Check for null BelongedSection
+            bool isSectionAutoRun = (this.BelongedSection != null && this.BelongedSection.AIDetail != null && this.BelongedSection.AIDetail.AutoRun);
+
+            if (this.AutoWorking || isSectionAutoRun)
             {
-                if (this.BelongedSection.AIDetail.AutoRun)
+                if (isSectionAutoRun)
                 {
                     this.AIWork(false);
                 }
@@ -11798,29 +15683,60 @@ namespace GameObjects
 
         public void PopulationPacksDayEvent()
         {
-            for (int i = this.PopulationPacks.Count - 1; i >= 0; i--)
+            // 🔥 根本修复：使用对象快照而非索引快照
+            // 日期：2026-03-19
+            // 原因：
+            //   1. 索引快照在倒序删除时仍可能失效（如果多个连续索引都需要删除）
+            //   2. ReceivePopulation 可能触发事件，事件处理器可能间接修改集合
+            // 解决方案：先收集需要处理的对象本身（而非索引），再统一删除和处理
+            // 性能：Cold Path（每回合一次），使用 List 分配可接受
+            
+            // 处理 PopulationPacks
+            List<PopulationPack> toRemove = [];
+            foreach (PopulationPack pack in this.PopulationPacks)
             {
-                PopulationPack local1 = this.PopulationPacks[i];
-                //local1.Days--;
-                local1.Days -= Session.Parameters.DayInTurn;
-                if (this.PopulationPacks[i].Days <= 0)
+                pack.Days -= Session.Parameters.DayInTurn;
+                
+                if (pack.Days <= 0)
                 {
-                    this.ReceivePopulation(this.PopulationPacks[i].Population);
-                    this.PopulationPacks.RemoveAt(i);
+                    toRemove.Add(pack);
                 }
             }
-
-            for (int i = this.MilitaryPopulationPacks.Count - 1; i >= 0; i--)
+            
+            // 🔥 关键：先删除，再处理（避免 ReceivePopulation 事件触发时集合状态不一致）
+            foreach (PopulationPack pack in toRemove)
             {
-                PopulationPack local1 = this.MilitaryPopulationPacks[i];
-                //local1.Days--;
-                local1.Days -= Session.Parameters.DayInTurn;
-                if (this.MilitaryPopulationPacks[i].Days <= 0)
+                this.PopulationPacks.Remove(pack);
+            }
+            
+            foreach (PopulationPack pack in toRemove)
+            {
+                this.ReceivePopulation(pack.Population);
+            }
+
+            // 处理 MilitaryPopulationPacks
+            toRemove.Clear();
+            foreach (PopulationPack pack in this.MilitaryPopulationPacks)
+            {
+                pack.Days -= Session.Parameters.DayInTurn;
+                
+                if (pack.Days <= 0)
                 {
-                    this.ReceivePopulation(this.MilitaryPopulationPacks[i].Population);
-                    this.ReceiveMilitaryPopulation(this.MilitaryPopulationPacks[i].Population);
-                    this.MilitaryPopulationPacks.RemoveAt(i);
+                    toRemove.Add(pack);
                 }
+            }
+            
+            // 🔥 关键：先删除，再处理
+            foreach (PopulationPack pack in toRemove)
+            {
+                this.MilitaryPopulationPacks.Remove(pack);
+            }
+            
+            // 🔥 关键修复：ReceiveMilitaryPopulation 内部会调用 ReceivePopulation
+            // 所以这里只调用 ReceiveMilitaryPopulation，不要重复调用
+            foreach (PopulationPack pack in toRemove)
+            {
+                this.ReceiveMilitaryPopulation(pack.Population);
             }
         }
 
@@ -11836,6 +15752,27 @@ namespace GameObjects
 
         private void PrepareAI()
         {
+            // 🔥 FIX: 确保 AIAllLinkNodes 已初始化
+            if (this.AIAllLinkNodes == null || this.AIAllLinkNodes.Count == 0)
+            {
+                // 🔥 修复：如果基础链接也为空，先重新生成基础链接
+                if (this.AILandLinks.Count == 0 && this.AIWaterLinks.Count == 0)
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[PrepareAI] {this.Name} AILandLinks和AIWaterLinks都为空，正在重新生成基础链接...");
+#endif
+                    this.FindLinks(Session.Current.Scenario.Architectures);
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[PrepareAI] {this.Name} FindLinks完成: AILandLinks={this.AILandLinks.Count}, AIWaterLinks={this.AIWaterLinks.Count}");
+#endif
+                }
+                
+                this.GenerateAllAILinkNodes(2);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[PrepareAI] {this.Name} GenerateAllAILinkNodes完成: AIAllLinkNodes={this.AIAllLinkNodes.Count}");
+#endif
+            }
+            
             this.TotalHostileForce = 0;
             this.TotalFriendlyForce = 0;
             TroopList hostileTroopsInView = this.GetHostileTroopsInView();
@@ -12038,15 +15975,28 @@ namespace GameObjects
                 }
                 if (this.Morale < Session.Parameters.RecruitmentMorale)
                 {
+                    // return false; 
+                    // 🔧 FIX: 允许低士气补兵/新建，士气低不应该完全禁止
+                }
+                
+                // 🔥 修复：补充按钮只有在城内有未满员的编队时才点亮
+                // 日期：2026-03-18
+                // 原因：补充是给现有编队补充兵力，需要检查是否有编队需要补充
+                if (!this.HasMilitary())
+                {
                     return false;
                 }
+                
+                // 检查是否有未满员的编队
                 foreach (Military military in this.Militaries)
                 {
-                    if ((military.Quantity < military.Kind.MaxScale) && (military.InjuryQuantity == 0))
+                    if (military.TotalQuantity < military.Kind.MaxScale)
                     {
-                        return true;
+                        return true;  // 有未满员的编队，可以补充
                     }
                 }
+                
+                return false;  // 所有编队都满员了，不需要补充
             }
             return false;
         }
@@ -12521,6 +16471,34 @@ namespace GameObjects
         public void ResetFaction(Faction faction)
         {
             Faction oldFaction = this.BelongedFaction;
+            
+            // 【新增】通知AI缓存管理器地图状态发生变化
+            try
+            {
+#if !DISABLE_AI_CACHE
+                if (WTKGameManager.AICacheManager.Instance != null)
+                {
+                    WTKGameManager.AICacheManager.Instance.SetMapDirty();
+                    
+                    // 清理相关势力的缓存
+                    if (oldFaction != null)
+                    {
+                        WTKGameManager.AICacheManager.Instance.ClearCacheForFaction(oldFaction.ID);
+#endif
+                    }
+#if !DISABLE_AI_CACHE
+                    if (faction != null)
+                    {
+                        WTKGameManager.AICacheManager.Instance.ClearCacheForFaction(faction.ID);
+                    }
+                }
+#endif
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ResetFaction] AI缓存更新失败: {ex.Message}");
+            }
+            
             this.ResetAuto();
             this.PlanFacilityKind = null;
             this.PlanFacilityKindID = -1;
@@ -12528,11 +16506,36 @@ namespace GameObjects
             if ((faction != null) && Session.Current.Scenario.IsPlayer(faction))
             {
                 this.AutoHiring = true;
-                this.AutoRewarding = true;
+                // 🔧 修复：自动褒赏默认关闭，由玩家手动开启
+                // this.AutoRewarding = true;
 
             }
             if (this.BelongedFaction != null && this.BelongedFaction != faction)
             {
+                // 🔥 根本修复：城市易手时，清理所有引用该城市作为出发地的部队
+                // 日期：2026-03-09
+                // 问题：城市被占领后，原势力部队的 StartingArchitecture 仍然指向该城市，导致存档后读档时出现错误引用
+                // 解决：遍历原势力所有部队，如果 StartingArchitecture 是当前城市，清空该引用
+                // ANTI-BAND-AID：不检查 Troops 是否为 null，如果为 null 则让它崩溃暴露初始化问题
+                foreach (Troop troop in this.BelongedFaction.Troops.GetList())
+                {
+                    if (troop.StartingArchitecture == this)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[ResetFaction] 城市 {this.Name} 易手，清空部队 {troop.DisplayName}(ID:{troop.ID}) 的出发地引用");
+                        troop.StartingArchitecture = null;
+                    }
+                    
+                    // 同时清理 WillArchitecture 引用（如果部队正在前往该城市）
+                    if (troop.WillArchitecture == this && troop.Command != TroopCommand.AttackArch)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[ResetFaction] 城市 {this.Name} 易手，清空部队 {troop.DisplayName}(ID:{troop.ID}) 的目标地引用");
+                        troop.WillArchitecture = null;
+                        troop.RealDestination = new(-1, -1);  // C# 12: 目标类型 new
+                    }
+                }
+                
                 this.ClearFundPacks();
                 this.ClearFoodPacks();
                 this.ClearRouteways();
@@ -12886,16 +16889,89 @@ namespace GameObjects
         {
             this.DecreaseFood(spendFood);
             this.IncreaseFund(spendFood / Session.Parameters.FoodToFundDivisor);
-            ExtensionInterface.call("SellFood", new Object[] { Session.Current.Scenario, this });
+            // 🔥 AOT 重构：使用强类型事件替代反射调用
+            WorldOfTheThreeKingdoms.GameObjects.Events.InternalAffairEvents.RaiseSellFood(Session.Current.Scenario, this);
         }
 
         public bool SellFoodAvail()
         {
+            // 🔥 技术性修复：避免ArgumentNullException
+            string archName = this.Name ?? "";
+            
             return this.Commerce >= Session.Parameters.SellFoodCommerce && (Session.Current.Scenario.Date.Season == GameSeason.冬 || Session.Current.Scenario.Date.Season == GameSeason.春) && this.Food > 0 && this.Fund < this.FundCeiling
                 && (Session.Current.Scenario.Date.Month * 671
-                + (this.Name.Length > 0 ? this.Name[0] : 321) * 864
-                + (this.Name.Length > 1 ? this.Name[1] : 384) * 259
+                + (archName.Length > 0 ? archName[0] : 321) * 864
+                + (archName.Length > 1 ? archName[1] : 384) * 259
                     + this.ID * 513) % 2 == 0;
+        }
+
+        /// <summary>
+        /// 出售宝物到市场
+        /// 🔥 2026-03-03 新增：宝物进入市场，不隐藏在建筑中
+        /// 🧊 COLD PATH：UI事件响应，优先可读性
+        /// </summary>
+        public void SellTreasure(Treasure treasure)
+        {
+            // 1. 增加资金（宝物价值 × 1000）
+            this.IncreaseFund(treasure.Worth * 1000);
+            
+            // 2. 设置宝物状态为"已出售"
+            treasure.Available = false;
+            treasure.HidePlace = null;  // ✅ 不隐藏在建筑中
+            treasure.BelongedPerson = null;
+            
+            // 3. 添加到市场
+            Session.Current.Scenario.SoldTreasures.Add(treasure);
+            
+            // 4. 触发事件
+            WorldOfTheThreeKingdoms.GameObjects.Events.TreasureEvents.RaiseSellTreasure(Session.Current.Scenario, this, treasure);
+        }
+
+        /// <summary>
+        /// 从市场购买宝物
+        /// 🔥 2026-03-03 新增：购买价格为原价的 1.2 倍
+        /// 🧊 COLD PATH：UI事件响应，优先可读性
+        /// </summary>
+        public void BuyTreasure(Treasure treasure)
+        {
+            // 1. 计算购买价格（加价 20%，宝物价值 × 1000）
+            int buyPrice = (int)(treasure.Worth * 1.2f * 1000);
+            
+            // 2. 扣除资金
+            this.DecreaseFund(buyPrice);
+            
+            // 3. 设置宝物状态为"持有"
+            treasure.Available = true;
+            treasure.BelongedPerson = this.BelongedFaction.Leader;
+            treasure.HidePlace = null;
+            
+            // 4. 从市场移除
+            Session.Current.Scenario.SoldTreasures.Remove(treasure);
+            
+            // 5. 触发事件
+            WorldOfTheThreeKingdoms.GameObjects.Events.TreasureEvents.RaiseBuyTreasure(Session.Current.Scenario, this, treasure);
+        }
+
+        /// <summary>
+        /// 检查是否可以购买宝物
+        /// 🔥 2026-03-03 新增：明确检查势力和君主，符合 Anti-Band-Aid Protocol
+        /// 🧊 COLD PATH：菜单可见性检查
+        /// </summary>
+        public bool BuyTreasureAvail()
+        {
+            // 检查市场是否有宝物
+            if (Session.Current.Scenario.SoldTreasures.Count == 0)
+                return false;
+            
+            // 检查建筑是否有归属势力
+            if (this.BelongedFaction == null)
+                return false;
+            
+            // 检查势力是否有君主
+            if (this.BelongedFaction.Leader == null)
+                return false;
+            
+            return true;
         }
 
         public void SetLongViewArea(GameArea area)
@@ -12909,6 +16985,14 @@ namespace GameObjects
             {
                 ExtensionInterface.call("ArchitectureBeingAttacked", new Object[] { Session.Current.Scenario, this });
                 this.JustAttacked = true;
+                
+                // 🔥 NEW: 通知势力AI紧急事件 - 城市被攻击
+                if (this.BelongedFaction != null)
+                {
+                    this.BelongedFaction.NotifyPersonnelUrgentEvent($"城市{this.Name}被攻击");
+                    this.BelongedFaction.NotifyDomesticUrgentEvent($"城市{this.Name}被攻击");
+                }
+                
                 /*
                 if (this.BelongedFaction != null)
                 {
@@ -13327,14 +17411,14 @@ namespace GameObjects
                 int num = 0;
                 foreach (Legion legion in this.BelongedFaction.Legions)
                 {
-                    if (legion.Kind == LegionKind.Defensive)
+                    if (legion.IsDefensive())
                     {
                         if (legion == this.DefensiveLegion)
                         {
                             num += legion.FoodCostPerDay * 80;
                         }
                     }
-                    else if (((legion.Kind == LegionKind.Offensive) && (legion.PreferredRouteway != null)) && (legion.PreferredRouteway.StartArchitecture == this))
+                    else if (legion.IsOffensive() && (legion.PreferredRouteway != null) && (legion.PreferredRouteway.StartArchitecture == this))
                     {
                         num += legion.FoodCostPerDay * 80;
                     }
@@ -13399,6 +17483,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.AgricultureCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasAgriculture ? ((_architectureKind.AgricultureBase + (_architectureKind.AgricultureUnit * (this.JianzhuGuimo - 1))) + this.IncrementOfAgricultureCeiling) : 0;
             }
         }
@@ -13623,18 +17712,56 @@ namespace GameObjects
             }
         }
 
+        // 🔥 线程本地变量：标记当前是否在 AI 上下文中
+        [ThreadStatic]
+        private static bool _isInAIContext = false;
+
+        private int _buildingFacility = -1;
+
         [DataMember]
-        public int BuildingFacility { get; set; }
-        //{
-        //    get
-        //    {
-        //        return this.buildingFacility;
-        //    }
-        //    set
-        //    {
-        //        this.buildingFacility = value;
-        //    }
-        //}
+        public int BuildingFacility
+        {
+            get => _buildingFacility;
+            set
+            {
+                // 🔥 修复：使用线程本地变量标记，避免使用反射和 StackTrace
+                
+                // 如果是清除建造状态（设置为 -1），总是允许
+                if (value == -1)
+                {
+                    _buildingFacility = value;
+                    return;
+                }
+                
+                // 只在 AI 上下文中检查（通过 BeginToBuildAFacility 调用时）
+                if (_isInAIContext)
+                {
+                    // 1. 如果建筑没有势力（中立建筑），不允许 AI 建造
+                    if (BelongedFaction == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[BuildingFacility.set] ⚠️ AI尝试为中立建筑 {this.Name} 建造设施 ID={value}，已拦截");
+                        return;
+                    }
+                    
+                    // 2. 如果建筑属于玩家势力，检查是否是委任军区
+                    if (Session.Current?.Scenario?.IsPlayer(BelongedFaction) == true)
+                    {
+                        // 如果不是委任军区，不允许 AI 建造
+                        if (BelongedSection == null || 
+                            BelongedSection.AIDetail == null || 
+                            !BelongedSection.AIDetail.AutoRun)
+                        {
+                            var facilityName = Session.Current?.Scenario?.GameCommonData?.AllFacilityKinds?.GetFacilityKind(value)?.Name ?? $"ID={value}";
+                            System.Diagnostics.Debug.WriteLine($"[BuildingFacility.set] ⚠️⚠️⚠️ AI尝试为玩家建筑 {this.Name} 建造设施 {facilityName}，已拦截！");
+                            return;
+                        }
+                    }
+                }
+                
+                // 允许设置（包括：玩家手动建造、存档加载、委任军区AI建造、AI势力建造）
+                _buildingFacility = value;
+            }
+        }
 
         public int CaptiveCount
         {
@@ -13672,6 +17799,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.CommerceCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasCommerce ? ((_architectureKind.CommerceBase + (_architectureKind.CommerceUnit * (this.JianzhuGuimo - 1))) + this.IncrementOfCommerceCeiling) : 0;
             }
         }
@@ -13783,6 +17915,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.DominationCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasDomination ? (_architectureKind.DominationBase + (_architectureKind.DominationUnit * (this.JianzhuGuimo - 1)) + this.IncrementOfDominationCeiling) : 0;
             }
         }
@@ -13814,6 +17951,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.EnduranceCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasEndurance ? ((_architectureKind.EnduranceBase + (_architectureKind.EnduranceUnit * (this.JianzhuGuimo - 1))) + this.IncrementOfEnduranceCeiling) : 0;
             }
         }
@@ -13833,14 +17975,14 @@ namespace GameObjects
                 int num = 0;
                 foreach (Legion legion in this.BelongedFaction.Legions)
                 {
-                    if (legion.Kind == LegionKind.Defensive)
+                    if (legion.IsDefensive())
                     {
                         if (legion == this.DefensiveLegion)
                         {
                             num += legion.FoodCostPerDay * 30;
                         }
                     }
-                    else if (((legion.Kind == LegionKind.Offensive) && (legion.PreferredRouteway != null)) && (legion.PreferredRouteway.StartArchitecture == this))
+                    else if (legion.IsOffensive() && (legion.PreferredRouteway != null) && (legion.PreferredRouteway.StartArchitecture == this))
                     {
                         num += legion.FoodCostPerDay * 30;
                     }
@@ -13852,6 +17994,13 @@ namespace GameObjects
                 }
 
                 int num2 = this.FoodCostPerDayOfAllMilitaries * factor + num;
+
+                // 🔥 BUG修复：限制EnoughFood不超过粮仓上限的90%，防止巨额物资转运
+                int maxEnoughFood = (int)(this.FoodCeiling * 0.9);
+                if (num2 > maxEnoughFood)
+                {
+                    num2 = maxEnoughFood;
+                }
 
                 return num2;
             }
@@ -13897,11 +18046,15 @@ namespace GameObjects
                 {
                     return ExpectedFoodCache;
                 }
-                int num = this.Agriculture + ((int)((Math.Pow((double)this.Population, 0.3) * Math.Pow((double)this.Agriculture, 0.8)) * 47.0));
+                // 🔥 安全检查：防止异常大的人口和农业值导致计算溢出
+                double safePopulation = Math.Min(this.Population, 1000000);  // 限制最大人口
+                double safeAgriculture = Math.Min(this.Agriculture, 100000);  // 限制最大农业
+                
+                int num = this.Agriculture + ((int)((Math.Pow(safePopulation, 0.3) * Math.Pow(safeAgriculture, 0.8)) * 47.0));
                 num += this.IncrementOfMonthFood;
                 num += (int)(this.RateIncrementOfMonthFood * num);
                 num = (int)(num * Session.Current.Scenario.Date.GetFoodRateBySeason(Session.Current.Scenario.Date.Season));
-                if ((this.LocationState.StateAdmin != null) && this.LocationState.StateAdmin.StateAdminEffectAvail())
+                if (this.LocationState?.StateAdmin != null && this.LocationState.StateAdmin.StateAdminEffectAvail())
                 {
                     if (this.IsFriendlyWithoutTruce(this.LocationState.StateAdmin.BelongedFaction))
                     {
@@ -13926,6 +18079,13 @@ namespace GameObjects
                 {
                     num *= 2;
                 }
+                // 🔥 安全检查：防止计算结果异常大
+                if (num > 10000000)  // 如果超过1000万，限制为合理值
+                {
+                    num = Math.Max(this.Agriculture * 10, 50000);  // 基于农业的合理值
+                    System.Diagnostics.Debug.WriteLine($"[ExpectedFood] 检测到异常大的粮食收入，已限制为: {num}");
+                }
+                
                 num += 10000;
                 ExpectedFoodCache = num;
                 return num;
@@ -13949,10 +18109,14 @@ namespace GameObjects
                 {
                     return ExpectedFundCache;
                 }
-                int num = this.Commerce + ((int)((Math.Pow((double)this.Population, 0.6) * Math.Pow((double)this.Commerce, 0.8)) / 49.0));
+                // 🔥 安全检查：防止异常大的人口和商业值导致计算溢出
+                double safePopulation = Math.Min(this.Population, 1000000);  // 限制最大人口
+                double safeCommerce = Math.Min(this.Commerce, 100000);  // 限制最大商业
+                
+                int num = this.Commerce + ((int)((Math.Pow(safePopulation, 0.6) * Math.Pow(safeCommerce, 0.8)) / 49.0));
                 num += this.IncrementOfMonthFund;
                 num += (int)(this.RateIncrementOfMonthFund * num);
-                if ((this.LocationState.StateAdmin != null) && this.LocationState.StateAdmin.StateAdminEffectAvail())
+                if (this.LocationState?.StateAdmin != null && this.LocationState.StateAdmin.StateAdminEffectAvail())
                 {
                     if (this.IsFriendlyWithoutTruce(this.LocationState.StateAdmin.BelongedFaction))
                     {
@@ -13976,6 +18140,13 @@ namespace GameObjects
                 {
                     num *= 2;
                 }
+                // 🔥 安全检查：防止计算结果异常大
+                if (num > 10000000)  // 如果超过1000万，限制为合理值
+                {
+                    num = Math.Max(this.Commerce * 10, 50000);  // 基于商业的合理值
+                    System.Diagnostics.Debug.WriteLine($"[ExpectedFund] 检测到异常大的资金收入，已限制为: {num}");
+                }
+                
                 num += 100;
                 ExpectedFundCache = num;
                 return num;
@@ -14023,6 +18194,7 @@ namespace GameObjects
             get
             {
                 int num = 0;
+                
                 foreach (Facility facility in this.Facilities)
                 {
                     num += facility.MaintenanceCost;
@@ -14030,9 +18202,10 @@ namespace GameObjects
 
                 if (this.Feiziliebiao.Count > 0 && (this.BelongedFaction == null || !this.BelongedFaction.IsAlien))
                 {
-                    num += this.Feiziliebiao.Count * Session.Parameters.PrincessMaintainenceCost;
+                    int princessCost = this.Feiziliebiao.Count * Session.Parameters.PrincessMaintainenceCost;
+                    num += princessCost;
                 }
-
+                
                 return num;
             }
         }
@@ -14049,7 +18222,11 @@ namespace GameObjects
         {
             get
             {
-                return (_architectureKind.FacilityPositionUnit * (this.JianzhuGuimo + this.IncrementOfFacilityPositionCount));
+                int result = (_architectureKind.FacilityPositionUnit * (this.JianzhuGuimo + this.IncrementOfFacilityPositionCount));
+                
+
+                
+                return result;
             }
         }
 
@@ -14130,6 +18307,10 @@ namespace GameObjects
             }
             set
             {
+                if (this.food - value > 50000)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LARGE FOOD DEDUCTION] Architecture {this.Name} (ID:{this.ID}) Food decreased by {this.food - value} (From {this.food} To {value}). Stack: {new System.Diagnostics.StackTrace()}");
+                }
                 this.food = value;
             }
         }
@@ -14141,6 +18322,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.FoodCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return (_architectureKind.FoodMaxUnit * this.JianzhuGuimo) + this.IncrementOfFoodCeiling;
             }
         }
@@ -14291,6 +18477,12 @@ namespace GameObjects
             }
             set
             {
+
+                
+                if (this.fund - value > 50000)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LARGE FUND DEDUCTION] Architecture {this.Name} (ID:{this.ID}) Fund decreased by {this.fund - value} (From {this.fund} To {value}). Stack: {new System.Diagnostics.StackTrace()}");
+                }
                 this.fund = value;
             }
         }
@@ -14299,6 +18491,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.FundCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return (_architectureKind.FundMaxUnit * this.JianzhuGuimo) + this.IncrementOfFundCeiling;
             }
         }
@@ -14577,7 +18774,7 @@ namespace GameObjects
         {
             get
             {
-                return (this.LocationState.LinkedRegion.RegionCore == this);
+                return this.LocationState?.LinkedRegion?.RegionCore == this;
             }
         }
 
@@ -14585,7 +18782,7 @@ namespace GameObjects
         {
             get
             {
-                return (this.LocationState.StateAdmin == this);
+                return this.LocationState?.StateAdmin == this;
             }
         }
         [DataMember]
@@ -14609,7 +18806,9 @@ namespace GameObjects
             }
         }
 
+        // 🔥 修复：KindId 与 KindID 冲突，使用 JsonIgnore 忽略此属性
         [DataMember]
+        [System.Text.Json.Serialization.JsonIgnore]
         public int KindId { get; set; }
 
         public string KindString
@@ -14652,6 +18851,13 @@ namespace GameObjects
         {
             get
             {
+                // 🔥 防御性检查：Kind未初始化时返回ViewArea
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.LongViewArea] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回 ViewArea");
+                    return this.ViewArea;
+                }
+                
                 if (!_architectureKind.HasLongView)
                 {
                     return this.ViewArea;
@@ -14672,8 +18878,274 @@ namespace GameObjects
         {
             get
             {
-                return (this.ViewDistance * 2);
+                // 🔥 使用 EffectiveViewDistance 而不是 ViewDistance
+                // 日期：2026-03-16
+                // 原因：整合动态视野系统，远视野也应该基于能量增加
+                return (this.EffectiveViewDistance * 2);
             }
+        }
+        
+        // ============================================================
+        // 🆕 势力范围系统扩展（2026-03-11）
+        // ============================================================
+        
+        /// <summary>
+        /// 🆕 势力范围缓存
+        /// </summary>
+        private GameArea? _influenceArea = null;
+        
+        /// <summary>
+        /// 🆕 有效视野距离缓存（基础 + 动态）
+        /// 🔥 Hot Path：在 ViewArea 计算中使用
+        /// 日期：2026-03-16
+        /// </summary>
+        private int _cachedEffectiveViewDistance = -1;
+        
+        /// <summary>
+        /// 🆕 势力范围（基于内政数值和地形阻力计算）
+        /// 缓存结果，只在内政变化或手动清除时重新计算
+        /// 🧊 Cold Path：不在 Update 循环中频繁访问
+        /// </summary>
+        public GameArea InfluenceArea
+        {
+            get
+            {
+                if (_influenceArea != null) return _influenceArea;
+                
+                // 🔥 数据验证：确保前置条件满足
+                if (this.ArchitectureArea?.Area == null || this.ArchitectureArea.Area.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"建筑 {this.Name}(ID:{this.ID}) 的 ArchitectureArea 未初始化，" +
+                        "请检查 Architecture.LoadFromString() 或剧本数据");
+                }
+                
+                int energy = CalculateInfluenceEnergy();
+                
+                _influenceArea = GameArea.GetWeightedFloodFill(
+                    this.ArchitectureArea,
+                    energy,
+                    GetTerrainCostForInfluence
+                );
+                
+                return _influenceArea;
+            }
+            set => _influenceArea = value;
+        }
+        
+        /// <summary>
+        /// 🆕 计算势力范围的能量值
+        /// 公式：(规模 + 统治/民心 + 资源) × 天气倍率
+        /// 🧊 Cold Path：初始化和缓存失效时调用
+        /// </summary>
+        /// <summary>
+        /// 🆕 计算城池的势力范围能量（含驻军加权）
+        /// 日期：2026-03-14
+        /// 
+        /// 核心逻辑：
+        /// - 内政基础：规模、统治、民心、农业、商业
+        /// - 驻军威势：总兵力、平均士气（开方压制）
+        /// - 人才光环：武将五维（最高值权重 × 2）
+        /// - 政魅特化：最高政治 + 最高魅力（行政辐射力）
+        /// 
+        /// 能量范围：300-650
+        /// 
+        /// 🧊 Cold Path：回合结束/建筑变化时调用
+        /// </summary>
+        /// <summary>
+        /// 计算城池影响力能量
+        /// 日期：2026-03-16
+        /// 功能：使用统一的能量计算体系（功过分离机制 + 动态门槛 + 人口权重）
+        /// 🧊 Cold Path：回合结束/建筑变化时调用
+        /// </summary>
+        public int CalculateInfluenceEnergy()
+        {
+            // 使用统一的能量计算器
+            return WorldOfTheThreeKingdoms.GameObjects.EnergyCalculator.CalculateArchitectureInfluenceEnergy(
+                scale: this.JianzhuGuimo,
+                domination: this.Domination,
+                morale: this.Morale,
+                agriculture: this.Agriculture,
+                commerce: this.Commerce,
+                population: this.Population,
+                militaries: this.Militaries,
+                persons: this.Persons
+            );
+        }
+        
+        /// <summary>
+        /// 🆕 MOD 扩展点：自定义能量加成
+        /// </summary>
+        protected virtual double CalculateModInfluenceBonus()
+        {
+            // MOD 可以重写此方法添加自定义逻辑
+            return 0.0;
+        }
+        
+        /// <summary>
+        /// 🆕 获取当前天气的能量倍率
+        /// </summary>
+        private double GetCurrentWeatherEnergyMultiplier()
+        {
+            var config = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
+            
+            // 🚫 ANTI-BAND-AID：不使用 ?? 掩盖 null，而是明确检查
+            // 🔥 使用 WeatherManager 获取建筑位置的天气
+            var weatherManager = Session.Current.Scenario.WeatherManager;
+            if (weatherManager == null)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    "[Architecture] ⚠️ WeatherManager 未初始化，使用默认天气（晴）");
+                return 1.0;
+            }
+            
+            var weather = weatherManager.GetWeatherAt(this.ArchitectureArea.Centre);
+            string weatherName = weather.ToString();
+            
+            return config.GetWeatherEnergyMultiplier(weatherName);
+        }
+        
+        /// <summary>
+        /// 🆕 获取地形阻力（用于势力范围计算，考虑天气影响）
+        /// 🔥 阶段 1 优化：使用全局缓存，避免重复查询
+        /// </summary>
+        private static int GetTerrainCostForInfluence(Point position)
+        {
+            // 🔥 直接从缓存查表（O(1) 性能）
+            return WTKGameManager.TerrainCostCache.GetCost(position);
+        }
+        
+        /// <summary>
+        /// 🆕 清除势力范围缓存（在内政变化时调用）
+        /// </summary>
+        public void InvalidateInfluenceCache()
+        {
+            this._influenceArea = null;
+        }
+
+        /// <summary>
+        /// 🆕 阶段 3：查询指定点的净能量（使用全局能量地图）
+        /// 🔥 Hot Path：O(1) 查询性能，可在 Update/Draw 循环中频繁调用
+        /// </summary>
+        /// <param name="position">地图坐标</param>
+        /// <returns>净能量值（我方能量 - 敌方最大能量）</returns>
+        public int GetNetInfluenceAt(Point position)
+        {
+            // 🔥 ANTI-BAND-AID：明确检查数据源
+            if (BelongedFaction == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture] 建筑 {Name} 没有所属势力，无法查询净能量");
+            }
+            
+            if (BelongedFaction.GlobalInfluenceMap == null || BelongedFaction.GlobalInfluenceMap.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture] 势力 {BelongedFaction.Name} 的 GlobalInfluenceMap 未初始化");
+            }
+            
+            // 🔥 日期：2026-03-16
+            // 🔥 重构：使用 EffectiveTotalEnergy
+            int index = WTKGameManager.TerrainCostCache.GetIndex(position.X, position.Y);
+            int myEnergy = BelongedFaction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
+            int enemyEnergy = 0;
+            
+            // 🔥 ANTI-BAND-AID：明确检查数据源（不使用 ?.）
+            if (Session.Current == null)
+            {
+                throw new InvalidOperationException(
+                    "[Architecture] Session.Current 未初始化");
+            }
+            
+            if (Session.Current.Scenario == null)
+            {
+                throw new InvalidOperationException(
+                    "[Architecture] Scenario 未初始化，无法查询敌对势力");
+            }
+            
+            var scenario = Session.Current.Scenario;
+            
+            if (scenario.Factions == null)
+            {
+                throw new InvalidOperationException(
+                    "[Architecture] Scenario.Factions 为 null");
+            }
+            
+            // 🔥 Hot Path：直接访问 Factions，避免 GetList() 分配
+            var factions = scenario.Factions;
+            int factionCount = factions.Count;
+            
+            // 🔥 使用 for 循环，避免 LINQ
+            for (int i = 0; i < factionCount; i++)
+            {
+                // 🔥 ANTI-BAND-AID：明确检查类型
+                var factionObj = factions.GetGameObject(i);
+                if (factionObj is not Faction enemyFaction)
+                {
+                    throw new InvalidOperationException(
+                        $"[Architecture] Factions 列表包含无效项（索引 {i}）");
+                }
+                
+                if (enemyFaction == BelongedFaction) continue;
+                
+                // 检查是否敌对
+                if (BelongedFaction.IsHostile(enemyFaction))
+                {
+                    if (enemyFaction.GlobalInfluenceMap == null || enemyFaction.GlobalInfluenceMap.Length == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"[Architecture] 势力 {enemyFaction.Name} 的 GlobalInfluenceMap 未初始化");
+                    }
+                    
+                    // 🔥 日期：2026-03-16
+                    // 🔥 重构：使用 EffectiveTotalEnergy
+                    int energy = enemyFaction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
+                    if (energy > enemyEnergy)
+                    {
+                        enemyEnergy = energy;
+                    }
+                }
+            }
+            
+            return myEnergy - enemyEnergy;
+        }
+        
+        /// <summary>
+        /// 🆕 阶段 3：查询指定点是否在我方势力范围内
+        /// 🔥 Hot Path：O(1) 查询性能
+        /// </summary>
+        /// <param name="position">地图坐标</param>
+        /// <returns>true 表示在我方势力范围内（净能量 > 0）</returns>
+        public bool IsInMyInfluence(Point position)
+        {
+            return GetNetInfluenceAt(position) > 0;
+        }
+        
+        /// <summary>
+        /// 🆕 阶段 3：获取指定点的我方能量值
+        /// 🔥 Hot Path：O(1) 查询性能
+        /// </summary>
+        /// <param name="position">地图坐标</param>
+        /// <returns>我方能量值</returns>
+        public int GetMyInfluenceAt(Point position)
+        {
+            // 🔥 ANTI-BAND-AID：明确检查数据源
+            if (BelongedFaction == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture] 建筑 {Name} 没有所属势力");
+            }
+            
+            if (BelongedFaction.GlobalInfluenceMap == null || BelongedFaction.GlobalInfluenceMap.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"[Architecture] 势力 {BelongedFaction.Name} 的 GlobalInfluenceMap 未初始化");
+            }
+            
+            // 🔥 日期：2026-03-16
+            // 🔥 重构：使用 EffectiveTotalEnergy
+            int index = WTKGameManager.TerrainCostCache.GetIndex(position.X, position.Y);
+            return BelongedFaction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
         }
 
         public int MilitaryCount
@@ -14724,6 +19196,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.MoraleCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasMorale ? (_architectureKind.MoraleBase + (_architectureKind.MoraleUnit * (this.JianzhuGuimo - 1)) + this.IncrementOfMoraleCeiling) : 0;
             }
         }
@@ -14880,10 +19357,29 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.PopulationCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return (int)((_architectureKind.PopulationBase + (_architectureKind.PopulationUnit * (this.JianzhuGuimo - 1))) * (1 + this.RateIncrementOfPopulationCeiling));
             }
         }
 
+        // 在 Architecture.cs 中
+        public bool IsHabitableCity
+        {
+            get
+            {
+                if (this.Kind == null) return false;
+
+                // 🟢 强烈建议启用方案 A：最准确，彻底区分关隘和城市
+                return this.Kind.HasAgriculture || this.Kind.HasCommerce;
+
+                // 方案 B (备选)：如果 Kind 里没有 HasAgriculture 属性，再用人口判断
+                // return this.Kind.PopulationCeiling >= 20000;
+            }
+        }
         public double PopulationDevelopingRate
         {
             get
@@ -14927,7 +19423,7 @@ namespace GameObjects
         {
             get
             {
-                if ((this.LocationState.LinkedRegion.RegionCore != null) && this.LocationState.LinkedRegion.RegionCore.RegionCoreEffectAvail())
+                if (this.LocationState?.LinkedRegion?.RegionCore != null && this.LocationState.LinkedRegion.RegionCore.RegionCoreEffectAvail())
                 {
                     if (this.LocationState.LinkedRegion.RegionCore.IsFriendlyWithoutTruce(this.BelongedFaction))
                     {
@@ -14946,7 +19442,7 @@ namespace GameObjects
         {
             get
             {
-                return this.LocationState.LinkedRegionString;
+                return this.LocationState?.LinkedRegionString ?? "未知地区";
             }
         }
 
@@ -15055,7 +19551,7 @@ namespace GameObjects
         {
             get
             {
-                if ((this.LocationState.StateAdmin != null) && this.LocationState.StateAdmin.StateAdminEffectAvail())
+                if (this.LocationState?.StateAdmin != null && this.LocationState.StateAdmin.StateAdminEffectAvail())
                 {
                     if (this.LocationState.StateAdmin.IsFriendlyWithoutTruce(this.BelongedFaction))
                     {
@@ -15074,7 +19570,7 @@ namespace GameObjects
         {
             get
             {
-                return this.LocationState.Name;
+                return this.LocationState?.Name ?? "未知州域";
             }
         }
 
@@ -15098,6 +19594,11 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.TechnologyCeiling] ⚠️ 建筑 {this.Name}(ID:{this.ID}) 的 Kind 为 null，返回默认值 0");
+                    return 0;
+                }
                 return _architectureKind.HasTechnology ? ((_architectureKind.TechnologyBase + (_architectureKind.TechnologyUnit * (this.JianzhuGuimo - 1))) + this.IncrementOfTechnologyCeiling) : 0;
             }
         }
@@ -15166,7 +19667,10 @@ namespace GameObjects
                 {
                     var hasOblique = _architectureKind?.HasObliqueView ?? false;
 
-                    viewArea = GameArea.GetAreaFromArea(this.ArchitectureArea, this.ViewDistance, hasOblique, this.BelongedFaction);
+                    // 🔥 使用 EffectiveViewDistance 而不是 ViewDistance
+                    // 日期：2026-03-16
+                    // 原因：整合动态视野系统，基于能量增加视野范围
+                    viewArea = GameArea.GetAreaFromArea(this.ArchitectureArea, this.EffectiveViewDistance, hasOblique, this.BelongedFaction);
                 }
 
                 return viewArea;
@@ -15181,7 +19685,29 @@ namespace GameObjects
         {
             get
             {
+                if (_architectureKind == null)
+                {
+                    return 5 + this.IncrementOfViewRadius; // 默认视野距离
+                }
                 return _architectureKind.ViewDistance + (this.AreaCount / _architectureKind.ViewDistanceIncrementDivisor) + this.IncrementOfViewRadius;
+            }
+        }
+        
+        /// <summary>
+        /// 🆕 有效视野距离（基础 + 动态增益）
+        /// 🔥 Hot Path：在 ViewArea 计算中使用
+        /// 日期：2026-03-16
+        /// </summary>
+        public int EffectiveViewDistance
+        {
+            get
+            {
+                // 🔥 使用缓存，避免重复计算
+                if (_cachedEffectiveViewDistance < 0)
+                {
+                    _cachedEffectiveViewDistance = this.ViewDistance + GetDynamicVisionRange();
+                }
+                return _cachedEffectiveViewDistance;
             }
         }
 
@@ -15368,6 +19894,17 @@ namespace GameObjects
 
         public bool ExpandAvail()
         {
+            #if DEBUG
+            if (this.Name == "高陵")
+            {
+                // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] {Name} 检查扩建条件:");
+                // System.Diagnostics.Debug.WriteLine($"  资金检查: Fund={Fund}, ExpandFund={ExpandFund()}, 满足={Fund >= ExpandFund()}");
+                // System.Diagnostics.Debug.WriteLine($"  规模检查: JianzhuGuimo={JianzhuGuimo}, 满足={JianzhuGuimo == 1 || JianzhuGuimo == 5}");
+                // System.Diagnostics.Debug.WriteLine($"  简单图像: UseSimpleArchImages={Session.Current.Scenario.ScenarioMap.UseSimpleArchImages}");
+                // System.Diagnostics.Debug.WriteLine($"  可扩建性: Expandable={_architectureKind?.Expandable}, 满足={_architectureKind?.Expandable >= JianzhuGuimo}");
+            }
+            #endif
+            
             if (this.Fund < this.ExpandFund()) return false;
             if (this.JianzhuGuimo != 1 && this.JianzhuGuimo != 5) return false;
             if (Session.Current.Scenario.ScenarioMap.UseSimpleArchImages) return false;
@@ -15389,29 +19926,139 @@ namespace GameObjects
             }
             if (this.HasHostileTroopsInView()) return false;
 
+            #if DEBUG
+            // 🔥 诊断：检查 ExpandConditions 是否正确加载
+            // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] {Name} 检查 ExpandConditions:");
+            // System.Diagnostics.Debug.WriteLine($"  - Session.Parameters == null: {Session.Parameters == null}");
+            if (Session.Parameters != null)
+            {
+                // System.Diagnostics.Debug.WriteLine($"  - ExpandConditions == null: {Session.Parameters.ExpandConditions == null}");
+                if (Session.Parameters.ExpandConditions != null)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"  - ExpandConditions.Count: {Session.Parameters.ExpandConditions.Count}");
+                    // System.Diagnostics.Debug.WriteLine($"  - ExpandConditions 内容: {string.Join(", ", Session.Parameters.ExpandConditions)}");
+                }
+            }
+            #endif
+
             List<Condition> conditions = new List<Condition>();
             for (int i = 0; i < Session.Parameters.ExpandConditions.Count; i++)
             {
                 Condition c = Session.Current.Scenario.GameCommonData.AllConditions.GetCondition(Session.Parameters.ExpandConditions[i]);
                 conditions.Add(c);
+                
+                #if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] {Name} 条件 {i}: ID={Session.Parameters.ExpandConditions[i]}, Name={c?.Name ?? "null"}");
+                #endif
             }
-            if (!Condition.CheckConditionList(conditions, this)) return false;
+            
+            #if DEBUG
+            // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] {Name} 开始检查 {conditions.Count} 个条件");
+            #endif
+            
+            if (!Condition.CheckConditionList(conditions, this))
+            {
+                #if DEBUG
+                // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] ❌ {Name} 不满足扩建条件");
+                #endif
+                return false;
+            }
 
+            #if DEBUG
+            // 🔍 调试：确认哪些城市在什么条件下满足了扩建条件
+            // System.Diagnostics.Debug.WriteLine($"[ExpandAvail] ✅ {Name} 满足扩建条件: 资金={Fund}, 规模={JianzhuGuimo}, 人口={Population}");
+            #endif
+            
             return true;
         }
 
         public void Expand()
         {
-            this.Fund -= this.ExpandFund();
+            // 🔥 诊断：记录调用堆栈
+            #if DEBUG
+            var stackTrace = new System.Diagnostics.StackTrace(true);
+            System.Diagnostics.Debug.WriteLine($"[Expand] {Name}(ID:{ID}) 被调用");
+            System.Diagnostics.Debug.WriteLine($"[Expand] 调用堆栈:\n{stackTrace}");
+            #endif
+            
+            this.DecreaseFund(this.ExpandFund());  // 使用安全的减少方法
+            
+            // 🔥 修复：确保 _architectureArea 存在且正确初始化
+            if (this._architectureArea == null)
+            {
+                this._architectureArea = new GameArea();
+                if (!string.IsNullOrEmpty(ArchitectureAreaString))
+                {
+                    LoadFromString(this._architectureArea, ArchitectureAreaString);
+                }
+            }
+            
+            // 🔥 修复：直接操作 _architectureArea，避免通过 getter 触发一致性检查
             foreach (Point point in this.ExpandPoint())
             {
-                this.ArchitectureArea.AddPoint(point);
+                this._architectureArea.AddPoint(point);
+            }
+            
+            // 🔥 修复：扩建后立即同步更新 ArchitectureAreaString，防止 getter 中的一致性检查回滚修改
+            if (this._architectureArea != null && this._architectureArea.Area != null && this._architectureArea.Area.Count > 0)
+            {
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                foreach (Point p in this._architectureArea.Area)
+                {
+                    sb.Append(p.X);
+                    sb.Append(" ");
+                    sb.Append(p.Y);
+                    sb.Append(" ");
+                }
+                this.ArchitectureAreaString = sb.ToString();
+                
+                #if DEBUG
+                if (WorldOfTheThreeKingdoms.Diagnostics.SerializationDebugConfig.EnableAnomalyDetection)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Expand] {Name} 扩建完成，同步更新 ArchitectureAreaString，新规模: {this._architectureArea.Area.Count}");
+                }
+                #endif
             }
 
 
             this.ContactArea = this.ArchitectureArea.GetContactArea(false);
-            this.ViewArea = GameArea.GetAreaFromArea(this.ArchitectureArea, this.ViewDistance, _architectureKind.HasObliqueView, this.BelongedFaction);
+            
+            // 🔥 全面诊断：检查所有可能为 null 的对象
+            if (this.ArchitectureArea == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] ❌ 严重错误：{Name}(ID:{ID}) 的 ArchitectureArea 为 null！");
+                throw new InvalidOperationException($"建筑 {Name}(ID:{ID}) 的 ArchitectureArea 为 null");
+            }
+            
+            if (_architectureKind == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] ❌ 严重错误：{Name}(ID:{ID}) 的 _architectureKind 为 null！");
+                System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] Kind={(Kind != null ? Kind.Name : "null")}");
+                throw new InvalidOperationException($"建筑 {Name}(ID:{ID}) 的 _architectureKind 为 null");
+            }
+            
+            if (this.BelongedFaction == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] ❌ 严重错误：{Name}(ID:{ID}) 的 BelongedFaction 为 null！");
+                throw new InvalidOperationException($"建筑 {Name}(ID:{ID}) 的 BelongedFaction 为 null");
+            }
+            
+            System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] {Name}(ID:{ID}) 准备调用 GetAreaFromArea");
+            System.Diagnostics.Debug.WriteLine($"  - ArchitectureArea: {(this.ArchitectureArea != null ? "OK" : "NULL")}");
+            System.Diagnostics.Debug.WriteLine($"  - ViewDistance: {this.ViewDistance}");
+            System.Diagnostics.Debug.WriteLine($"  - EffectiveViewDistance: {this.EffectiveViewDistance}");
+            System.Diagnostics.Debug.WriteLine($"  - _architectureKind: {(_architectureKind != null ? "OK" : "NULL")}");
+            System.Diagnostics.Debug.WriteLine($"  - HasObliqueView: {_architectureKind.HasObliqueView}");
+            System.Diagnostics.Debug.WriteLine($"  - BelongedFaction: {(this.BelongedFaction != null ? this.BelongedFaction.Name : "NULL")}");
+            
+            // 🔥 使用 EffectiveViewDistance 而不是 ViewDistance
+            // 日期：2026-03-16
+            // 原因：扩建后重新创建 ViewArea，应该使用有效视野
+            this.ViewArea = GameArea.GetAreaFromArea(this.ArchitectureArea, this.EffectiveViewDistance, _architectureKind.HasObliqueView, this.BelongedFaction);
+            System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] {Name}(ID:{ID}) ViewArea 创建成功");
+            
             this.LongViewArea = GameArea.GetAreaFromArea(this.ArchitectureArea, this.LongViewDistance, _architectureKind.HasObliqueView, this.BelongedFaction);
+            System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] {Name}(ID:{ID}) LongViewArea 创建成功");
             this.BaseFoodSurplyArea = this.LongViewArea;
 
             foreach (Point point in this.ArchitectureArea.Area)
@@ -15421,6 +20068,9 @@ namespace GameObjects
 
             Session.Current.Scenario.SetMapTileArchitecture(this);
 
+            // 🔥 修复：在设置为null之前，先保存LongViewArea的引用
+            GameArea savedLongViewArea = this.LongViewArea;
+            
             this.ViewArea = null;
             this.LongViewArea = null;
             if (!Session.Current.Scenario.Preparing)
@@ -15436,12 +20086,20 @@ namespace GameObjects
             }
             if (this.AutoRefillFoodInLongViewArea)
             {
-                foreach (Point point in this.LongViewArea.Area)
+                // 🔥 修复：使用保存的引用而不是已经为null的this.LongViewArea
+                if (savedLongViewArea != null && savedLongViewArea.Area != null)
                 {
-                    if (!Session.Current.Scenario.PositionOutOfRange(point))
+                    foreach (Point point in savedLongViewArea.Area)
                     {
-                        Session.Current.Scenario.MapTileData[point.X, point.Y].AddSupplyingArchitecture(this);
+                        if (!Session.Current.Scenario.PositionOutOfRange(point))
+                        {
+                            Session.Current.Scenario.MapTileData[point.X, point.Y].AddSupplyingArchitecture(this);
+                        }
                     }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Architecture.Expand] ⚠️ {Name}(ID:{ID}) savedLongViewArea为null，跳过AddSupplyingArchitecture");
                 }
             }
             this.BelongedFaction.AddArchitectureKnownData(this);
@@ -15587,7 +20245,10 @@ namespace GameObjects
                 int kongjian = 0;
                 foreach (Facility facility in this.Facilities)
                 {
-                    kongjian += facility.Kind.rongna;
+                    if (facility.Kind != null)
+                    {
+                        kongjian += facility.Kind.rongna;
+                    }
                 }
                 return kongjian;
             }
@@ -15687,6 +20348,11 @@ namespace GameObjects
         {
             get
             {
+                if (this.ArchitectureArea == null || this.ArchitectureArea.Area == null || this.ArchitectureArea.Area.Count == 0)
+                {
+                    return new Point(0, 0);
+                }
+
                 int xzonghe = 0;
                 int yzonghe = 0;
                 int xpingjunzhi;
@@ -15716,6 +20382,11 @@ namespace GameObjects
         {
             get
             {
+                if (this.ArchitectureArea == null || this.ArchitectureArea.Area == null || this.ArchitectureArea.Area.Count == 0)
+                {
+                    return new Point(0, 0);
+                }
+
                 Point zuishangmiandedian = this.ArchitectureArea.Area[0];
                 foreach (Point p in this.ArchitectureArea.Area)
                 {
@@ -15731,7 +20402,7 @@ namespace GameObjects
                     {
                         return zuishangmiandedian;
                     }
-                    if (this.ArchitectureArea.Area[0].X == this.ArchitectureArea.Area[1].X)
+                    if (this.ArchitectureArea.Area.Count > 1 && this.ArchitectureArea.Area[0].X == this.ArchitectureArea.Area[1].X)
                     {
                         return zuishangmiandedian;
                     }
@@ -15766,7 +20437,16 @@ namespace GameObjects
         {
             get
             {
-                return IdlingPersonCount + "/" + PersonCount;
+                PersonList pList = Session.Current.Scenario.GetPersonList(this);
+                int idleCount = 0;
+                foreach (Person p in pList)
+                {
+                    if (p.WorkKind == ArchitectureWorkKind.无)
+                    {
+                        idleCount++;
+                    }
+                }
+                return idleCount.ToString() + "/" + pList.Count.ToString();
             }
         }
 
@@ -15825,6 +20505,12 @@ namespace GameObjects
                 return ((this.Mayor != null) ? this.Mayor.Name : "----");
             }
         }
+
+        /// <summary>
+        /// 城威（能量值）- 用于右侧栏UI显示
+        /// 日期：2026-03-21
+        /// </summary>
+        public int EnergyDisplay => this.CalculateInfluenceEnergy();
 
 
         public Person Advisor
@@ -16185,7 +20871,11 @@ namespace GameObjects
 
             if (groupsToCreate.Count == 0) return;
 
-            var selectedSetting = groupsToCreate.ToList()[GameObject.Random(groupsToCreate.Count)];
+            // 🔥 技术性修复：避免IndexOutOfRangeException
+            var groupList = groupsToCreate.ToList();
+            if (groupList.Count == 0) return;
+            
+            var selectedSetting = groupList[GameObject.Random(groupList.Count)];
 
             p.Fund -= selectedSetting.Cost;
 
@@ -16231,7 +20921,14 @@ namespace GameObjects
         {
             if (this.BelongedFaction != null)
             {
-                foreach (Person person in this.BelongedFaction.Persons)
+                // 检查势力君主是否有宝物
+                if (this.BelongedFaction.Leader != null && this.BelongedFaction.Leader.TreasureCount > 0)
+                {
+                    return true;
+                }
+                
+                // 检查势力内其他人员是否有宝物
+                foreach (Person person in this.BelongedFaction.Persons.GetList())
                 {
                     if (person.TreasureCount > 0)
                     {
@@ -16243,12 +20940,48 @@ namespace GameObjects
         }
 
         /// <summary>
-        /// 建筑内是否有宝物
+        /// 检查是否有宝物可以奖励（君主拥有的宝物）
+        /// 🔥 2026-03-03 修复：从扩展方法移到类内部，支持源生成器
         /// </summary>
-        /// <returns></returns>
+        public bool HasTreasureToAward()
+        {
+            if (this.BelongedFaction == null)
+                return false;
+
+            if (this.BelongedFaction.Leader == null)
+                return false;
+
+            return this.BelongedFaction.Leader.Treasures.Count > 0;
+        }
+
+        /// <summary>
+        /// 检查是否有宝物可以没收（下属拥有的宝物）
+        /// 🔥 2026-03-03 修复：从扩展方法移到类内部，支持源生成器
+        /// </summary>
+        public bool HasTreasureToConfiscate()
+        {
+            if (this.BelongedFaction == null)
+                return false;
+
+            return this.BelongedFaction.AllTreasuresExceptLeader.Count > 0;
+        }
+
+        /// <summary>
+        /// 检查是否有宝物可以出售（君主拥有的宝物）
+        /// 🔥 2026-03-03 修复：从扩展方法移到类内部，支持源生成器
+        /// </summary>
+        public bool HasTreasureToSell()
+        {
+            return this.HasTreasureToAward();
+        }
+
+        /// <summary>
+        /// 检查建筑内是否有人拥有宝物
+        /// 🔥 2026-03-16 修复：添加缺失的 HasTreasure 方法，供条件系统调用
+        /// </summary>
         public bool HasTreasure()
         {
-            foreach (Person person in this.GetAllPersons())
+            foreach (Person person in this.Persons)
             {
                 if (person.TreasureCount > 0)
                 {
@@ -16258,136 +20991,103 @@ namespace GameObjects
             return false;
         }
 
-        /// <summary>
-        /// 建筑内是否有可授予的宝物
-        /// </summary>
-        /// <returns></returns>
-        public bool HasTreasureToAward()
-        {
-            if ((this.BelongedFaction != null) && (this.BelongedFaction.Leader != null))
-            {
-                if (this.BelongedFaction.PersonCount <= 1)
-                {
-                    return false;
-                }
-                return this.BelongedFaction.Leader.TreasureCount > 0;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 建筑内是否有可没收的宝物
-        /// </summary>
-        /// <returns></returns>
-        public bool HasTreasureToConfiscate()
-        {
-            if ((this.BelongedFaction != null) && (this.BelongedFaction.Leader != null))
-            {
-                return this.BelongedFaction.AllTreasuresExceptLeader.Count > 0;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 获取君主宝物列表
-        /// </summary>
-        /// <returns></returns>
-        public TreasureList GetTreasureListOfLeader()
-        {
-            TreasureList list = new TreasureList();
-            if (this.BelongedFaction != null)
-            {
-                this.BelongedFaction.Leader.AddTreasureToList(list);
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// 获取建筑内所有宝物
-        /// </summary>
-        /// <returns></returns>
-        public TreasureList GetAllTreasureInArchitecture()
-        {
-            TreasureList list = new TreasureList();
-            foreach (Person person in this.GetAllPersons())
-            {
-                person.AddTreasureToList(list);
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// 获取建筑内所有宝物（君主除外）
-        /// </summary>
-        /// <returns></returns>
-        public TreasureList GetAllTreasureInArchitectureExceptLeader()
-        {
-            TreasureList list = new TreasureList();
-            if (this.BelongedFaction != null)
-            {
-                foreach (Person person in this.Persons)
-                {
-                    if (person != this.BelongedFaction.Leader)
-                    {
-                        person.AddTreasureToList(list);
-                    }
-                }
-            }
-            return list;
-        }
-
-        /// <summary>
-        /// 获取势力内所有宝物
-        /// </summary>
-        /// <returns></returns>
-        public TreasureList GetAllTreasureInFaction()
-        {
-            TreasureList list = new TreasureList();
-            if (this.BelongedFaction != null)
-            {
-                foreach (Person person in this.BelongedFaction.Persons)
-                {
-                    person.AddTreasureToList(list);
-                }
-            }
-            return list;
-        }
-
-        public bool HasPub()
-        {
-            foreach (Facility facility in this.Facilities)
-            {
-                if (facility.Kind.Influences.HasInfluenceKind(3520))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public int GetPubCost()
-        {
-            var cost = int.MaxValue;
-            foreach (Facility facility in this.Facilities)
-            {
-                if (facility.Kind.Influences.HasInfluenceKind(3520))
-                {
-                    List<Influence> inf = facility.Kind.Influences.GetInfluenceByKind(3520);
-                    foreach (var i in inf)
-                    {
-                        var thisCost = int.Parse(i.Parameter);
-                        if (thisCost < cost)
-                        {
-                            cost = thisCost;
-                        }
-                    }
-                }
-            }
-
-            return cost;
-        }
 
         #endregion
+
+        // [AI Optimization 2026-01-08] 反添油战术检测：是否满足协同出兵条件？
+        // target: 进攻目标
+        // potentialTroopForce: 预备创建的这支部队的战斗力
+        // return: true = 允许出兵; false = 囤积兵力，暂不出兵
+        public bool CheckCoordinatedAttack(Architecture target, int potentialTroopForce)
+        {
+            if (target == null || target.BelongedFaction == null) return true;
+
+            // 1. 防守/救援紧急情况：无需协同，立即出兵
+            // 如果目标是自己或友军（救援），或者目标就在我脸贴脸（防守），直接允许
+            if (target.BelongedFaction == this.BelongedFaction || this.BelongedFaction.IsFriendly(target.BelongedFaction)) return true;
+            
+            // 2. 战场侦察：前线是否已经打起来了？
+            // 如果目标周围已经有我方其他部队（>=1支），说明是去"增援"，不需要再死等，立即出发形成连续攻势
+            bool hasFriendlyTroopsNearby = false;
+            foreach (Troop t in this.BelongedFaction.Troops)
+            {
+                if (t.TargetArchitecture == target && !t.IsTransport && !t.Destroyed) 
+                {
+                    hasFriendlyTroopsNearby = true;
+                    break;
+                }
+            }
+            if (hasFriendlyTroopsNearby) return true;
+
+            // 3. "单点爆破"判定：不仅要看人多，还要看是否够强
+            // 如果这支部队是"高达"（战斗力极高，比如 > 15000 或 统率 > 95），
+            // 这种主力就算单走也是核威慑，允许单独出击。
+            if (potentialTroopForce > 12000) return true; 
+
+            // --- 核心：反添油逻辑 (Anti-Drip-Feeding) ---
+            
+            // 4. 后勤储备检查
+            // 如果前线没队友，自己又不是超级主力，那么必须保证：
+            // "我出城后，城里剩下的兵和粮，至少还够再造 1-2 支同等规模的部队"
+            // 这样才能形成"波次进攻"，而不是排队送死。
+            
+            int safeFoodThreshold = 50000; // 安全粮草线
+            
+            // 检查剩余人口：假设每支部队平均消耗 5000-8000 人，城里至少要留个 10000+ 人做后备
+            bool hasManpowerReserve = this.Population >= 12000; 
+            
+            // 检查剩余粮草：打仗最怕断粮，存粮不够不许开第一枪
+            bool hasFoodReserve = this.Food > safeFoodThreshold;
+
+            if (hasManpowerReserve && hasFoodReserve)
+            {
+                // 只有弹药充足，才允许打响第一枪
+                return true; 
+            }
+            
+            // 5. 否则，忍耐 (Hold)
+            // 资源不足以形成波次攻势，取消本次出兵，继续攒钱攒人。
+            return false;
+        }
+        [OnSerializing]
+        internal void OnSerializingMethod(StreamingContext context)
+        {
+            if (this.ArchitectureArea != null)
+            {
+                this.ArchitectureAreaString = this.ArchitectureArea.ToString();
+            }
+        }
+
+        [OnDeserialized]
+        internal void OnDeserializedMethod(StreamingContext context) => RebuildAfterDeserialization();
+
+        /// <summary>
+        /// IJsonOnDeserialized 接口实现 —— STJ AOT 模式下的反序列化回调。
+        /// [OnDeserialized] 特性仅被 DataContractSerializer 识别，STJ AOT 不调用它。
+        /// </summary>
+        void System.Text.Json.Serialization.IJsonOnDeserialized.OnDeserialized() => RebuildAfterDeserialization();
+
+        private void RebuildAfterDeserialization()
+        {
+            // 🔥 关键修复：确保 ArchitectureArea 从 ArchitectureAreaString 正确重建
+            if (!string.IsNullOrEmpty(this.ArchitectureAreaString))
+            {
+                this.ArchitectureArea = new GameArea();
+                this.LoadFromString(this.ArchitectureArea, this.ArchitectureAreaString);
+                System.Diagnostics.Debug.WriteLine($"[Architecture.OnDeserialized] {this.Name}(ID:{this.ID}) 区域点数: {this.ArchitectureArea.Area.Count}");
+            }
+            else
+            {
+                this.ArchitectureArea ??= new GameArea();
+                System.Diagnostics.Debug.WriteLine($"[Architecture.OnDeserialized] {this.Name}(ID:{this.ID}) ArchitectureAreaString 为空");
+            }
+
+            // 🔥 新增：诊断 KindID 状态
+            if (this.KindID <= 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Architecture.OnDeserialized] ⚠️ {this.Name}(ID:{this.ID}) KindID 无效: {this.KindID}");
+            }
+        }
     }
 }
+

@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -105,7 +105,7 @@ namespace OptionDialogPlugin
                 StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
                 style.TitleText = new FreeText(font, color);
                 style.TitleText.Position = StaticMethods.LoadRectangleFromXMLNode(node);
-                style.TitleText.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+                style.TitleText.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
                 node = node4.ChildNodes.Item(1);
                 style.OptionTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\OptionDialog\Data\" + node.Attributes.GetNamedItem("FileName").Value);
                 style.OptionSelectedTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\OptionDialog\Data\" + node.Attributes.GetNamedItem("Selected").Value);
@@ -114,7 +114,7 @@ namespace OptionDialogPlugin
                 node = node4.ChildNodes.Item(2);
                 StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
                 style.OptionTextList = new FreeTextList(font, color);
-                style.OptionTextList.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node.Attributes.GetNamedItem("Align").Value);
+                style.OptionTextList.Align = Enum.Parse<TextAlign>(node.Attributes.GetNamedItem("Align").Value);
                 this.optionDialog.Styles.Add(style.Name, style);
             }
         }

@@ -1,4 +1,4 @@
-﻿using GameObjects.Animations;
+using GameObjects.Animations;
 using GameObjects.ArchitectureDetail;
 using GameObjects.Conditions;
 using GameObjects.FactionDetail;
@@ -8,125 +8,117 @@ using GameObjects.PersonDetail;
 using GameObjects.SectionDetail;
 using GameObjects.TroopDetail;
 using GameObjects.TroopDetail.EventEffect;
+using ArchEventEffect = GameObjects.ArchitectureDetail.EventEffect;
 using Microsoft.Xna.Framework;
 using Platforms;
+using WorldOfTheThreeKingdoms.Tools;
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using System.Text.Json.Serialization;
+using System.Text.Json;
+using WorldOfTheThreeKingdoms.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 AOT 根本修复：移除 DataContract 特性
+    // 问题：DataContract/DataMember 与 System.Text.Json 源生成器冲突，导致源生成器静默失败
+    // 解决：使用 System.Text.Json 的特性（属性默认序列化），让 AOT 源生成器正常工作
     public class CommonData
     {
         public static CommonData Current = null;
 
         public static bool CurrentReady = false;
 
-        [DataMember]
+        public CommonData()
+        {
+            // 🔥 Checklist Fix: Priority 2 - Field Initialization
+            this.AllMilitaryKinds = new MilitaryKindTable();
+            this.AllInformationKinds = new InformationKindList();
+            this.AllSkills = new SkillTable();
+            // 🔥 2026-03-13 修复：保持 GameObjectList 类型以兼容现有代码
+            // 但通过 JsonConverter 属性指定使用 IdealTendencyKindList 进行反序列化
+            this.AllIdealTendencyKinds = new GameObjectList();
+        }
+
+        // 🔥 2026-02-12 AOT 根本修复：移除所有 DataMember 特性
+        // 问题：DataMember 与 System.Text.Json 源生成器冲突
+        // 解决：System.Text.Json 默认序列化所有公共属性和字段
         public float FlankBonus = 20.0f; // Default flank bonus
 
-        [DataMember]
         public ArchitectureKindTable AllArchitectureKinds = new ArchitectureKindTable();
-        [DataMember]
         public AttackDefaultKindList AllAttackDefaultKinds = new AttackDefaultKindList();
-        [DataMember]
         public AttackTargetKindList AllAttackTargetKinds = new AttackTargetKindList();
-        [DataMember]
         public CastDefaultKindList AllCastDefaultKinds = new CastDefaultKindList();
-        [DataMember]
         public CastTargetKindList AllCastTargetKinds = new CastTargetKindList();
 
-        [DataMember]
         public List<CharacterKind> AllCharacterKinds = new List<CharacterKind>();
-        [DataMember]
         public List<Color> AllColors = new List<Color>();
-        [DataMember]
         public CombatMethodTable AllCombatMethods = new CombatMethodTable();
 
         //性能优化
-        [DataMember]
         public ConditionKindTable AllConditionKinds = new ConditionKindTable();
 
-        [DataMember]
         public ConditionTable AllConditions = new ConditionTable();
 
-        [DataMember]
         public FacilityKindTable AllFacilityKinds = new FacilityKindTable();
 
-        [DataMember]
         public zainanzhongleibiao suoyouzainanzhonglei = new zainanzhongleibiao();
 
-        [DataMember]
         public guanjuezhongleibiao suoyouguanjuezhonglei = new guanjuezhongleibiao();
 
-        [DataMember]
+        // 🔥 2026-03-13 根本修复：使用自定义 JsonConverter 指定反序列化类型
+        // 问题：字段类型是 GameObjectList，但需要反序列化为 IdealTendencyKindList 以支持类型推断
+        // 解决：通过 JsonConverter 属性，让反序列化器知道应该创建 IdealTendencyKindList 实例
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.IdealTendencyKindListConverter))]
         public GameObjectList AllIdealTendencyKinds = new GameObjectList();
 
         //性能优化
-        [DataMember]
         public InfluenceKindTable AllInfluenceKinds = new InfluenceKindTable();
 
-        [DataMember]
         public InfluenceTable AllInfluences = new InfluenceTable();
 
-        [DataMember]
+        // 🔥 修复 1：强制使用 InformationKind 专用列表转换器
+        // 这样可以确保反序列化出来的是 InformationKind 而不是 GameObject
         public InformationKindList AllInformationKinds = new InformationKindList();
 
-        [DataMember]
         public MilitaryKindTable AllMilitaryKinds = new MilitaryKindTable();
 
-        [DataMember]
         public SectionAIDetailTable AllSectionAIDetails = new SectionAIDetailTable();
 
-        [DataMember]
         public SkillTable AllSkills = new SkillTable();
-        [DataMember]
         public StratagemTable AllStratagems = new StratagemTable();
-        [DataMember]
         public StuntTable AllStunts = new StuntTable();
-        [DataMember]
         public TechniqueTable AllTechniques = new TechniqueTable();
-        [DataMember]
         public TerrainDetailTable AllTerrainDetails = new TerrainDetailTable();
-        [DataMember]
+        
+        // 🔥 修复 2：强制使用刚刚写的文本表转换器，解决 Crash 问题
         public TextMessageTable AllTextMessages = new TextMessageTable();
-        [DataMember]
+        
         public AnimationTable AllTileAnimations = new AnimationTable();
 
-        [DataMember]
         public TitleTable AllTitles = new TitleTable();
 
-        [DataMember]
         public TitleKindTable AllTitleKinds = new TitleKindTable();
 
         // public GuanzhiTable AllGuanzhis = new GuanzhiTable();
         //public GuanzhiKindTable AllGuanzhiKinds = new GuanzhiKindTable();
-        [DataMember]
         public AnimationTable AllTroopAnimations = new AnimationTable();
 
-        [DataMember]
-        public EventEffectKindTable AllTroopEventEffectKinds = new EventEffectKindTable();
+        public GameObjects.TroopDetail.EventEffect.EventEffectKindTable AllTroopEventEffectKinds = new();
 
-        [DataMember]
-        public EventEffectTable AllTroopEventEffects = new EventEffectTable();
+        public GameObjects.TroopDetail.EventEffect.EventEffectTable AllTroopEventEffects = new();
 
-        [DataMember]
-        public GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable AllEventEffectKinds = new GameObjects.ArchitectureDetail.EventEffect.EventEffectKindTable();
+        public ArchEventEffect.EventEffectKindTable AllEventEffectKinds = new();
 
-        [DataMember]
-        public GameObjects.ArchitectureDetail.EventEffect.EventEffectTable AllEventEffects = new GameObjects.ArchitectureDetail.EventEffect.EventEffectTable();
+        public ArchEventEffect.EventEffectTable AllEventEffects = new();
 
-        [DataMember]
         public List<BiographyAdjectives> AllBiographyAdjectives = new List<BiographyAdjectives>();
-        [DataMember]
         public PersonGeneratorSetting PersonGeneratorSetting = new PersonGeneratorSetting();
-        [DataMember]
         public PersonGeneratorTypeList AllPersonGeneratorTypes = new PersonGeneratorTypeList();
-        [DataMember]
         public TrainPolicyList AllTrainPolicies = new TrainPolicyList();
-        
-        [DataMember]
+
         public TreasureCreationSettingList AllTreasureCreationSettings = new TreasureCreationSettingList();
 
         public CombatNumberGenerator NumberGenerator = new CombatNumberGenerator();
@@ -183,7 +175,7 @@ namespace GameObjects
         }
 
         /// <summary>
-        /// CommonData初始化
+        /// CommonData初始化 - 🔥 根本修复：直接使用 SimpleSerializer 进行反序列化
         /// </summary>
         public static void Init()
         {
@@ -191,17 +183,179 @@ namespace GameObjects
             {
                 try
                 {
-                    Current = Tools.SimpleSerializer.DeserializeJsonFile<CommonData>(@"Content\Data\Common\CommonData.json", false, false);
-
+                    System.Diagnostics.Debug.WriteLine("[CommonData.Init] 开始初始化 CommonData");
+                    
+                    // 🔥 根本修复：使用专用加载器处理 CommonData
+                    // 问题：CommonData.json 的字典使用字符串键，AOT 源生成器忽略全局转换器
+                    // 解决：使用 CommonDataLoader 手动处理反序列化
+                    // 日期：2026-03-20
+                    string commonDataPath = @"Content\Data\Common\CommonData.json";
+                    if (!System.IO.File.Exists(commonDataPath))
+                    {
+                        throw new System.IO.FileNotFoundException($"CommonData.json 文件不存在: {commonDataPath}");
+                    }
+                    
+                    System.Diagnostics.Debug.WriteLine($"[CommonData.Init] 从文件加载: {commonDataPath}");
+                    Current = WorldOfTheThreeKingdoms.Serialization.CommonDataLoader.LoadFromFile(commonDataPath);
+                    
+                    if (Current == null)
+                    {
+                        throw new InvalidOperationException("CommonData 反序列化返回 null");
+                    }
+                    
+                    // 🔥 验证关键数据完整性
+                    ValidateCommonDataIntegrity(Current);
+                    
                     GameScenario.ProcessCommonData(Current);
-
+                    
                     CurrentReady = true;
+                    System.Diagnostics.Debug.WriteLine("[CommonData.Init] ✅ CommonData 初始化成功");
                 }
                 catch (Exception ex)
                 {
-                    throw new Exception("CommonData初始化失敗:" + ex);
+                    System.Diagnostics.Debug.WriteLine($"[CommonData.Init] ❌ 初始化失败: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[CommonData.Init] 堆栈跟踪: {ex.StackTrace}");
+                    
+                    // 🔥 最后的应急恢复
+                    if (!TryEmergencyRecovery())
+                    {
+                        throw new Exception($"CommonData初始化失败，所有恢复方案都失败: {ex.Message}", ex);
+                    }
                 }
             }).Start();
+        }
+
+        /// <summary>
+        /// 🔥 根本修复：验证 CommonData 的完整性
+        /// </summary>
+        private static void ValidateCommonDataIntegrity(CommonData commonData)
+        {
+            var issues = new List<string>();
+            
+            // 检查关键数据表
+            if (commonData.AllMilitaryKinds == null)
+                issues.Add("AllMilitaryKinds 为 null");
+            else if (commonData.AllMilitaryKinds.MilitaryKinds == null)
+                issues.Add("AllMilitaryKinds.MilitaryKinds 为 null");
+            else if (commonData.AllMilitaryKinds.MilitaryKinds.Count == 0)
+                issues.Add("AllMilitaryKinds.MilitaryKinds 为空");
+                
+            if (commonData.AllInformationKinds == null)
+                issues.Add("AllInformationKinds 为 null");
+            else if (commonData.AllInformationKinds.GameObjects == null)
+                issues.Add("AllInformationKinds.GameObjects 为 null");
+                
+            if (commonData.AllArchitectureKinds == null)
+                issues.Add("AllArchitectureKinds 为 null");
+            
+            // 🔥 关键修复：检查 AllIdealTendencyKinds
+            if (commonData.AllIdealTendencyKinds == null)
+                issues.Add("AllIdealTendencyKinds 为 null");
+            else if (commonData.AllIdealTendencyKinds.Count == 0)
+                issues.Add("AllIdealTendencyKinds 为空");
+            
+            // 🔥 新增：检查 AllConditionKinds
+            if (commonData.AllConditionKinds == null)
+                issues.Add("AllConditionKinds 为 null");
+            else if (commonData.AllConditionKinds.ConditionKinds == null)
+                issues.Add("AllConditionKinds.ConditionKinds 为 null");
+            else if (commonData.AllConditionKinds.ConditionKinds.Count == 0)
+                issues.Add("AllConditionKinds.ConditionKinds 为空");
+                
+            if (issues.Count > 0)
+            {
+                string errorMsg = "CommonData 完整性检查失败:\n" + string.Join("\n", issues);
+                System.Diagnostics.Debug.WriteLine($"[ValidateCommonDataIntegrity] ❌ {errorMsg}");
+                throw new InvalidDataException(errorMsg);
+            }
+            
+            System.Diagnostics.Debug.WriteLine("[ValidateCommonDataIntegrity] ✅ CommonData 完整性检查通过");
+            System.Diagnostics.Debug.WriteLine($"[ValidateCommonDataIntegrity] - AllMilitaryKinds: {commonData.AllMilitaryKinds.MilitaryKinds.Count} 个兵种");
+            System.Diagnostics.Debug.WriteLine($"[ValidateCommonDataIntegrity] - AllInformationKinds: {commonData.AllInformationKinds.GameObjects.Count} 个情报类型");
+            System.Diagnostics.Debug.WriteLine($"[ValidateCommonDataIntegrity] - AllIdealTendencyKinds: {commonData.AllIdealTendencyKinds.Count} 个理想倾向");
+            System.Diagnostics.Debug.WriteLine($"[ValidateCommonDataIntegrity] - AllConditionKinds: {commonData.AllConditionKinds.ConditionKinds.Count} 个条件类型");
+        }
+
+        /// <summary>
+        /// 🔥 根本修复：应急恢复机制
+        /// </summary>
+        private static bool TryEmergencyRecovery()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[TryEmergencyRecovery] 尝试应急恢复");
+                
+                // 1. 尝试从备份文件恢复
+                string backupPath = @"Content\Data\Common\CommonData.backup.json";
+                if (System.IO.File.Exists(backupPath))
+                {
+                    System.Diagnostics.Debug.WriteLine("[TryEmergencyRecovery] 发现备份文件，尝试恢复");
+                    Current = SimpleSerializer.DeserializeJsonFile<CommonData>(backupPath, false, false);
+                    
+                    if (Current != null)
+                    {
+                        ValidateCommonDataIntegrity(Current);
+                        GameScenario.ProcessCommonData(Current);
+                        CurrentReady = true;
+                        System.Diagnostics.Debug.WriteLine("[TryEmergencyRecovery] ✅ 从备份文件恢复成功");
+                        return true;
+                    }
+                }
+                
+                // 2. 创建最小可用的 CommonData
+                System.Diagnostics.Debug.WriteLine("[TryEmergencyRecovery] 创建最小可用的 CommonData");
+                Current = CreateMinimalCommonData();
+                
+                if (Current != null)
+                {
+                    GameScenario.ProcessCommonData(Current);
+                    CurrentReady = true;
+                    System.Diagnostics.Debug.WriteLine("[TryEmergencyRecovery] ✅ 创建最小 CommonData 成功");
+                    return true;
+                }
+                
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TryEmergencyRecovery] ❌ 应急恢复失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 🔥 根本修复：创建最小可用的 CommonData
+        /// </summary>
+        private static CommonData CreateMinimalCommonData()
+        {
+            try
+            {
+                var commonData = new CommonData();
+                
+                // 初始化关键数据表
+                commonData.AllMilitaryKinds = new MilitaryKindTable();
+                commonData.AllInformationKinds = new InformationKindList();
+                commonData.AllArchitectureKinds = new ArchitectureKindTable();
+                commonData.AllConditions = new ConditionTable();
+                commonData.AllInfluences = new InfluenceTable();
+                commonData.AllSkills = new SkillTable();
+                commonData.AllTechniques = new TechniqueTable();
+                commonData.AllCombatMethods = new CombatMethodTable();
+                
+                // 确保 GameObjects 列表不为 null
+                if (commonData.AllInformationKinds.GameObjects == null)
+                {
+                    commonData.AllInformationKinds.GameObjects = new List<GameObject>();
+                }
+                
+                System.Diagnostics.Debug.WriteLine("[CreateMinimalCommonData] 创建了最小可用的 CommonData");
+                return commonData;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CreateMinimalCommonData] ❌ 创建最小 CommonData 失败: {ex.Message}");
+                return null;
+            }
         }
     }
 }

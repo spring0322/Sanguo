@@ -1,6 +1,6 @@
 using System;
 using GameObjects;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using WorldOfTheThreeKingdoms;
 
 // 使用别名避免命名冲突

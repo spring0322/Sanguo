@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 
@@ -8,7 +8,9 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind6710 : InfluenceKind
     {
+        [DataMember]
         private int increment;
+        [DataMember]
         private int prob;
 
         public override void ApplyInfluenceKind(Person t)

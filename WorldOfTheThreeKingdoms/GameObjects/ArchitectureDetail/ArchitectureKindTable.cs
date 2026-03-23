@@ -9,8 +9,11 @@ namespace GameObjects.ArchitectureDetail
     [DataContract]
     public class ArchitectureKindTable
     {
+        // 🔥 关键修复：JSON 中的字典键是字符串（"1", "2"），需要转换为 int
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, ArchitectureKind> ArchitectureKinds = new Dictionary<int, ArchitectureKind>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, ArchitectureKind>))]
+        public Dictionary<int, ArchitectureKind> ArchitectureKinds = [];
 
         /// <summary>
         /// 建筑类型字典添加类型
@@ -42,7 +45,25 @@ namespace GameObjects.ArchitectureDetail
         /// <returns></returns>
         public ArchitectureKind GetArchitectureKind(int id)
         {
+            // 🔥 诊断：检查字典状态
+            if (ArchitectureKinds == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ❌ ArchitectureKinds 字典为 null！");
+                return null;
+            }
+            
+            if (ArchitectureKinds.Count == 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ❌ ArchitectureKinds 字典为空！");
+                return null;
+            }
+            
             ArchitectureKinds.TryGetValue(id, out var architectureKind);
+            
+            if (architectureKind == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ⚠️ 找不到 ID={id} 的建筑类型，字典包含: {string.Join(", ", ArchitectureKinds.Keys)}");
+            }
 
             return architectureKind;
         }

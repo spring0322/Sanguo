@@ -6,7 +6,8 @@ using GameManager;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 根本修复：移除 [DataContract]，添加 [JsonConverter]
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class PersonList : GameObjectList
     {
         public void Add(Person person)
@@ -61,7 +62,7 @@ namespace GameObjects
         {
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person = obj as Person;
+                Person person = (obj is Person ? (Person)obj : null);
                 if (person != null)
                 {
                     if (!Session.Current.Scenario.Preparing)
@@ -89,7 +90,7 @@ namespace GameObjects
             this.PurifyInfluences();
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person = obj as Person;
+                Person person = (obj is Person ? (Person)obj : null);
                 if (person != null)
                 {
                      person.ApplyTitles(false);
@@ -106,7 +107,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                     if (person2.Command > command)
@@ -125,7 +126,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                     if (person2.ControversyAbility > controversyAbility)
@@ -144,7 +145,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                     if (person2.Intelligence > intelligence)
@@ -163,7 +164,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                     if (person2.Merit > merit)
@@ -182,7 +183,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                     if (person2.UntiredMerit > merit)
@@ -201,7 +202,7 @@ namespace GameObjects
             Person person = null;
             foreach (GameObject obj in base.GameObjects)
             {
-                Person person2 = obj as Person;
+                Person person2 = (obj is Person ? (Person)obj : null);
                 if (person2 != null)
                 {
                         if (person2.Strength > strength)
@@ -390,3 +391,4 @@ namespace GameObjects
         }
     }
 }
+

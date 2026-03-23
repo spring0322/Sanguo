@@ -8,13 +8,110 @@ using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
 using GameObjects.PersonDetail;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using WorldOfTheThreeKingdoms.GameScreens;
 
-
 namespace WorldOfTheThreeKingdoms.GameManager
 {
+    /// <summary>
+    /// 军师推荐系统配置
+    /// </summary>
+    public static class AdvisorRecommendationConfig
+    {
+        // 基础配置
+        public static readonly int MinIntelligenceThreshold = 50;        // 军师最低智力要求（降低门槛）
+        public static readonly int SuperAdvisorIntelligenceThreshold = 100; // 超级军师智力门槛（智力100以上才能全图举荐）
+        public static readonly int RecommendationCooldownYears = 1;      // 推荐冷却年数
+        public static readonly bool EnableDebugLog = false;             // 是否启用调试日志
+
+        // 成功率计算
+        public static readonly int BaseSuccessRate = 30;                 // 基础成功率
+        public static readonly int IntelligenceBonus = 2;                // 每点智力的成功率加成
+
+        // 劝说判定配置
+        public static readonly int PersonalLoyaltyPenalty = 10;          // 每点义理的劝说成功率惩罚
+        public static readonly int MinPersuadeChance = 5;                // 最低劝说成功率
+        public static readonly int MaxPersuadeChance = 85;               // 最高劝说成功率
+
+        // 失败补偿配置
+        public static readonly int FailureCompensationMerit = 5;         // 失败补偿功绩
+        public static readonly int FailureCompensationMorale = 2;        // 失败补偿治安
+
+        /// <summary>
+        /// 计算推荐成功率
+        /// </summary>
+        public static int CalculateSuccessRate(int intelligence)
+        {
+            int rate = BaseSuccessRate + (intelligence - MinIntelligenceThreshold) * IntelligenceBonus;
+            return Math.Max(0, Math.Min(100, rate));
+        }
+    }
+
+    /// <summary>
+    /// 招募方式枚举
+    /// </summary>
+    public enum RecruitMethod
+    {
+        Direct,         // 直接招募
+        Recommendation, // 军师推荐
+        Event          // 事件招募
+    }
+
+    /// <summary>
+    /// 招募计算器
+    /// </summary>
+    public static class RecruitmentCalculator
+    {
+        /// <summary>
+        /// 计算初始忠诚度
+        /// </summary>
+        public static int CalculateInitialLoyalty(Person leader, Person advisor, Person recruit, RecruitMethod method)
+        {
+            try
+            {
+                if (leader == null || recruit == null) return 50;
+
+                int baseLoyalty = 50;
+
+                // 君主魅力影响
+                baseLoyalty += leader.Glamour / 5;
+
+                // 招募方式影响
+                switch (method)
+                {
+                    case RecruitMethod.Recommendation:
+                        if (advisor != null)
+                        {
+                            baseLoyalty += advisor.Glamour / 10; // 军师推荐加成
+                        }
+                        break;
+                    case RecruitMethod.Event:
+                        baseLoyalty += 10; // 事件招募加成
+                        break;
+                }
+
+                // 相性影响
+                if (leader.Ideal == recruit.Ideal)
+                {
+                    baseLoyalty += 15;
+                }
+                else
+                {
+                    int idealDiff = Math.Abs(leader.Ideal - recruit.Ideal);
+                    if (idealDiff > 75) idealDiff = 150 - idealDiff; // 环形距离
+                    baseLoyalty -= idealDiff / 10;
+                }
+
+                return Math.Max(10, Math.Min(100, baseLoyalty));
+            }
+            catch
+            {
+                return 50; // 默认忠诚度
+            }
+        }
+    }
+
     /// <summary>
     /// 军师举荐系统 - 处理自动人才推荐功能
     /// </summary>
@@ -54,153 +151,6 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
         // 全局统计数据
         private static RecommendationStats _globalStats = new RecommendationStats();
-
-        /// <summary>
-        /// 人才发现结果 - 用于年度举荐系统
-        /// </summary>
-        public class TalentDiscoveryResult
-        {
-            public Person Advisor { get; set; }
-            public List<Person> DiscoveredTalents { get; set; } = new List<Person>();
-            public bool IsSuccess => DiscoveredTalents.Count > 0;
-            public RecommendationResult ResultType { get; set; } = RecommendationResult.None;
-            public string FailureReason { get; set; } = "";
-        }
-
-        /// <summary>
-        /// 发现多个人才（最多3人）- 用于年度举荐系统
-        /// 关键：此方法只做计算，不做任何实际招募操作
-        /// </summary>
-        public TalentDiscoveryResult DiscoverMultipleTalents(Faction faction, int maxCount = 3)
-        {
-            var result = new TalentDiscoveryResult();
-            
-            try
-            {
-                Person advisor = faction?.Advisor;
-                if (advisor == null && faction?.Leader != null)
-                    advisor = faction.Leader;
-                
-                result.Advisor = advisor;
-                
-                int currentYear = Session.Current.Scenario.Date.Year;
-                
-                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 开始年度人才发现，势力: {faction?.Name}, 年份: {currentYear}");
-                
-                // 1. 频率检查
-                if (faction.LastTalentRecommendYear >= currentYear)
-                {
-                    result.ResultType = RecommendationResult.None;
-                    result.FailureReason = "今年已经进行过举荐";
-                    return result;
-                }
-                
-                // 2. 军师检查
-                if (advisor == null || !advisor.Alive)
-                {
-                    result.ResultType = RecommendationResult.None;
-                    result.FailureReason = "无军师或军师已死亡";
-                    return result;
-                }
-                
-                // 3. 智力门槛检查
-                if (advisor.Intelligence < AdvisorRecommendationConfig.MinIntelligenceThreshold)
-                {
-                    result.ResultType = RecommendationResult.Fail_LowAbility;
-                    result.FailureReason = $"军师智力不足 ({advisor.Intelligence} < 70)";
-                    _globalStats.FailedLowAbility++;
-                    return result;
-                }
-                
-                // 4. 收集候选人
-                var allCandidates = new List<Person>();
-                foreach (Person p in Session.Current.Scenario.Persons)
-                {
-                    if (p.Status == PersonStatus.NoFaction && 
-                        p.Alive && 
-                        !p.IsCaptive &&
-                        p.Available && 
-                        faction.IsPositionKnown(p.Position))
-                    {
-                        allCandidates.Add(p);
-                    }
-                }
-                
-                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 找到候选人数量: {allCandidates.Count}");
-                
-                // 5. 无候选人
-                if (allCandidates.Count == 0)
-                {
-                    result.ResultType = RecommendationResult.Fail_NoTalent;
-                    result.FailureReason = "已知区域内无可用人才";
-                    _globalStats.FailedNoTalent++;
-                    return result;
-                }
-                
-                // 6. 智力检定
-                int successRate = AdvisorRecommendationConfig.CalculateSuccessRate(advisor.Intelligence);
-                int roll = GameObject.Random(100);
-                
-                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 智力检定: {successRate}% vs 骰子{roll}");
-                
-                if (roll >= successRate)
-                {
-                    result.ResultType = RecommendationResult.Fail_LowAbility;
-                    result.FailureReason = "智力检定失败";
-                    _globalStats.FailedLowAbility++;
-                    return result;
-                }
-                
-                // 7. 成功！按能力值排序选取最多3个
-                var sortedCandidates = allCandidates
-                    .OrderByDescending(p => CalculatePersonValue(p))
-                    .Take(maxCount)
-                    .ToList();
-                
-                result.DiscoveredTalents = sortedCandidates;
-                result.ResultType = RecommendationResult.Success_FoundOnly;
-                _globalStats.SuccessfulRecommendations++;
-                
-                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 成功发现 {sortedCandidates.Count} 人才: {string.Join(", ", sortedCandidates.Select(p => p.Name))}");
-                
-                return result;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 异常: {ex.Message}");
-                result.ResultType = RecommendationResult.None;
-                result.FailureReason = $"发生异常: {ex.Message}";
-                return result;
-            }
-        }
-
-        /// <summary>
-        /// 执行人才招募（玩家选择后调用）
-        /// </summary>
-        public bool RecruitTalent(Faction faction, Person talent)
-        {
-            if (faction == null || talent == null) return false;
-            
-            try
-            {
-                Person advisor = faction.Advisor ?? faction.Leader;
-                Architecture targetArch = advisor?.LocationArchitecture ?? faction.Capital;
-                
-                if (targetArch != null)
-                {
-                    talent.MoveToArchitecture(targetArch);
-                    faction.LastTalentRecommendYear = Session.Current.Scenario.Date.Year;
-                    
-                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] {talent.Name} 加入 {faction.Name}");
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 异常: {ex.Message}");
-            }
-            return false;
-        }
 
         /// <summary>
         /// 尝试执行举荐（包含失败补偿逻辑）
@@ -259,13 +209,49 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
             // 4. 搜寻范围：本势力已知区域的在野武将
             var candidates = new List<Person>();
-            foreach (Person p in Session.Current.Scenario.Persons)
+            
+            // 🔥 修复：将日志移到循环外，避免刷屏
+            bool isSuperAdvisor = advisor.Intelligence >= AdvisorRecommendationConfig.SuperAdvisorIntelligenceThreshold;
+            if (isSuperAdvisor && AdvisorRecommendationConfig.EnableDebugLog)
             {
+                System.Diagnostics.Debug.WriteLine($"[AttemptRecommendation] 军师{advisor.Name}智力{advisor.Intelligence}>={AdvisorRecommendationConfig.SuperAdvisorIntelligenceThreshold}，可举荐全图人才");
+            }
+            
+            // 🔥 2026-03-11 修复：避免在 foreach 中访问可能被修改的集合
+            // 问题：Session.Current.Scenario.Persons 在异步环境中可能被修改，导致 IndexOutOfRangeException
+            // 解决：先转换为数组快照，避免集合修改异常
+            Person[] personsSnapshot;
+            try
+            {
+                // 🔥 修复：GetList() 返回 GameObjectList，需要使用 OfType<Person>() 过滤类型
+                personsSnapshot = Session.Current.Scenario.Persons.GetList().OfType<Person>().ToArray();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AttemptRecommendation] 获取人物列表快照失败: {ex.Message}");
+                _globalStats.FailedNoTalent++;
+                ApplyFailureCompensation(advisor);
+                return RecommendationResult.Fail_NoTalent;
+            }
+            
+            foreach (Person p in personsSnapshot)
+            {
+                // 智力100及以上的军师可以举荐全图人才，不受地域限制
+                bool canRecommend = false;
+                if (isSuperAdvisor)
+                {
+                    canRecommend = true; // 超级军师无视地域限制
+                }
+                else
+                {
+                    canRecommend = faction.IsPositionKnown(p.Position); // 普通军师受地域限制
+                }
+                
                 if (p.Status == PersonStatus.NoFaction && 
                     p.Alive && 
                     !p.IsCaptive &&
                     p.Available && 
-                    faction.IsPositionKnown(p.Position)) // 必须是已知区域
+                    canRecommend) // 使用动态判定的地域限制
                 {
                     candidates.Add(p);
                 }
@@ -325,6 +311,23 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
             // 9. 新增：判定是"直接带回"还是"仅发现"
             RecommendationResult finalResult = DetermineRecruitmentOutcome(advisor, foundPerson);
+
+            // 🔥 关键修复：AI势力自动执行招募
+            if (finalResult == RecommendationResult.Success_DirectJoin && foundPerson != null)
+            {
+                bool isPlayer = Session.Current.Scenario.IsCurrentPlayer(faction);
+                if (!isPlayer)
+                {
+                    // AI势力：自动执行招募
+                    System.Diagnostics.Debug.WriteLine($"[AttemptRecommendation] AI势力自动招募: {foundPerson.Name}");
+                    bool recruitSuccess = RecruitTalentStatic(faction, foundPerson);
+                    if (!recruitSuccess)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AttemptRecommendation] AI自动招募失败，降级为仅发现");
+                        finalResult = RecommendationResult.Success_FoundOnly;
+                    }
+                }
+            }
 
             if (AdvisorRecommendationConfig.EnableDebugLog)
             {
@@ -504,6 +507,15 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     }
                 }
 
+                // 🔥 2026-03-11 修复：安全检查，避免 IndexOutOfRangeException
+                // 问题：weightedCandidates 可能为空（虽然理论上不应该）
+                // 原因：异步环境中可能存在竞态条件
+                if (weightedCandidates.Count == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine("[AdvisorRecommendationSystem] ⚠️ weightedCandidates 为空，返回原始候选人列表的第一个");
+                    return candidates.FirstOrDefault();
+                }
+                
                 // 备用方案：返回第一个
                 return weightedCandidates[0].person;
             }
@@ -549,144 +561,80 @@ namespace WorldOfTheThreeKingdoms.GameManager
             return Math.Max(1, totalValue); // 最小值为1
         }
         /// <summary>
-        /// 处理推荐结果的统一接口
+        /// 获取推荐结果的描述文本
         /// </summary>
-        /// <param name="faction">执行推荐的势力</param>
-        /// <param name="result">推荐结果</param>
-        /// <param name="talent">发现的人才</param>
-        /// <param name="initialLoyalty">计算出的初始忠诚度</param>
-        public void HandleRecommendationResult(Faction faction, RecommendationResult result, Person talent, int initialLoyalty)
+        public string GetResultDescription(RecommendationResult result)
         {
-            if (faction?.Advisor == null) 
+            switch (result)
             {
-                System.Diagnostics.Debug.WriteLine("[HandleRecommendationResult] 势力或军师为空，无法处理推荐结果");
-                return;
+                case RecommendationResult.None:
+                    return "未执行推荐（冷却中或无军师）";
+                case RecommendationResult.Fail_NoTalent:
+                    return "推荐失败：已知区域内无可用人才";
+                case RecommendationResult.Fail_LowAbility:
+                    return "推荐失败：军师能力不足";
+                case RecommendationResult.Success_FoundOnly:
+                    return "推荐成功：发现人才，需要主公亲自招募";
+                case RecommendationResult.Success_DirectJoin:
+                    return "推荐大成功：人才直接加入阵营";
+                default:
+                    return "未知推荐结果";
             }
+        }
+
+        /// <summary>
+        /// 获取全局统计数据
+        /// </summary>
+        public static RecommendationStats GetGlobalStats()
+        {
+            return _globalStats;
+        }
+
+        /// <summary>
+        /// 获取军师评估信息
+        /// </summary>
+        public static string GetAdvisorAssessment(Person advisor)
+        {
+            if (advisor == null || !advisor.Alive)
+                return "无军师";
+
+            if (advisor.Intelligence < AdvisorRecommendationConfig.MinIntelligenceThreshold)
+                return $"军师智力不足（{advisor.Intelligence} < {AdvisorRecommendationConfig.MinIntelligenceThreshold}）";
+
+            if (advisor.Intelligence >= AdvisorRecommendationConfig.SuperAdvisorIntelligenceThreshold)
+                return $"超级军师（智力{advisor.Intelligence}，可举荐全图人才）";
+
+            return $"合格军师（智力{advisor.Intelligence}）";
+        }
+
+        /// <summary>
+        /// 处理推荐结果
+        /// </summary>
+        public static void HandleRecommendationResult(Faction faction, RecommendationResult result, Person foundPerson, int initialLoyalty)
+        {
+            if (faction == null) return;
 
             Person advisor = faction.Advisor;
-            
+            if (advisor == null) return;
+
             try
             {
-                switch (result)
+                // 所有情况都只显示对话框，让玩家选择
+                ShowRecommendationDialog(faction, result, foundPerson, initialLoyalty);
+
+                if (AdvisorRecommendationConfig.EnableDebugLog)
                 {
-                    case RecommendationResult.Success_DirectJoin:
-                        // --- 情况A：直接加入 ---
-                        if (talent != null)
-                        {
-                            try
-                            {
-                                // 1. 执行加入逻辑 - 使用MoveToArchitecture确保正确加入势力
-                                Architecture targetArchitecture = advisor.LocationArchitecture ?? faction.Capital;
-                                if (targetArchitecture != null)
-                                {
-                                    talent.MoveToArchitecture(targetArchitecture);
-                                    
-                                    // 设置基础个人忠诚度（影响计算出的Loyalty值）
-                                    if (talent.PersonalLoyalty < 2)
-                                    {
-                                        talent.PersonalLoyalty = 2;
-                                    }
-                                }
-                                else
-                                {
-                                    System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 警告：无法找到合适的目标建筑，{talent.Name}加入可能失败");
-                                }
-                                
-                                // 2. 设置初始忠诚度变化
-                                talent.TempLoyaltyChange = initialLoyalty - talent.Loyalty;
-                                
-                                // 3. 显示成功消息（使用配置对话）
-                                string content = AdvisorDialogueManager.GetDialogue(faction, result, advisor, talent, talent.Loyalty);
-                                string successMessage = $"{advisor.Name}：{content}";
-                                
-                                ShowRecommendationDialog(faction, successMessage, talent, true);
-                                
-                                if (AdvisorRecommendationConfig.EnableDebugLog)
-                                {
-                                    System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] {talent.Name}直接加入{faction.Name}，忠诚度{talent.Loyalty}");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 处理直接加入时发生异常: {ex.Message}");
-                                string errorMessage = $"{advisor.Name}：主公，臣在执行任务时遇到了困难，请稍后再试。";
-                                ShowRecommendationDialog(faction, errorMessage, talent, false);
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("[HandleRecommendationResult] 警告：Success_DirectJoin但talent为null");
-                        }
-                        break;
-
-                    case RecommendationResult.Success_FoundOnly:
-                        // --- 情况B：仅发现 ---
-                        if (talent != null)
-                        {
-                            try
-                            {
-                                // 1. 确保人才可见（在野状态）
-                                talent.Available = true;
-                                
-                                // 2. 显示发现消息（使用配置对话）
-                                string content = AdvisorDialogueManager.GetDialogue(faction, result, advisor, talent, initialLoyalty);
-                                string foundMessage = $"{advisor.Name}：{content}";
-                                
-                                ShowRecommendationDialog(faction, foundMessage, talent, false);
-                                
-                                if (AdvisorRecommendationConfig.EnableDebugLog)
-                                {
-                                    System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 发现人才{talent.Name}，需手动招募");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 处理发现人才时发生异常: {ex.Message}");
-                                string errorMessage = $"{advisor.Name}：主公，臣在执行任务时遇到了困难，请稍后再试。";
-                                ShowRecommendationDialog(faction, errorMessage, null, false);
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine("[HandleRecommendationResult] 警告：Success_FoundOnly但talent为null");
-                        }
-                        break;
-
-                    case RecommendationResult.Fail_NoTalent:
-                        // 失败：没有人才
-                        string noTalentContent = AdvisorDialogueManager.GetDialogue(faction, result, advisor, null, 0);
-                        ShowRecommendationDialog(faction, $"{advisor.Name}：{noTalentContent}", null, false);
-                        break;
-
-                    case RecommendationResult.Fail_LowAbility:
-                        // 失败：能力不足
-                        string lowAbilityContent = AdvisorDialogueManager.GetDialogue(faction, result, advisor, null, 0);
-                        ShowRecommendationDialog(faction, $"{advisor.Name}：{lowAbilityContent}", null, false);
-                        break;
-
-                    case RecommendationResult.None:
-                        // 今年已经推荐过
-                        string cooldownContent = AdvisorDialogueManager.GetDialogue(faction, result, advisor, null, 0);
-                        ShowRecommendationDialog(faction, $"{advisor.Name}：{cooldownContent}", null, false);
-                        break;
-
-                    default:
-                        System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 未知的推荐结果类型: {result}");
-                        string unknownContent = AdvisorDialogueManager.GetDialogue(faction, RecommendationResult.None, advisor, null, 0);
-                        ShowRecommendationDialog(faction, $"{advisor.Name}：{unknownContent}", null, false);
-                        break;
+                    System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 推荐结果: {result}, 发现人才: {foundPerson?.Name ?? "无"}, 预计忠诚度: {initialLoyalty}");
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 处理推荐结果时发生异常: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"[HandleRecommendationResult] 堆栈跟踪: {ex.StackTrace}");
                 
                 // 提供最后的备用消息
                 try
                 {
-                    string fallbackMessage = $"{advisor.Name}：主公，臣在执行任务时遇到了困难，请稍后再试。";
-                    ShowRecommendationDialog(faction, fallbackMessage, null, false);
+                    ShowRecommendationDialog(faction, RecommendationResult.None, null, 0);
                 }
                 catch
                 {
@@ -696,683 +644,840 @@ namespace WorldOfTheThreeKingdoms.GameManager
         }
 
         /// <summary>
-        /// 显示推荐对话框
+        /// 年度人才推荐系统 - 发现多个人才
         /// </summary>
-        private void ShowRecommendationDialog(Faction faction, string message, Person talent, bool isDirectJoin)
+        public DiscoveryResult DiscoverMultipleTalents(Faction faction, int maxCount = 3)
+        {
+            var result = new DiscoveryResult();
+            Person advisor = faction.Advisor;
+            int currentYear = Session.Current.Scenario.Date.Year;
+
+            if (AdvisorRecommendationConfig.EnableDebugLog)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 开始年度推荐流程，当前年份: {currentYear}");
+            }
+
+            // 1. 频率检查：今年是否已经执行过？
+            if (faction.LastTalentRecommendYear >= currentYear - AdvisorRecommendationConfig.RecommendationCooldownYears + 1)
+            {
+                result.IsSuccess = false;
+                result.FailureReason = "今年已经进行过推荐";
+                if (AdvisorRecommendationConfig.EnableDebugLog)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 推荐冷却中，上次推荐年份: {faction.LastTalentRecommendYear}");
+                }
+                return result;
+            }
+
+            // 2. 基础检查
+            if (advisor == null || !advisor.Alive)
+            {
+                result.IsSuccess = false;
+                result.FailureReason = "无军师或军师已死亡";
+                return result;
+            }
+
+            // 3. 智力门槛检查
+            if (advisor.Intelligence < AdvisorRecommendationConfig.MinIntelligenceThreshold)
+            {
+                result.IsSuccess = false;
+                result.FailureReason = "军师智力不足";
+                ApplyFailureCompensation(advisor);
+                return result;
+            }
+
+            // 4. 搜寻范围：智力>100的军师可以举荐全图人才，否则限制在已知区域
+            var allCandidates = new List<Person>();
+            
+            // 🔥 修复：将日志移到循环外，避免刷屏
+            bool isSuperAdvisor = advisor.Intelligence >= AdvisorRecommendationConfig.SuperAdvisorIntelligenceThreshold;
+            if (isSuperAdvisor && AdvisorRecommendationConfig.EnableDebugLog)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 军师{advisor.Name}智力{advisor.Intelligence}>={AdvisorRecommendationConfig.SuperAdvisorIntelligenceThreshold}，可举荐全图人才");
+            }
+            
+            foreach (Person p in Session.Current.Scenario.Persons)
+            {
+                // 智力100及以上的军师可以举荐全图人才，不受地域限制
+                bool canRecommend = false;
+                if (isSuperAdvisor)
+                {
+                    canRecommend = true; // 超级军师无视地域限制
+                }
+                else
+                {
+                    canRecommend = faction.IsPositionKnown(p.Position); // 普通军师受地域限制
+                }
+
+                if (p.Status == PersonStatus.NoFaction && 
+                    p.Alive && 
+                    !p.IsCaptive &&
+                    p.Available && 
+                    canRecommend)
+                {
+                    allCandidates.Add(p);
+                }
+            }
+
+            if (allCandidates.Count == 0)
+            {
+                result.IsSuccess = false;
+                result.FailureReason = "已知区域内无可用人才";
+                ApplyFailureCompensation(advisor);
+                return result;
+            }
+
+            // 5. 智力检定
+            int successRate = AdvisorRecommendationConfig.CalculateSuccessRate(advisor.Intelligence);
+            int roll = GameObject.Random(100);
+            
+            if (roll >= successRate)
+            {
+                result.IsSuccess = false;
+                result.FailureReason = "军师能力不足，未能发现人才";
+                ApplyFailureCompensation(advisor);
+                return result;
+            }
+
+            // 6. 选择最优秀的人才（按综合能力排序）
+            var sortedCandidates = new List<Person>();
+            foreach (Person candidate in allCandidates)
+            {
+                sortedCandidates.Add(candidate);
+            }
+
+            // 手动排序（按综合能力降序）
+            for (int i = 0; i < sortedCandidates.Count - 1; i++)
+            {
+                for (int j = i + 1; j < sortedCandidates.Count; j++)
+                {
+                    if (CalculatePersonValue(sortedCandidates[j]) > CalculatePersonValue(sortedCandidates[i]))
+                    {
+                        Person temp = sortedCandidates[i];
+                        sortedCandidates[i] = sortedCandidates[j];
+                        sortedCandidates[j] = temp;
+                    }
+                }
+            }
+
+            // 7. 取前maxCount个
+            int takeCount = Math.Min(maxCount, sortedCandidates.Count);
+            for (int i = 0; i < takeCount; i++)
+            {
+                result.DiscoveredTalents.Add(sortedCandidates[i]);
+            }
+
+            result.IsSuccess = true;
+            faction.LastTalentRecommendYear = currentYear;
+
+            if (AdvisorRecommendationConfig.EnableDebugLog)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DiscoverMultipleTalents] 成功发现{result.DiscoveredTalents.Count}名人才");
+                foreach (Person talent in result.DiscoveredTalents)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {talent.Name} (综合能力: {CalculatePersonValue(talent)})");
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 招募人才到势力 - 静态方法版本
+        /// </summary>
+        public static bool RecruitTalentStatic(Faction faction, Person talent)
+        {
+            if (faction == null || talent == null) return false;
+
+            try
+            {
+                Architecture targetArch = faction.Capital;
+                if (targetArch != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 招募前状态 - {talent?.Name ?? "Unknown"}: BelongedFaction={talent.BelongedFaction?.Name ?? "None"}, Status={talent.Status}, LocationArchitecture={talent.LocationArchitecture?.Name ?? "None"}, Loyalty={talent.Loyalty}");
+                    
+                    // 步骤1: 使用正确的招募流程 - 先让武将加入势力
+                    talent.MoveToArchitecture(targetArch);
+                    talent.ArrivingDays = 0;           // 立即到达
+                    talent.TargetArchitecture = null;  // 清除目标
+                    talent.Status = PersonStatus.Normal; // 设置正常状态
+                    
+                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 加入势力后状态 - {talent?.Name ?? "Unknown"}: BelongedFaction={talent.BelongedFaction?.Name ?? "None"}, Status={talent.Status}, Loyalty={talent.Loyalty}");
+                    
+                    // 步骤2: 计算并设置初始忠诚度 - 必须在加入势力之后
+                    int initialLoyalty = RecruitmentCalculator.CalculateInitialLoyalty(
+                        faction.Leader, faction.Advisor, talent, RecruitMethod.Recommendation);
+                    
+                    // 步骤3: 使用TempLoyaltyChange设置忠诚度
+                    talent.TempLoyaltyChange = initialLoyalty - talent.Loyalty;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 忠诚度设置 - 目标忠诚度: {initialLoyalty}, 当前忠诚度: {talent.Loyalty}, TempLoyaltyChange: {talent.TempLoyaltyChange}");
+                    
+                    // 更新推荐年份
+                    faction.LastTalentRecommendYear = Session.Current.Scenario.Date.Year;
+                    
+                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 招募后最终状态 - {talent?.Name ?? "Unknown"}: BelongedFaction={talent.BelongedFaction?.Name ?? "None"}, Status={talent.Status}, LocationArchitecture={talent.LocationArchitecture?.Name ?? "None"}, Loyalty={talent.Loyalty}, TempLoyaltyChange={talent.TempLoyaltyChange}");
+                    System.Diagnostics.Debug.WriteLine($"[RecruitTalent] {talent?.Name ?? "Unknown"} 成功加入 {faction?.Name ?? "Unknown"}，忠诚度: {talent.Loyalty}");
+                    
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RecruitTalent] 异常: {ex?.Message ?? "Unknown error"}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 招募人才到势力 - 实例方法版本（保持兼容性）
+        /// </summary>
+        public bool RecruitTalent(Faction faction, Person talent)
+        {
+            // 调用静态方法版本
+            return RecruitTalentStatic(faction, talent);
+        }
+
+        /// <summary>
+        /// 处理人才选择
+        /// </summary>
+        public void HandleTalentSelection(Faction faction, Person selectedTalent)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HandleTalentSelection] 开始处理人才选择");
+            System.Diagnostics.Debug.WriteLine($"[HandleTalentSelection] 势力: {faction?.Name ?? "Unknown"}, 人才: {selectedTalent?.Name ?? "Unknown"}");
+
+            if (faction == null || selectedTalent == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[HandleTalentSelection] 参数无效");
+                return;
+            }
+
+            bool success = RecruitTalent(faction, selectedTalent);
+            if (success)
+            {
+                System.Diagnostics.Debug.WriteLine($"[HandleTalentSelection] 成功招募: {selectedTalent.Name}");
+                
+                // 🔥 修复：直接显示简单结果消息，不再调用ShowRecommendationDialog
+                // ShowRecommendationDialog会触发两阶段对话，导致重复判定
+                int initialLoyalty = RecruitmentCalculator.CalculateInitialLoyalty(
+                    faction.Leader, faction.Advisor, selectedTalent, RecruitMethod.Recommendation);
+                ShowSimpleResultMessage(faction, selectedTalent, true, initialLoyalty);
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[HandleTalentSelection] 招募失败: {selectedTalent.Name}");
+                
+                // 🔥 修复：直接显示简单结果消息
+                ShowSimpleResultMessage(faction, selectedTalent, false, 0);
+            }
+        }
+
+        /// <summary>
+        /// 显示简单结果消息（不触发两阶段对话）
+        /// </summary>
+        private void ShowSimpleResultMessage(Faction faction, Person talent, bool success, int initialLoyalty)
         {
             try
             {
-                // 参数验证
-                if (faction == null || string.IsNullOrEmpty(message))
+                var mainScreen = Session.MainGame?.mainGameScreen;
+                if (mainScreen?.Plugins?.tupianwenziPlugin == null) return;
+
+                string message;
+                if (success)
                 {
-                    System.Diagnostics.Debug.WriteLine("[ShowRecommendationDialog] 参数无效：faction或message为空");
+                    message = AdvisorDialogueManager.GetDialogue(
+                        faction, RecommendationResult.Success_DirectJoin, 
+                        faction.Advisor, talent, initialLoyalty
+                    );
+                }
+                else
+                {
+                    message = AdvisorDialogueManager.GetDialogue(
+                        faction, RecommendationResult.Fail_LowAbility, 
+                        faction.Advisor, talent, 0
+                    );
+                }
+
+                // 直接显示消息，不设置确认回调
+                mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                    faction.Advisor, faction.Advisor, message, "", "", ""
+                );
+                mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowSimpleResultMessage] 异常: {ex.Message}");
+            }
+        }
+
+
+        /// <summary>
+        /// 年度推荐系统 - 自动选择最优人才并招募
+        /// </summary>
+        public void ExecuteYearlyRecommendation(Faction faction)
+        {
+            try
+            {
+                bool isPlayer = Session.Current.Scenario.IsPlayer(faction);
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] ===== 开始年度推荐 =====");
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 势力: {faction?.Name ?? "Unknown"}");
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 势力类型: {(isPlayer ? "玩家势力" : "AI势力")}");
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 军师: {faction?.Advisor?.Name ?? "无"}");
+                
+                if (faction?.Advisor == null) 
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 势力 {faction?.Name} 无军师，退出");
                     return;
                 }
 
-                // 如果是玩家势力，显示对话框
-                if (Session.Current.Scenario.IsCurrentPlayer(faction))
+                // 1. 发现人才
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 开始发现人才阶段");
+                var discoveryResult = DiscoverMultipleTalents(faction, 5);
+                
+                if (!discoveryResult.IsSuccess)
                 {
-                    // 验证Session和mainGameScreen是否可用
-                    if (Session.MainGame?.mainGameScreen == null)
+                    // System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 人才发现失败: {discoveryResult.FailureReason}");
+                    
+                    // 显示失败消息 - 使用配置化对话系统
+                    RecommendationResult failureResult = RecommendationResult.Fail_NoTalent;
+                    if (discoveryResult.FailureReason.Contains("智力不足") || discoveryResult.FailureReason.Contains("能力不足"))
                     {
-                        System.Diagnostics.Debug.WriteLine("[ShowRecommendationDialog] Session.MainGame.mainGameScreen不可用");
-                        return;
+                        failureResult = RecommendationResult.Fail_LowAbility;
                     }
-
-                    // 使用现有的事件图片系统显示消息
-                    Session.MainGame.mainGameScreen.xianshishijiantupian(
-                        faction.Advisor, 
-                        message, 
-                        TextMessageKind.SearchPersonFound, 
-                        "AdvisorRecommendation", 
-                        "", 
-                        "", 
-                        true
-                    );
-
-                    if (AdvisorRecommendationConfig.EnableDebugLog)
+                    else if (discoveryResult.FailureReason.Contains("冷却") || discoveryResult.FailureReason.Contains("已经"))
                     {
-                        System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 成功显示推荐对话框：{message}");
+                        failureResult = RecommendationResult.None;
+                    }
+                    
+                    // System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 显示失败对话: {failureResult}");
+                    if (isPlayer)
+                    {
+                        HandleRecommendationResult(faction, failureResult, null, 0);
+                    }
+                    return;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 成功发现 {discoveryResult.DiscoveredTalents.Count} 名人才");
+                foreach (Person talent in discoveryResult.DiscoveredTalents)
+                {
+                    int value = CalculatePersonValue(talent);
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 候选人才: {talent.Name} (综合能力: {value})");
+                }
+
+                // 2. 自动选择综合能力最高的人才
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 开始选择最优人才");
+                Person bestTalent = null;
+                int bestValue = 0;
+                foreach (Person talent in discoveryResult.DiscoveredTalents)
+                {
+                    int value = CalculatePersonValue(talent);
+                    if (value > bestValue)
+                    {
+                        bestValue = value;
+                        bestTalent = talent;
+                    }
+                }
+
+                if (bestTalent != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 选择了最优人才: {bestTalent.Name} (综合能力: {bestValue})");
+                    
+                    // 3. 判定招募结果
+                    RecommendationResult finalResult = DetermineRecruitmentOutcome(faction.Advisor, bestTalent);
+                    int initialLoyalty = RecruitmentCalculator.CalculateInitialLoyalty(
+                        faction.Leader, faction.Advisor, bestTalent, RecruitMethod.Recommendation);
+                    
+                    if (isPlayer)
+                    {
+                        // 玩家势力：显示对话让玩家选择
+                        System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 玩家势力，显示确认对话");
+                        HandleRecommendationResult(faction, finalResult, bestTalent, initialLoyalty);
+                    }
+                    else
+                    {
+                        // AI势力：直接执行招募
+                        System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] AI势力，直接执行招募 {bestTalent.Name}");
+                        if (finalResult == RecommendationResult.Success_DirectJoin)
+                        {
+                            bool success = RecruitTalentStatic(faction, bestTalent);
+                            if (success)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] AI招募成功！{bestTalent.Name} 加入 {faction.Name}，忠诚度: {initialLoyalty}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] AI招募失败！{bestTalent.Name}");
+                            }
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] AI势力推荐结果: {finalResult}");
+                        }
                     }
                 }
                 else
                 {
-                    // AI势力的推荐结果只记录日志
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 未找到合适的人才");
+                    if (isPlayer)
+                    {
+                        HandleRecommendationResult(faction, RecommendationResult.Fail_NoTalent, null, 0);
+                    }
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] ===== 年度推荐完成 =====");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 异常: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[ExecuteYearlyRecommendation] 异常堆栈: {ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// 发现结果类
+        /// </summary>
+        public class DiscoveryResult
+        {
+            public bool IsSuccess { get; set; } = false;
+            public string FailureReason { get; set; } = "";
+            public List<Person> DiscoveredTalents { get; set; } = new List<Person>();
+        }
+
+        /// <summary>
+        /// 显示推荐对话框 - 使用AdvisorDialogueConfig配置文件，两阶段对话流程
+        /// </summary>
+        private static void ShowRecommendationDialog(Faction faction, RecommendationResult result, Person talent, int initialLoyalty)
+        {
+            try
+            {
+                // 参数验证
+                if (faction == null || faction.Advisor == null) return;
+
+                // 如果是玩家势力，显示对话框
+                if (Session.Current.Scenario.IsCurrentPlayer(faction))
+                {
+                    var mainScreen = Session.MainGame?.mainGameScreen;
+                    if (mainScreen?.Plugins?.tupianwenziPlugin == null) return;
+
+                    // 检查军师举荐开关状态
+                    bool isAutoModeEnabled = faction.IsAdvisorRecommendationEnabled;
+                    
                     if (AdvisorRecommendationConfig.EnableDebugLog)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[AI推荐] {faction.Name}: {message}");
+                        System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 军师举荐开关状态: {(isAutoModeEnabled ? "开启" : "关闭")}");
+                        System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 推荐结果: {result}");
+                    }
+
+                    // 根据开关状态和推荐结果决定对话类型
+                    if (isAutoModeEnabled)
+                    {
+                        // 开关开启：失败直接提示，成功才弹窗选择
+                        if (result == RecommendationResult.Success_DirectJoin && talent != null)
+                        {
+                            // 成功情况：显示两阶段确认对话
+                            ShowSuccessConfirmationDialog(faction, talent, initialLoyalty, mainScreen);
+                        }
+                        else
+                        {
+                            // 失败情况：直接显示失败消息，不需要确认
+                            ShowDirectFailureMessage(faction, result, talent, initialLoyalty, mainScreen);
+                        }
+                    }
+                    else
+                    {
+                        // 开关关闭：无论成功失败都弹窗让玩家选择
+                        if (result == RecommendationResult.Success_DirectJoin && talent != null)
+                        {
+                            // 成功情况：显示两阶段确认对话
+                            ShowSuccessConfirmationDialog(faction, talent, initialLoyalty, mainScreen);
+                        }
+                        else
+                        {
+                            // 失败情况：也显示确认对话，让玩家了解情况
+                            ShowFailureConfirmationDialog(faction, result, talent, initialLoyalty, mainScreen);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 显示对话框时发生异常: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 堆栈跟踪: {ex.StackTrace}");
-                
-                // 提供备用的简单消息显示机制
-                try
-                {
-                    if (faction != null && !string.IsNullOrEmpty(message))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ShowRecommendationDialog] 备用显示: {faction.Name} - {message}");
-                    }
-                }
-                catch
-                {
-                    // 如果连备用机制都失败，至少记录一下
-                    System.Diagnostics.Debug.WriteLine("[ShowRecommendationDialog] 备用显示机制也失败");
-                }
-            }
-        }
-        /// <summary>
-        /// 获取推荐结果的描述文本
-        /// </summary>
-        public string GetResultDescription(RecommendationResult result, Person advisor, Person foundPerson)
-        {
-            switch (result)
-            {
-                case RecommendationResult.Success_DirectJoin:
-                    return $"军师{advisor?.Name}成功说服了人才{foundPerson?.Name}，直接加入了我军！";
-                
-                case RecommendationResult.Success_FoundOnly:
-                    return $"军师{advisor?.Name}发现了人才{foundPerson?.Name}，但未能说服其加入，需要主公亲自招募。";
-                
-                case RecommendationResult.Fail_NoTalent:
-                    return $"军师{advisor?.Name}搜寻了已知区域，但未发现合适的人才。";
-                
-                case RecommendationResult.Fail_LowAbility:
-                    return $"军师{advisor?.Name}能力有限，未能发现人才。";
-                
-                case RecommendationResult.None:
-                    return "今年已经进行过举荐，请等待下一年。";
-                
-                default:
-                    return "未知的推荐结果。";
             }
         }
 
         /// <summary>
-        /// 获取全局推荐统计信息
+        /// 显示成功确认对话（两阶段，第二阶段仅显示信息）
         /// </summary>
-        public static RecommendationStats GetGlobalStats()
-        {
-            return _globalStats;
-        }
-
-        /// <summary>
-        /// 重置统计信息
-        /// </summary>
-        public static void ResetStats()
-        {
-            _globalStats = new RecommendationStats();
-        }
-
-        /// <summary>
-        /// 获取军师推荐能力评估
-        /// </summary>
-        public static string GetAdvisorAssessment(Person advisor)
-        {
-            if (advisor == null || !advisor.Alive)
-                return "无军师或军师已死亡";
-
-            int intelligence = advisor.Intelligence;
-            int successRate = AdvisorRecommendationConfig.CalculateSuccessRate(intelligence);
-
-            string assessment;
-            if (intelligence < AdvisorRecommendationConfig.MinIntelligenceThreshold)
-                assessment = "智力不足，无法进行推荐";
-            else if (successRate >= 90)
-                assessment = "推荐大师，几乎必定成功";
-            else if (successRate >= 70)
-                assessment = "推荐专家，成功率很高";
-            else if (successRate >= 50)
-                assessment = "推荐能手，成功率中等";
-            else
-                assessment = "推荐新手，成功率较低";
-
-            return $"{advisor.Name} (智力{intelligence}): {assessment} (成功率{successRate}%)";
-        }
-    }
-
-    /// <summary>
-    /// 军师推荐系统配置
-    /// </summary>
-    public static class AdvisorRecommendationConfig
-    {
-        // 基础配置
-        public static readonly int MinIntelligenceThreshold = 70;        // 军师最低智力要求
-        public static readonly int RecommendationCooldownYears = 1;      // 推荐冷却年数
-        public static readonly bool EnableDebugLog = true;               // 是否启用调试日志
-
-        // 成功率计算
-        public static readonly int BaseSuccessRate = 30;                 // 基础成功率
-        public static readonly int IntelligenceBonus = 2;                // 每点智力的成功率加成
-
-        // 劝说判定配置
-        public static readonly int PersonalLoyaltyPenalty = 10;          // 每点义理的劝说成功率惩罚
-        public static readonly int MinPersuadeChance = 5;                // 最低劝说成功率
-        public static readonly int MaxPersuadeChance = 85;               // 最高劝说成功率
-
-        // 失败补偿配置
-        public static readonly int FailureCompensationMerit = 5;         // 失败补偿功绩
-        public static readonly int FailureCompensationMorale = 2;        // 失败补偿治安
-
-        /// <summary>
-        /// 计算推荐成功率
-        /// </summary>
-        public static int CalculateSuccessRate(int intelligence)
-        {
-            int rate = BaseSuccessRate + (intelligence - MinIntelligenceThreshold) * IntelligenceBonus;
-            return Math.Max(0, Math.Min(100, rate));
-        }
-    }
-
-    /// <summary>
-    /// 招募方式枚举
-    /// </summary>
-    public enum RecruitMethod
-    {
-        Direct,         // 直接招募
-        Recommendation, // 军师推荐
-        Diplomatic,     // 外交招募
-        Capture         // 俘虏招降
-    }
-
-    /// <summary>
-    /// 招募计算器
-    /// </summary>
-    public static class RecruitmentCalculator
-    {
-        /// <summary>
-        /// 计算初始忠诚度
-        /// </summary>
-        public static int CalculateInitialLoyalty(Person leader, Person advisor, Person target, RecruitMethod method)
-        {
-            if (leader == null || target == null) return 50; // 默认值
-
-            int baseLoyalty = 50; // 基础忠诚度
-
-            // 根据招募方式调整
-            switch (method)
-            {
-                case RecruitMethod.Recommendation:
-                    if (advisor != null)
-                    {
-                        // 军师推荐有额外加成
-                        baseLoyalty += advisor.Glamour / 10; // 军师魅力影响
-                        baseLoyalty += 5; // 推荐加成
-                    }
-                    break;
-                case RecruitMethod.Direct:
-                    baseLoyalty += leader.Glamour / 8; // 直接招募看君主魅力
-                    break;
-            }
-
-            // 相性影响
-            int affinityDiff = Math.Abs(leader.Ideal - target.Ideal);
-            if (affinityDiff > 75) affinityDiff = 150 - affinityDiff; // 环形距离
-            baseLoyalty -= affinityDiff / 3; // 相性差距影响忠诚度
-
-            // 确保在合理范围内
-            return Math.Max(20, Math.Min(90, baseLoyalty));
-        }
-    }
-
-    /// <summary>
-    /// 年度军师推荐管理器 - 处理每年自动推荐逻辑
-    /// 核心设计：预计算结果，延迟展示
-    /// </summary>
-    public class YearlyRecommendationManager
-    {
-        private AdvisorRecommendationSystem advisorSystem;
-        
-        // 缓存当前发现结果（预计算结果）
-        private AdvisorRecommendationSystem.TalentDiscoveryResult _currentDiscoveryResult;
-        private Faction _currentFaction;
-        public Faction CurrentFaction
-        {
-            get { return _currentFaction; }
-        }
-
-        // 单例模式
-        private static YearlyRecommendationManager _instance;
-        public static YearlyRecommendationManager Instance
-        {
-            get
-            {
-                if (_instance == null)
-                {
-                    _instance = new YearlyRecommendationManager();
-                }
-                return _instance;
-            }
-        }
-
-        public YearlyRecommendationManager()
-        {
-            advisorSystem = new AdvisorRecommendationSystem();
-        }
-
-        /// <summary>
-        /// 回合开始时调用 - 每年1月触发推荐
-        /// </summary>
-        public void OnTurnStart(Faction faction)
-        {
-            // 只对玩家势力触发UI流程
-            if (!Session.Current.Scenario.IsCurrentPlayer(faction))
-                return;
-                
-            // 每年1月触发
-            if (Session.Current.Scenario.Date.Month == 1)
-            {
-                TriggerYearlyRecommendation(faction);
-            }
-        }
-
-        /// <summary>
-        /// 触发年度举荐流程（外部调用入口）
-        /// </summary>
-        public void TriggerYearlyRecommendation(Faction faction)
+        private static void ShowSuccessConfirmationDialog(Faction faction, Person talent, int initialLoyalty, MainGameScreen mainScreen)
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] 触发年度举荐，势力: {faction?.Name}");
+                // 第一阶段：询问是否前去查看发现的贤才
+                string initialMessage = AdvisorDialogueManager.GetGenericDialogue(
+                    faction, faction.Advisor, "Discovery_Initial", null
+                );
                 
-                // 1. 预计算结果！（核心：先计算，后展示）
-                _currentFaction = faction;
-                _currentDiscoveryResult = advisorSystem.DiscoverMultipleTalents(faction, 3);
-                
-                // 2. 根据结果决定如何展示
-                if (_currentDiscoveryResult.IsSuccess)
-                {
-                    // 发现了人才，显示询问对话框
-                    ShowDiscoveryConfirmDialog(faction, _currentDiscoveryResult);
-                }
-                else
-                {
-                    // 失败，显示失败对话或静默处理
-                    HandleDiscoveryFailure(faction, _currentDiscoveryResult);
-                }
+                // 设置第一阶段确认对话框
+                mainScreen.Plugins.tupianwenziPlugin.SetConfirmationDialog(
+                    mainScreen.Plugins.ConfirmationDialogPlugin,
+                    new GameDelegates.VoidFunction(() => {
+                        // 第一阶段确认回调：显示第二阶段信息对话（不需要确认）
+                        ShowTalentInfoDialog(faction, talent, initialLoyalty, mainScreen);
+                    }),
+                    new GameDelegates.VoidFunction(() => {
+                        // 第一阶段取消回调：什么都不做
+                    })
+                );
+
+                mainScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+
+                // 显示第一阶段确认对话框
+                mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                    faction.Advisor, faction.Advisor, initialMessage, "", "", ""
+                );
+                mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] 异常: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[ShowSuccessConfirmationDialog] 显示成功确认对话时发生异常: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// 显示发现人才的确认对话框
+        /// 显示直接失败消息（不需要确认）
         /// </summary>
-        private void ShowDiscoveryConfirmDialog(Faction faction, AdvisorRecommendationSystem.TalentDiscoveryResult result)
+        private static void ShowDirectFailureMessage(Faction faction, RecommendationResult result, Person talent, int initialLoyalty, MainGameScreen mainScreen)
         {
             try
             {
-                Person advisor = result.Advisor;
-                if (advisor == null) return;
-                
-                Person speaker = AdvisorTextManager.GetSpeaker(faction);
+                // 使用配置文件中的对话内容
+                string message = AdvisorDialogueManager.GetDialogue(
+                    faction, result, faction.Advisor, talent, initialLoyalty
+                );
 
-                int count = result.DiscoveredTalents.Count;
-                string names = string.Join("、", result.DiscoveredTalents.ConvertAll(p => p.Name));
-                
-                string message = AdvisorTextManager.GetDiscoveryConfirmText(faction, speaker, count, names);
-                
-                System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] 显示确认对话框: {message}");
-                
-                // 使用确认对话框系统
-                if (Session.MainGame?.mainGameScreen?.Plugins?.tupianwenziPlugin != null &&
-                    Session.MainGame?.mainGameScreen?.Plugins?.ConfirmationDialogPlugin != null)
+                if (AdvisorRecommendationConfig.EnableDebugLog)
                 {
-                    var gameScreen = Session.MainGame.mainGameScreen;
-                    
-                    // 设置说话人文本
-                    // 设置说话人文本
-                    // speaker is fetched above
-                    Person currentSpeaker = AdvisorTextManager.GetSpeaker(faction);
-                    if (currentSpeaker == null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] Error: Speaker is null for faction {faction?.Name}");
-                        // Mark as handled to avoid infinite loop or stuck state?
-                         if (faction != null) faction.LastTalentRecommendYear = Session.Current.Scenario.Date.Year;
-                        return;
-                    }
-                    System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] Speaker: {speaker.Name} (ID: {speaker.ID})");
-                    speaker.TextResultString = message;
-                    
-                    // 设置确认回调
-                    gameScreen.Plugins.tupianwenziPlugin.SetConfirmationDialog(
-                        gameScreen.Plugins.ConfirmationDialogPlugin,
-                        new GameDelegates.VoidFunction(() => {
-                            // 是 -> 显示人物选择列表
-                            gameScreen.Plugins.tupianwenziPlugin.IsShowing = false;
-                            gameScreen.Plugins.ConfirmationDialogPlugin.IsShowing = false;
-                            ShowTalentSelectionList(faction, result);
-                        }),
-                        new GameDelegates.VoidFunction(() => {
-                            // 否 -> 关闭对话框，标记今年已处理
-                            gameScreen.Plugins.tupianwenziPlugin.IsShowing = false;
-                            gameScreen.Plugins.ConfirmationDialogPlugin.IsShowing = false;
-                            faction.LastTalentRecommendYear = Session.Current.Scenario.Date.Year;
-                            System.Diagnostics.Debug.WriteLine("[YearlyRecommendationManager] 玩家选择放弃招募");
-                        })
+                    System.Diagnostics.Debug.WriteLine($"[ShowDirectFailureMessage] 显示直接失败消息: {message}");
+                }
+
+                // 直接显示消息，不需要确认
+                if (!string.IsNullOrEmpty(message))
+                {
+                    mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                        faction.Advisor, faction.Advisor, message, "", "", ""
                     );
-                    
-                    // 设置并显示对话框
-                    try 
-                    {
-                        gameScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
-                        gameScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
-                            speaker, speaker, message, "", "", ""
-                        );
-                        gameScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, gameScreen);
-                        gameScreen.Plugins.tupianwenziPlugin.IsShowing = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] UI Error in ShowDiscoveryConfirmDialog: {ex.Message}");
-                        // Fallback: simple text debug or skip
-                    }
-                }
-                else
-                {
-                    // 备用：直接显示选择列表
-                    ShowTalentSelectionList(faction, result);
+                    mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                    mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[ShowDiscoveryConfirmDialog] 异常: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[ShowDirectFailureMessage] 显示直接失败消息时发生异常: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// 显示人才选择列表
+        /// 显示失败确认对话（让玩家了解情况）
         /// </summary>
-        private void ShowTalentSelectionList(Faction faction, AdvisorRecommendationSystem.TalentDiscoveryResult result)
+        private static void ShowFailureConfirmationDialog(Faction faction, RecommendationResult result, Person talent, int initialLoyalty, MainGameScreen mainScreen)
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine($"[ShowTalentSelectionList] 显示人才列表，共 {result.DiscoveredTalents.Count} 人");
-                
-                if (Session.MainGame?.mainGameScreen == null) return;
-                
-                // 构建人物列表
-                GameObjectList talentList = new GameObjectList();
-                foreach (Person p in result.DiscoveredTalents)
+                // 使用配置文件中的对话内容
+                string message = AdvisorDialogueManager.GetDialogue(
+                    faction, result, faction.Advisor, talent, initialLoyalty
+                );
+
+                if (AdvisorRecommendationConfig.EnableDebugLog)
                 {
-                    talentList.Add(p);
+                    System.Diagnostics.Debug.WriteLine($"[ShowFailureConfirmationDialog] 显示失败确认对话: {message}");
+                }
+
+                // 设置确认对话框（只有确认按钮）
+                mainScreen.Plugins.tupianwenziPlugin.SetConfirmationDialog(
+                    mainScreen.Plugins.ConfirmationDialogPlugin,
+                    new GameDelegates.VoidFunction(() => {
+                        // 确认回调：什么都不做，只是让玩家知道情况
+                        if (AdvisorRecommendationConfig.EnableDebugLog)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ShowFailureConfirmationDialog] 玩家确认了解失败情况");
+                        }
+                    }),
+                    new GameDelegates.VoidFunction(() => {
+                        // 取消回调：什么都不做
+                    })
+                );
+
+                mainScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+
+                // 显示确认对话框
+                if (!string.IsNullOrEmpty(message))
+                {
+                    mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                        faction.Advisor, faction.Advisor, message, "", "", ""
+                    );
+                    mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                    mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowFailureConfirmationDialog] 显示失败确认对话时发生异常: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 显示人才信息对话（仅显示信息，不需要确认，自动执行招募）
+        /// </summary>
+        private static void ShowTalentInfoDialog(Faction faction, Person talent, int initialLoyalty, MainGameScreen mainScreen)
+        {
+            try
+            {
+                // 🔥 关键修复：第二阶段只显示人才信息，不需要确认，自动执行招募
+                System.Diagnostics.Debug.WriteLine($"[ShowTalentInfoDialog] 显示人才信息并自动执行招募: {talent.Name}");
+                
+                // 自动执行招募
+                bool success = RecruitTalentStatic(faction, talent);
+                System.Diagnostics.Debug.WriteLine($"[ShowTalentInfoDialog] 招募结果: {(success ? "成功" : "失败")}");
+                
+                // 显示人才信息和招募结果
+                string infoMessage;
+                if (success)
+                {
+                    // 使用配置文件中的成功对话
+                    infoMessage = AdvisorDialogueManager.GetDialogue(
+                        faction, RecommendationResult.Success_DirectJoin, 
+                        faction.Advisor, talent, initialLoyalty
+                    );
+                }
+                else
+                {
+                    // 使用配置文件中的失败对话
+                    infoMessage = AdvisorDialogueManager.GetGenericDialogue(
+                        faction, faction.Advisor, "Recruitment_Failed", 
+                        new Dictionary<string, string> { 
+                            { "{Talent}", talent.Name } 
+                        }
+                    );
                 }
                 
-                // 设置当前操作类型
-                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                Session.MainGame.mainGameScreen.CurrentFaction = faction;
+                // 🔥 关键修复：只显示信息对话，不设置确认回调，避免第三个对话
+                // 直接显示结果信息，用户点击后自动关闭，不会触发额外的结果判断
+                mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                    faction.Advisor, faction.Advisor, infoMessage, "", "", ""
+                );
+                mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowTalentInfoDialog] 显示人才信息对话时发生异常: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 显示第二阶段对话：具体人才信息和招募确认
+        /// 🚫 已废弃：替换为ShowTalentInfoDialog，避免重复对话
+        /// </summary>
+        /*
+        private static void ShowSecondStageDialog(Faction faction, Person talent, int initialLoyalty, MainGameScreen mainScreen)
+        {
+            try
+            {
+                // 第二阶段：显示具体人才信息并询问是否招募
+                string confirmMessage = AdvisorDialogueManager.GetGenericDialogue(
+                    faction, faction.Advisor, "Discovery_Confirm", 
+                    new Dictionary<string, string> { 
+                        { "{Talent}", talent.Name } 
+                    }
+                );
                 
-                // 显示人物选择列表
-                Session.MainGame.mainGameScreen.ShowTabListInFrame(
-                    UndoneWorkKind.Frame,
-                    FrameKind.Person,
-                    FrameFunction.GetYearlyTalentRecommendation,
-                    false, true, true, false,
-                    talentList,
-                    null,
-                    "选择要招募的人才",
-                    "举荐"
+                // 设置第二阶段确认对话框
+                mainScreen.Plugins.tupianwenziPlugin.SetConfirmationDialog(
+                    mainScreen.Plugins.ConfirmationDialogPlugin,
+                    new GameDelegates.VoidFunction(() => {
+                        // 第二阶段确认回调：执行招募并显示结果
+                        System.Diagnostics.Debug.WriteLine($"[ShowSecondStageDialog] 玩家确认招募 {talent.Name}");
+                        bool success = RecruitTalentStatic(faction, talent);
+                        System.Diagnostics.Debug.WriteLine($"[ShowSecondStageDialog] 招募结果: {(success ? "成功" : "失败")}");
+                        
+                        // 显示招募结果
+                        string resultMessage;
+                        if (success)
+                        {
+                            // 使用配置文件中的成功对话
+                            resultMessage = AdvisorDialogueManager.GetDialogue(
+                                faction, RecommendationResult.Success_DirectJoin, 
+                                faction.Advisor, talent, initialLoyalty
+                            );
+                        }
+                        else
+                        {
+                            // 使用配置文件中的失败对话
+                            resultMessage = AdvisorDialogueManager.GetGenericDialogue(
+                                faction, faction.Advisor, "Recruitment_Failed", 
+                                new Dictionary<string, string> { 
+                                    { "{Talent}", talent.Name } 
+                                }
+                            );
+                        }
+                        
+                        // 显示结果对话框
+                        mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                            faction.Advisor, faction.Advisor, resultMessage, "", "", ""
+                        );
+                        mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                        mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+                    }),
+                    new GameDelegates.VoidFunction(() => {
+                        // 第二阶段取消回调：什么都不做
+                        System.Diagnostics.Debug.WriteLine($"[ShowSecondStageDialog] 玩家取消招募 {talent.Name}");
+                    })
+                );
+
+                mainScreen.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+
+                // 显示第二阶段确认对话框
+                mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                    faction.Advisor, faction.Advisor, confirmMessage, "", "", ""
+                );
+                mainScreen.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, mainScreen);
+                mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowSecondStageDialog] 显示第二阶段对话时发生异常: {ex.Message}");
+            }
+        }
+        */
+
+        /// <summary>
+        /// 显示招募结果 - 使用AdvisorDialogueConfig配置文件
+        /// </summary>
+        private static void ShowRecruitmentResult(Faction faction, Person talent, bool success, int initialLoyalty, MainGameScreen screen)
+        {
+            if (screen?.Plugins?.tupianwenziPlugin == null) return;
+
+            // 使用配置文件中的对话内容
+            string message;
+            if (success)
+            {
+                message = AdvisorDialogueManager.GetGenericDialogue(
+                    faction, faction.Advisor, "Recruitment_Success", 
+                    new Dictionary<string, string> { 
+                        { "{Talent}", talent?.Name ?? "未知" },
+                        { "{InitialLoyalty}", initialLoyalty.ToString() }
+                    }
                 );
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ShowTalentSelectionList] 异常: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 处理人才选择结果（由ScreenManager回调）
-        /// </summary>
-        public void HandleTalentSelection(Faction faction, Person selectedTalent)
-        {
-            try
-            {
-                System.Diagnostics.Debug.WriteLine($"[Trace] Enter HandleTalentSelection. Faction:{faction?.Name} Talent:{selectedTalent?.Name}");
-                
-                if (selectedTalent != null && faction != null)
-                {
-                    // 执行招募
-                    bool success = advisorSystem.RecruitTalent(faction, selectedTalent);
-                    System.Diagnostics.Debug.WriteLine($"[Trace] RecruitTalent returned: {success}");
-                    
-                    if (success)
-                    {
-                        // 显示成功消息
-                        Person speaker = AdvisorTextManager.GetSpeaker(faction);
-                        System.Diagnostics.Debug.WriteLine($"[Trace] Generating Success Text...");
-                        string successMsg = AdvisorTextManager.GetSuccessJoinText(
-                            faction, 
-                            speaker,
-                            selectedTalent.Name
-                        );
-                        System.Diagnostics.Debug.WriteLine($"[Trace] Text Generated. Calling ShowSimpleMessage...");
-                        
-                        ShowSimpleMessage(faction, successMsg);
-                        System.Diagnostics.Debug.WriteLine($"[Trace] ShowSimpleMessage returned.");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[HandleTalentSelection] 异常: {ex.Message} Stack:{ex.StackTrace}");
-            }
-        }
-
-        /// <summary>
-        /// 处理发现失败
-        /// </summary>
-        private void HandleDiscoveryFailure(Faction faction, AdvisorRecommendationSystem.TalentDiscoveryResult result)
-        {
-            try
-            {
-                Person advisor = result.Advisor;
-                if (advisor == null) return;
-                
-                Person speaker = AdvisorTextManager.GetSpeaker(faction);
-                
-                string message;
-                switch (result.ResultType)
-                {
-                    case AdvisorRecommendationSystem.RecommendationResult.Fail_NoTalent:
-                        message = AdvisorTextManager.GetNoTalentText(faction, speaker);
-                        break;
-                    case AdvisorRecommendationSystem.RecommendationResult.Fail_LowAbility:
-                        message = AdvisorTextManager.GetLowAbilityText(faction, speaker);
-                        break;
-                    case AdvisorRecommendationSystem.RecommendationResult.None:
-                        // 冷却中或无军师，不显示消息
-                        System.Diagnostics.Debug.WriteLine($"[HandleDiscoveryFailure] 跳过（冷却或无军师）: {result.FailureReason}");
-                        return;
-                    default:
-                        message = AdvisorTextManager.GetGeneralFailureText(faction, speaker);
-                        break;
-                }
-                
-                System.Diagnostics.Debug.WriteLine($"[HandleDiscoveryFailure] 显示失败消息: {message}");
-                ShowSimpleMessage(faction, message);
-                
-                // 标记今年已处理
-                faction.LastTalentRecommendYear = Session.Current.Scenario.Date.Year;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[HandleDiscoveryFailure] 异常: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 显示简单消息
-        /// </summary>
-        private void ShowSimpleMessage(Faction faction, string message)
-        {
-            try
-            {
-                if (Session.MainGame?.mainGameScreen?.Plugins?.tupianwenziPlugin != null)
-                {
-                    Person speaker = AdvisorTextManager.GetSpeaker(faction);
-                    if (speaker != null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ShowSimpleMessage] Speaker: {speaker.Name} (ID: {speaker.ID})");
-                        try 
-                        {
-                            speaker.TextResultString = message;
-                            Session.MainGame.mainGameScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
-                                speaker, speaker, message, "", "", ""
-                            );
-                            Session.MainGame.mainGameScreen.Plugins.tupianwenziPlugin.SetPosition(
-                                ShowPosition.Bottom, Session.MainGame.mainGameScreen
-                            );
-                            Session.MainGame.mainGameScreen.Plugins.tupianwenziPlugin.IsShowing = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[YearlyRecommendationManager] UI Error in ShowSimpleMessage: {ex.Message}");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ShowSimpleMessage] 异常: {ex.Message}");
-            }
-        }
-        
-        /// <summary>
-        /// 获取当前发现结果（供外部访问）
-        /// </summary>
-        public AdvisorRecommendationSystem.TalentDiscoveryResult CurrentDiscoveryResult => _currentDiscoveryResult;
-        
-
-    }
-
-    /// <summary>
-    /// 军师文本管理器 - 用于生成军师对话的各种文本内容
-    /// </summary>
-    public static class AdvisorTextManager
-    {
-        /// <summary>
-        /// 获取当前应显示的发言人（智能判断：如果君主智力高于军师，则显示君主）
-        /// </summary>
-        /// <summary>
-        /// 获取当前应显示的发言人（智能判断：如果君主智力高于军师，则显示君主）
-        /// </summary>
-        public static Person GetSpeaker(Faction faction)
-        {
-            if (faction == null) return null;
-            
-            // 如果没有军师，或者君主智力更优，则君主自己作为发言人
-            if (faction.Advisor == null || faction.Leader.Intelligence > faction.Advisor.Intelligence)
-            {
-                return faction.Leader;
-            }
-            return faction.Advisor;
-        }
-
-        /// <summary>
-        /// 生成谏言文本（包含明主逻辑）
-        /// </summary>
-        public static string GetAdviceText(Faction faction, string originalAdvice)
-        {
-            if (faction == null || faction.Leader == null)
-            {
-                return $"{(faction?.AdvisorName ?? "军师")}： {originalAdvice.Replace("\n", " ")}";
-            }
-
-            Person advisor = faction.Advisor;
-            string advisorName = faction.AdvisorName; 
-            string leaderName = faction.LeaderName;
-
-            // 智能判断逻辑
-            int leaderInt = faction.Leader.Intelligence;
-            int advisorInt = advisor?.Intelligence ?? 0;
-            bool isWiseLeader = advisor == null || leaderInt > advisorInt;
-
-            string cleanAdvice = originalAdvice.Replace("\n", " ").Replace("\r", "");
-            
-            if (isWiseLeader)
-            {
-                // 明主模式（使用空格代替换行符以避免渲染崩溃）
-                 return $"{leaderName} 审视了局势： {cleanAdvice} (此乃 {leaderName} 之决断)";
-            }
             else
             {
-                 return $"军师 {advisorName} 谏言： {cleanAdvice}";
+                message = AdvisorDialogueManager.GetGenericDialogue(
+                    faction, faction.Advisor, "Recruitment_Failed", 
+                    new Dictionary<string, string> { 
+                        { "{Talent}", talent?.Name ?? "未知" }
+                    }
+                );
+            }
+
+            // 显示结果对话 - 使用配置文件的对话内容
+            screen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                faction.Advisor,                   // 说话人
+                faction.Advisor,                   // 对象
+                message,                           // 使用配置文件的对话内容
+                "",                                // 图片 - 使用空字符串
+                "",                                // 声音 - 使用空字符串
+                ""                                 // 空字符串
+            );
+            screen.Plugins.tupianwenziPlugin.IsShowing = true;
+        }
+
+        /// <summary>
+        /// 执行实际的招募操作
+        /// </summary>
+        private static bool PerformRecruitment(Faction faction, Person talent, int initialLoyalty)
+        {
+            try
+            {
+                // 1. 检查首都是否存在
+                if (faction.Capital == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[PerformRecruitment] 势力没有首都");
+                    return false;
+                }
+
+                // 2. 检查人才是否仍然在野
+                if (talent.BelongedFaction != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PerformRecruitment] {talent.Name} 已不在野");
+                    return false;
+                }
+
+                // 3. 执行招募 - 移动到首都
+                talent.MoveToArchitecture(faction.Capital, null, true, true, null);
+                
+                // 4. 立即到达设置
+                talent.ArrivingDays = 0;           // 跳过移动时间，立即到达
+                talent.TargetArchitecture = null;  // 清除移动目标
+                talent.Status = PersonStatus.Normal; // 设置正常状态
+
+                // 5. 设置初始忠诚度
+                if (initialLoyalty > 0)
+                {
+                    talent.TempLoyaltyChange = initialLoyalty - talent.Loyalty;
+                    System.Diagnostics.Debug.WriteLine($"[PerformRecruitment] 设置忠诚度: {talent.Loyalty} -> {initialLoyalty}");
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[PerformRecruitment] {talent.Name} 成功加入 {faction.Name}，立即到达首都 {faction.Capital.Name}");
+                return true;
+
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[PerformRecruitment] 招募过程中发生异常: {ex.Message}");
+                return false;
             }
         }
 
-        public static string GetDiscoveryConfirmText(Faction faction, Person speaker, int count, string names)
+        /// <summary>
+        /// 显示失败对话框 - 使用AdvisorDialogueConfig配置文件
+        /// </summary>
+        private static void ShowFailureDialog(Faction faction, RecommendationResult result)
         {
-             Person leader = faction.Leader;
-             string address = AppellationSettings.GetAddress(faction, speaker, leader);
+            try
+            {
+                Person advisor = faction.Advisor;
+                if (advisor == null) return;
 
-             return $"{address}，今年探访发现了 {count} 位人才：{names}。请问是否进行招募？";
-        }
+                // 使用配置文件中的对话内容
+                string message = AdvisorDialogueManager.GetDialogue(
+                    faction, result, advisor, null, 0
+                );
 
-        public static string GetSuccessJoinText(Faction faction, Person speaker, string targetName)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
-            
-            return $"{address}，微臣发现了 {targetName} ，并成功将其招募！";
-        }
+                System.Diagnostics.Debug.WriteLine($"[ShowFailureDialog] 显示失败对话: {message}");
 
-        public static string GetFoundOnlyText(Faction faction, Person speaker, string targetName, string location)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
+                // 参考说服功能的实现 - 只显示军师对话
+                var mainScreen = Session.MainGame?.mainGameScreen;
+                if (mainScreen?.Plugins?.tupianwenziPlugin != null)
+                {
+                    mainScreen.Plugins.tupianwenziPlugin.SetGameObjectBranch(
+                        advisor,                           // 说话人
+                        advisor,                           // 对象
+                        message,                           // 使用配置文件的对话内容
+                        "",                                // 图片 - 使用空字符串
+                        "",                                // 声音 - 使用空字符串
+                        ""                                 // 空字符串
+                    );
+                    mainScreen.Plugins.tupianwenziPlugin.IsShowing = true;
+                }
 
-            string content = $"{address}，臣在{location}探听到一位名叫【{targetName}】的在野贤才。此人颇有才干，但臣未能将其说服，还请主公亲自前往登庸。";
-            return GetAdviceText(faction, content);
-        }
-        
-        public static string GetRecommendationText(Faction faction, Person speaker, string targetName)
-        {
-             Person leader = faction.Leader;
-             string address = AppellationSettings.GetAddress(faction, speaker, leader);
-             
-             return $"{address}，微臣以为 {targetName}乃当世奇才，何不招募之？";
-        }
-
-        public static string GetComplaintText(Faction faction, Person speaker)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
-            string content = $"{address}，如今府库空虚，贤才多持观望态度，臣实在难以招募到合适的人才啊。";
-            return GetAdviceText(faction, content);
-        }
-
-        public static string GetLowAbilityText(Faction faction, Person speaker)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
-            string content = $"{address}，臣才疏学浅，搜寻数日一无所获，有负主公重托。";
-            return GetAdviceText(faction, content);
-        }
-
-        public static string GetNoTalentText(Faction faction, Person speaker)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
-            string content = $"{address}，臣已搜遍已知区域，暂未发现合适的贤才。";
-            return GetAdviceText(faction, content);
-        }
-        
-        public static string GetGeneralFailureText(Faction faction, Person speaker)
-        {
-            Person leader = faction.Leader;
-            string address = AppellationSettings.GetAddress(faction, speaker, leader);
-            string content = $"{address}，臣未能发现合适的人才。";
-            return GetAdviceText(faction, content);
-        }
-        
-        public static string GetSimpleMessage(string msg)
-        {
-             return msg;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ShowFailureDialog] 显示失败对话时发生异常: {ex.Message}");
+            }
         }
     }
 }

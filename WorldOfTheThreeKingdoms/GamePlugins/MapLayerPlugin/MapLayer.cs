@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -99,23 +99,45 @@ namespace MapLayerPlugin
                     Faction faction = Session.Current.Scenario.CurrentPlayer;
                     if (StaticMethods.PointInRectangle(position, this.NextTroopDisplayPosition))
                     {
-                        if (faction.troopSequence == -1 || faction.troopSequence > list.Count - 1)
+                        // 🔥 安全修复：避免IndexOutOfRangeException
+                        if (faction.Troops != null && faction.Troops.Count > 0)
                         {
-                            faction.troopSequence = 0;
-                        }
-                            (faction.Troops[faction.troopSequence] as Troop).DrawSelected = true;
-                            Session.MainGame.mainGameScreen.JumpTo((faction.Troops[faction.troopSequence] as Troop).Position);
+                            if (faction.troopSequence == -1 || faction.troopSequence >= faction.Troops.Count)
+                            {
+                                faction.troopSequence = 0;
+                            }
+                            if (faction.troopSequence < faction.Troops.Count)
+                            {
+                                var troop = faction.Troops[faction.troopSequence] as Troop;
+                                if (troop != null)
+                                {
+                                    troop.DrawSelected = true;
+                                    Session.MainGame.mainGameScreen.JumpTo(troop.Position);
+                                }
+                            }
                             faction.troopSequence++;
+                        }
                     }   
                     else if (StaticMethods.PointInRectangle(position, this.LastTroopDisplayPosition))
                     {
-                        if (faction.troopSequence == -1 || faction.troopSequence > list.Count - 1)
+                        // 🔥 安全修复：避免IndexOutOfRangeException
+                        if (faction.Troops != null && faction.Troops.Count > 0)
                         {
-                            faction.troopSequence = list.Count - 1;
-                        }
-                            (faction.Troops[faction.troopSequence] as Troop).DrawSelected = true;
-                            Session.MainGame.mainGameScreen.JumpTo((faction.Troops[faction.troopSequence] as Troop).Position);
+                            if (faction.troopSequence == -1 || faction.troopSequence >= faction.Troops.Count)
+                            {
+                                faction.troopSequence = faction.Troops.Count - 1;
+                            }
+                            if (faction.troopSequence >= 0 && faction.troopSequence < faction.Troops.Count)
+                            {
+                                var troop = faction.Troops[faction.troopSequence] as Troop;
+                                if (troop != null)
+                                {
+                                    troop.DrawSelected = true;
+                                    Session.MainGame.mainGameScreen.JumpTo(troop.Position);
+                                }
+                            }
                             faction.troopSequence--;
+                        }
                     }
                 }
             }

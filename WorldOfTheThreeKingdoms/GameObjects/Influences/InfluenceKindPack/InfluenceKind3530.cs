@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
 
@@ -8,7 +8,9 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind3530 : InfluenceKind
     {
+        [DataMember]
         private int treasureCreationSettingID;
+        [DataMember]
         private float rate;
         
         public override void ApplyInfluenceKind(Architecture architecture)

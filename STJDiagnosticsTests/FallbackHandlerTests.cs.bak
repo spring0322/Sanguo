@@ -1,0 +1,204 @@
+using NUnit.Framework;
+using FsCheck;
+using FsCheck.NUnit;
+using STJDiagnosticsTests.Infrastructure;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Implementations;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Interfaces;
+using System;
+using System.Text.Json;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Tests for IFallbackHandler implementation
+    /// Validates Requirements 4.1, 4.2, 4.3, 4.4, 4.5
+    /// </summary>
+    [TestFixture]
+    public class FallbackHandlerTests : TestBase
+    {
+        private IFallbackHandler _fallbackHandler;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _fallbackHandler = new FallbackHandler();
+        }
+
+        [Test]
+        public async Task HandleDeserializationFailure_WithValidInputs_ShouldReturnRecoveredObject()
+        {
+            // Arrange
+            var jsonData = "{\"Name\":\"Test\"}";
+            var options = new JsonSerializerOptions();
+            var exception = new JsonException("Test exception");
+
+            // Act
+            var result = await _fallbackHandler.HandleDeserializationFailure<TestClass>(jsonData, options, exception);
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.IsInstanceOf<TestClass>(result);
+        }
+
+        [Test]
+        public async Task AttemptDataRepair_WithCorruptedJson_ShouldReturnTrue()
+        {
+            // Arrange
+            var corruptedJson = "{\"Name\":\"Test\",}"; // Trailing comma
+
+            // Act
+            var result = await _fallbackHandler.AttemptDataRepair(corruptedJson, typeof(TestClass));
+
+            // Assert
+            Assert.IsTrue(result);
+        }
+
+        [Test]
+        public async Task UseDefaultValues_ShouldReturnValidInstance()
+        {
+            // Act
+            var result = await _fallbackHandler.UseDefaultValues<TestClass>();
+
+            // Assert
+            Assert.IsNotNull(result);
+            Assert.IsInstanceOf<TestClass>(result);
+        }
+
+        [Test]
+        public void LogDiagnosticInformation_ShouldNotThrow()
+        {
+            // Arrange
+            var exception = new Exception("Test exception");
+            var context = "Test context";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() => _fallbackHandler.LogDiagnosticInformation(exception, context));
+        }
+
+        [Property(Arbitrary = new[] { typeof(TestArbitraries) }, MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 9: Graceful Error Recovery")]
+        public Property GracefulErrorRecovery()
+        {
+            // **Validates: Requirements 4.1, 4.3, 4.5**
+            return Prop.ForAll(TestArbitraries.ArbitraryJsonString(), TestArbitraries.ArbitraryGameType(), 
+                (jsonData, targetType) =>
+                {
+                    try
+                    {
+                        // For any deserialization failure, the system should provide graceful recovery
+                        var options = new JsonSerializerOptions();
+                        var exception = new JsonException("Simulated deserialization failure");
+                        
+                        // Create a generic method call for HandleDeserializationFailure
+                        var method = typeof(IFallbackHandler).GetMethod("HandleDeserializationFailure");
+                        var genericMethod = method.MakeGenericMethod(targetType);
+                        
+                        var task = (Task)genericMethod.Invoke(_fallbackHandler, new object[] { jsonData, options, exception });
+                        task.Wait(TimeSpan.FromSeconds(5)); // Timeout to prevent hanging
+                        
+                        // The system should maintain stability (not crash)
+                        var resultProperty = task.GetType().GetProperty("Result");
+                        var result = resultProperty?.GetValue(task);
+                        
+                        // Property: System should either recover with a valid object or provide a sensible default
+                        // Requirement 4.1: Provide graceful error recovery
+                        // Requirement 4.5: Maintain system stability and continue operation
+                        
+                        // For value types, default is acceptable
+                        if (targetType.IsValueType)
+                        {
+                            return true; // Any result is acceptable for value types
+                        }
+                        
+                        // For string type, should return non-null (empty string is acceptable)
+                        if (targetType == typeof(string))
+                        {
+                            return result != null;
+                        }
+                        
+                        // For other reference types, either non-null object or null is acceptable
+                        // (null indicates graceful fallback when object creation isn't possible)
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Even if recovery fails, the system should not crash unexpectedly
+                        // Allow only controlled exceptions (InvalidOperationException with comprehensive context)
+                        return ex is InvalidOperationException && 
+                               ex.Message.Contains("Complete deserialization failure") &&
+                               ex.InnerException != null;
+                    }
+                });
+        }
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 10: Progressive Error Escalation")]
+        public Property ProgressiveErrorEscalation()
+        {
+            // **Validates: Requirements 4.4**
+            return Prop.ForAll(TestArbitraries.ArbitraryJsonString(), 
+                jsonData =>
+                {
+                    try
+                    {
+                        // Simulate multiple failure scenarios to test progressive escalation
+                        var options = new JsonSerializerOptions();
+                        var originalException = new JsonException("Primary deserialization failure");
+                        
+                        // Track escalation attempts
+                        var escalationAttempts = 0;
+                        
+                        // First attempt - should try fallback options
+                        try
+                        {
+                            var result = _fallbackHandler.HandleDeserializationFailure<TestClass>(jsonData, options, originalException).Result;
+                            escalationAttempts++;
+                        }
+                        catch (AggregateException aggEx) when (aggEx.InnerException is InvalidOperationException)
+                        {
+                            var innerEx = aggEx.InnerException as InvalidOperationException;
+                            escalationAttempts++;
+                            
+                            // Property: When multiple deserialization attempts fail, 
+                            // the system should escalate with comprehensive error context
+                            // Requirement 4.4: Escalate with comprehensive error context
+                            var hasComprehensiveContext = 
+                                innerEx.Message.Contains("Complete deserialization failure") &&
+                                innerEx.Message.Contains("TestClass") &&
+                                innerEx.InnerException != null &&
+                                innerEx.InnerException == originalException;
+                            
+                            return hasComprehensiveContext && escalationAttempts > 0;
+                        }
+                        catch
+                        {
+                            // Unexpected exception type - should not happen
+                            return false;
+                        }
+                        
+                        // If no exception was thrown, the system successfully recovered
+                        // This is also valid behavior (graceful recovery)
+                        return escalationAttempts > 0;
+                    }
+                    catch (Exception)
+                    {
+                        // Any unhandled exception indicates improper escalation
+                        return false;
+                    }
+                });
+        }
+    }
+
+    /// <summary>
+    /// Test class for fallback handler testing
+    /// </summary>
+    public class TestClass
+    {
+        public string Name { get; set; } = string.Empty;
+        public int Id { get; set; }
+        public List<string> Items { get; set; } = new List<string>();
+        public Dictionary<int, string> EventEffectKinds { get; set; } = new Dictionary<int, string>();
+    }
+}

@@ -8,6 +8,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind3040 : InfluenceKind
     {
+        [DataMember]
         private float rate = 0f;
 
         public override void ApplyInfluenceKind(Architecture architecture)

@@ -1,0 +1,433 @@
+using NUnit.Framework;
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// 错误处理验证测试 - 验证序列化系统的错误处理能力
+    /// Task 13.4: 错误处理验证
+    /// Requirements: 8.1, 8.2, 8.3, 8.5
+    /// </summary>
+    [TestFixture]
+    public class ErrorHandlingValidationTests : TestBase
+    {
+        private SerializationManager _serializationManager;
+        private string _testDirectory;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            _serializationManager = new SerializationManager();
+            _testDirectory = Path.Combine(Path.GetTempPath(), "WorldOfTheThreeKingdoms_Error_Tests", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_testDirectory);
+            
+            TestContext.WriteLine($"错误测试目录: {_testDirectory}");
+        }
+
+        [TearDown]
+        public override void TearDown()
+        {
+            try
+            {
+                if (Directory.Exists(_testDirectory))
+                {
+                    Directory.Delete(_testDirectory, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                TestContext.WriteLine($"清理测试目录失败: {ex.Message}");
+            }
+            
+            base.TearDown();
+        }
+
+        /// <summary>
+        /// 测试损坏的JSON文件处理
+        /// Validates: Requirements 8.2, 8.5
+        /// </summary>
+        [Test]
+        public void ErrorHandling_CorruptedJson_ShouldHandleGracefully()
+        {
+            // Arrange - 创建损坏的JSON文件
+            var corruptedPath = Path.Combine(_testDirectory, "corrupted.sav.gz");
+            
+            // 写入无效的JSON
+            using (var fileStream = File.Create(corruptedPath))
+            using (var gzipStream = new System.IO.Compression.GZipStream(fileStream, System.IO.Compression.CompressionLevel.Optimal))
+            using (var writer = new StreamWriter(gzipStream))
+            {
+                writer.Write("{\"invalid\":\"json\",\"missing\":}"); // 故意的语法错误
+            }
+
+            TestContext.WriteLine("创建损坏的JSON文件");
+
+            // Act & Assert - 应该抛出明确的异常
+            var ex = Assert.Throws<Exception>(() => _serializationManager.LoadGame(corruptedPath));
+            
+            Assert.That(ex, Is.Not.Null, "应该抛出异常");
+            TestContext.WriteLine($"异常类型: {ex.GetType().Name}");
+            TestContext.WriteLine($"异常消息: {ex.Message}");
+            
+            // 验证错误消息包含有用信息
+            Assert.That(ex.Message, Is.Not.Empty, "错误消息不应为空");
+        }
+
+        /// <summary>
+        /// 测试无效引用的处理
+        /// Validates: Requirements 5.3, 8.3, 9.7
+        /// </summary>
+        [Test]
+        public void ErrorHandling_InvalidReferences_ShouldSanitize()
+        {
+            // Arrange - 创建包含无效引用的场景
+            var scenario = CreateScenarioWithInvalidReferences();
+            var savePath = Path.Combine(_testDirectory, "invalid_refs.sav.gz");
+            
+            TestContext.WriteLine("创建包含无效引用的场景");
+
+            // Act - 保存并加载
+            _serializationManager.SaveGame(scenario, savePath);
+            var loadedScenario = _serializationManager.LoadGame(savePath);
+
+            // Assert - 验证无效引用被清理
+            Assert.That(loadedScenario, Is.Not.Null, "场景应该成功加载");
+            
+            // 验证无效引用被重置
+            foreach (var person in loadedScenario.Persons.Values)
+            {
+                if (person.BelongedFaction != null)
+                {
+                    Assert.That(loadedScenario.Factions.ContainsKey(person.BelongedFaction.ID), Is.True,
+                        $"人物 {person.Name} 的势力引用应该有效");
+                }
+            }
+            
+            TestContext.WriteLine("无效引用已被清理");
+        }
+
+        /// <summary>
+        /// 测试压缩错误的处理
+        /// Validates: Requirements 8.5
+        /// </summary>
+        [Test]
+        public void ErrorHandling_CompressionError_ShouldProvideMessage()
+        {
+            // Arrange - 创建非GZip格式的文件
+            var invalidPath = Path.Combine(_testDirectory, "not_gzip.sav.gz");
+            File.WriteAllText(invalidPath, "{\"valid\":\"json\"}"); // 未压缩的JSON
+
+            TestContext.WriteLine("创建未压缩的文件（伪装成.sav.gz）");
+
+            // Act & Assert - 应该检测到压缩错误
+            var ex = Assert.Throws<Exception>(() => _serializationManager.LoadGame(invalidPath));
+            
+            Assert.That(ex, Is.Not.Null, "应该抛出异常");
+            TestContext.WriteLine($"异常类型: {ex.GetType().Name}");
+            TestContext.WriteLine($"异常消息: {ex.Message}");
+        }
+
+        /// <summary>
+        /// 测试文件不存在的处理
+        /// Validates: Requirements 8.2
+        /// </summary>
+        [Test]
+        public void ErrorHandling_FileNotFound_ShouldThrowClearException()
+        {
+            // Arrange
+            var nonExistentPath = Path.Combine(_testDirectory, "does_not_exist.sav.gz");
+
+            // Act & Assert
+            var ex = Assert.Throws<FileNotFoundException>(() => _serializationManager.LoadGame(nonExistentPath));
+            
+            Assert.That(ex, Is.Not.Null, "应该抛出FileNotFoundException");
+            Assert.That(ex.Message, Does.Contain(nonExistentPath).Or.Not.Empty, 
+                "错误消息应该包含文件路径或有用信息");
+            
+            TestContext.WriteLine($"异常消息: {ex.Message}");
+        }
+
+        /// <summary>
+        /// 测试空文件的处理
+        /// Validates: Requirements 8.2, 8.5
+        /// </summary>
+        [Test]
+        public void ErrorHandling_EmptyFile_ShouldHandleGracefully()
+        {
+            // Arrange - 创建空文件
+            var emptyPath = Path.Combine(_testDirectory, "empty.sav.gz");
+            File.Create(emptyPath).Dispose();
+
+            TestContext.WriteLine("创建空文件");
+
+            // Act & Assert
+            var ex = Assert.Throws<Exception>(() => _serializationManager.LoadGame(emptyPath));
+            
+            Assert.That(ex, Is.Not.Null, "应该抛出异常");
+            TestContext.WriteLine($"异常类型: {ex.GetType().Name}");
+            TestContext.WriteLine($"异常消息: {ex.Message}");
+        }
+
+        /// <summary>
+        /// 测试部分损坏的文件处理
+        /// Validates: Requirements 8.2, 8.5
+        /// </summary>
+        [Test]
+        public void ErrorHandling_PartiallyCorrupted_ShouldDetect()
+        {
+            // Arrange - 创建部分损坏的文件
+            var scenario = CreateTestScenario();
+            var savePath = Path.Combine(_testDirectory, "partial.sav.gz");
+            
+            // 先保存正常文件
+            _serializationManager.SaveGame(scenario, savePath);
+            
+            // 然后截断文件（模拟部分损坏）
+            var fileBytes = File.ReadAllBytes(savePath);
+            var truncatedBytes = new byte[fileBytes.Length / 2];
+            Array.Copy(fileBytes, truncatedBytes, truncatedBytes.Length);
+            File.WriteAllBytes(savePath, truncatedBytes);
+
+            TestContext.WriteLine("创建部分损坏的文件");
+
+            // Act & Assert
+            var ex = Assert.Throws<Exception>(() => _serializationManager.LoadGame(savePath));
+            
+            Assert.That(ex, Is.Not.Null, "应该检测到文件损坏");
+            TestContext.WriteLine($"异常类型: {ex.GetType().Name}");
+            TestContext.WriteLine($"异常消息: {ex.Message}");
+        }
+
+        /// <summary>
+        /// 测试保存时的磁盘空间不足处理
+        /// Validates: Requirements 8.1
+        /// </summary>
+        [Test]
+        public void ErrorHandling_DiskFull_ShouldHandleGracefully()
+        {
+            // Arrange - 创建大型场景
+            var largeScenario = CreateLargeScenario();
+            
+            // 尝试保存到只读目录（模拟磁盘问题）
+            var readOnlyPath = Path.Combine(_testDirectory, "readonly");
+            Directory.CreateDirectory(readOnlyPath);
+            
+            try
+            {
+                // 设置目录为只读
+                var dirInfo = new DirectoryInfo(readOnlyPath);
+                dirInfo.Attributes = FileAttributes.ReadOnly;
+                
+                var savePath = Path.Combine(readOnlyPath, "test.sav.gz");
+
+                // Act & Assert
+                var ex = Assert.Throws<UnauthorizedAccessException>(() => 
+                    _serializationManager.SaveGame(largeScenario, savePath));
+                
+                Assert.That(ex, Is.Not.Null, "应该抛出访问异常");
+                TestContext.WriteLine($"异常消息: {ex.Message}");
+            }
+            finally
+            {
+                // 恢复目录权限以便清理
+                try
+                {
+                    var dirInfo = new DirectoryInfo(readOnlyPath);
+                    dirInfo.Attributes = FileAttributes.Normal;
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// 测试并发访问冲突的处理
+        /// Validates: Requirements 8.1, 8.2
+        /// </summary>
+        [Test]
+        public async Task ErrorHandling_ConcurrentAccess_ShouldHandleConflicts()
+        {
+            // Arrange
+            var scenario = CreateTestScenario();
+            var savePath = Path.Combine(_testDirectory, "concurrent.sav.gz");
+            
+            // 先保存文件
+            _serializationManager.SaveGame(scenario, savePath);
+
+            // Act - 尝试并发读写
+            var tasks = new System.Collections.Generic.List<Task>();
+            
+            // 多个读取任务
+            for (int i = 0; i < 3; i++)
+            {
+                tasks.Add(Task.Run(() =>
+                {
+                    try
+                    {
+                        var loaded = _serializationManager.LoadGame(savePath);
+                        Assert.That(loaded, Is.Not.Null);
+                    }
+                    catch (Exception ex)
+                    {
+                        TestContext.WriteLine($"读取异常: {ex.Message}");
+                    }
+                }));
+            }
+            
+            // 一个写入任务
+            tasks.Add(Task.Run(() =>
+            {
+                try
+                {
+                    _serializationManager.SaveGame(scenario, savePath);
+                }
+                catch (Exception ex)
+                {
+                    TestContext.WriteLine($"写入异常: {ex.Message}");
+                }
+            }));
+
+            // Assert - 所有任务都应该完成（可能有些失败）
+            await Task.WhenAll(tasks);
+            TestContext.WriteLine("并发访问测试完成");
+        }
+
+        /// <summary>
+        /// 测试错误日志的完整性
+        /// Validates: Requirements 8.1, 8.2, 8.3
+        /// </summary>
+        [Test]
+        public void ErrorHandling_Logging_ShouldProvideDetails()
+        {
+            // Arrange - 创建会导致错误的场景
+            var corruptedPath = Path.Combine(_testDirectory, "log_test.sav.gz");
+            File.WriteAllText(corruptedPath, "not a valid gzip file");
+
+            // Act - 尝试加载并捕获异常
+            Exception caughtException = null;
+            try
+            {
+                _serializationManager.LoadGame(corruptedPath);
+            }
+            catch (Exception ex)
+            {
+                caughtException = ex;
+            }
+
+            // Assert - 验证异常包含详细信息
+            Assert.That(caughtException, Is.Not.Null, "应该捕获到异常");
+            Assert.That(caughtException.Message, Is.Not.Empty, "异常消息不应为空");
+            
+            TestContext.WriteLine($"异常类型: {caughtException.GetType().Name}");
+            TestContext.WriteLine($"异常消息: {caughtException.Message}");
+            
+            if (caughtException.StackTrace != null)
+            {
+                TestContext.WriteLine($"堆栈跟踪: {caughtException.StackTrace.Substring(0, Math.Min(200, caughtException.StackTrace.Length))}...");
+            }
+        }
+
+        /// <summary>
+        /// 测试验证报告的生成
+        /// Validates: Requirements 9.3, 9.6
+        /// </summary>
+        [Test]
+        public void ErrorHandling_ValidationReport_ShouldBeGenerated()
+        {
+            // Arrange - 创建包含问题的场景
+            var scenario = CreateScenarioWithInvalidReferences();
+            var savePath = Path.Combine(_testDirectory, "validation.sav.gz");
+            
+            // Act - 保存并加载
+            _serializationManager.SaveGame(scenario, savePath);
+            var loadedScenario = _serializationManager.LoadGame(savePath);
+
+            // Assert - 验证场景应该成功加载（即使有问题）
+            Assert.That(loadedScenario, Is.Not.Null, "场景应该成功加载");
+            
+            // 验证数据已被清理
+            TestContext.WriteLine("验证报告应该记录了数据清理操作");
+        }
+
+        #region Helper Methods
+
+        private GameScenario CreateTestScenario()
+        {
+            var scenario = new GameScenario();
+            
+            var faction = new Faction { ID = 1, Name = "测试势力" };
+            scenario.Factions.Add(faction.ID, faction);
+            
+            for (int i = 1; i <= 5; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = faction
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateScenarioWithInvalidReferences()
+        {
+            var scenario = new GameScenario();
+            
+            // 创建势力
+            var faction = new Faction { ID = 1, Name = "有效势力" };
+            scenario.Factions.Add(faction.ID, faction);
+            
+            // 创建人物，其中一些引用无效势力
+            for (int i = 1; i <= 5; i++)
+            {
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = i <= 3 ? faction : null // 后面的人物没有势力
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        private GameScenario CreateLargeScenario()
+        {
+            var scenario = new GameScenario();
+            
+            // 创建大量数据
+            for (int i = 1; i <= 10; i++)
+            {
+                var faction = new Faction { ID = i, Name = $"势力{i}" };
+                scenario.Factions.Add(faction.ID, faction);
+            }
+            
+            for (int i = 1; i <= 100; i++)
+            {
+                var factionId = ((i - 1) % 10) + 1;
+                var person = new Person 
+                { 
+                    ID = i, 
+                    Name = $"人物{i}",
+                    BelongedFaction = scenario.Factions[factionId]
+                };
+                scenario.Persons.Add(person.ID, person);
+            }
+            
+            return scenario;
+        }
+
+        #endregion
+    }
+}

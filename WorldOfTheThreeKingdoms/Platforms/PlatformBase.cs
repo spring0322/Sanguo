@@ -414,7 +414,16 @@ namespace Platforms
                 {
                     if (res.Contains("\\"))
                     {
-                        res = res.Substring(res.LastIndexOf('\\') + 1);
+                        // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                        int lastBackslash = res.LastIndexOf('\\');
+                        if (lastBackslash >= 0 && lastBackslash < res.Length - 1)
+                        {
+                            res = res.Substring(lastBackslash + 1);
+                        }
+                        else
+                        {
+                            res = Path.GetFileName(res);
+                        }
                     }
                 }
 
@@ -445,9 +454,12 @@ namespace Platforms
         {
             try
             {
+                if (songs == null || songs.Length == 0) return;
+                
                 string res = "";
                 songs2 = new List<string>();
                 songslist = new List<Song>();
+                
                 foreach (var item in songs)
                 {
                     res = item;
@@ -459,21 +471,44 @@ namespace Platforms
                     {
                         if (res.Contains("\\"))
                         {
-                            res = res.Substring(res.LastIndexOf('\\') + 1);
+                            int lastBackslash = res.LastIndexOf('\\');
+                            if (lastBackslash >= 0 && lastBackslash < res.Length - 1)
+                            {
+                                res = res.Substring(lastBackslash + 1);
+                            }
+                            else
+                            {
+                                res = Path.GetFileName(res);
+                            }
                         }
                     }
+                    
+                    // 🔥 FIX: Normalize path separators for MonoGame (replace backslash with forward slash)
+                    res = res.Replace("\\", "/");
+
                     songs2.Add(res);
-                    Song song3 = Song.FromUri(res, new Uri(res, UriKind.Relative));
-                    songslist.Add(song3);
+                    
+                    try
+                    {
+                        Song song3 = Song.FromUri(res, new Uri(res, UriKind.Relative));
+                        songslist.Add(song3);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 🔍 Log the exact error for debugging
+                        System.Diagnostics.Debug.WriteLine($"[PlaySong] Song.FromUri failed for '{res}': {ex.Message}");
+                    }
                 }
+                
                 if (songslist.Count >= 1)
                 {
                     Session.Current.MusicContent.Unload();
                     SetMusicVolume((int)Setting.Current.MusicVolume);
+                    MediaPlayer.IsRepeating = false; // 关闭单曲循环，使用事件切歌
                     MediaPlayer.MediaStateChanged += MediaPlayer_MediaStateChanged;
                     void MediaPlayer_MediaStateChanged(object sender, EventArgs e)
                     {
-                        if (songs2.Count > 0 && Session.GlobalVariables.PlayMusic && MediaPlayer.State== MediaState.Stopped)
+                        if (songs2.Count > 0 && Session.GlobalVariables.PlayMusic && MediaPlayer.State == MediaState.Stopped)
                         {
                             MediaPlayer.Play(getrandomsong());
                         }
@@ -481,9 +516,9 @@ namespace Platforms
                     MediaPlayer.Play(getrandomsong());
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                //监控此
+                // 静默失败
             }
         }
         Song getrandomsong()

@@ -12,7 +12,7 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
 
         public override bool CheckConditionKind(Person person)
         {
-            Treasure t = Session.Current.Scenario.Treasures.GetGameObject(number) as Treasure;
+            Treasure t = (Session.Current.Scenario.Treasures.GetGameObject(number) is Treasure ? (Treasure)Session.Current.Scenario.Treasures.GetGameObject(number) : null);
             return person.Treasures.GameObjects.Contains(t);
         }
 
@@ -64,4 +64,5 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
         }
     }
 }
+
 

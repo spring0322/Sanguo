@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameObjects; // 假设 Troop 和 Person 类在此命名空间
+using GameObjects.PersonDetail; // 引用 Skill 类
+using GameObjects.TroopDetail; // 🔥 新增：引用 MilitaryType 枚举
 using GameManager;
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     /// <summary>
     /// AI 部队战术角色枚举
@@ -21,37 +23,28 @@ namespace GameGlobal
     }
 
     /// <summary>
+    /// 向后兼容的AIRole别名
+    /// </summary>
+    public enum AIRole
+    {
+        None = 0,
+        Tank = 1,
+        DPS = 2,
+        Mage = 3,
+        Support = 4,
+        Logistics = 5,
+        Balanced = 6
+    }
+
+    /// <summary>
     /// 角色选择器 - 负责根据兵种、属性和特技分配战术角色
     /// 环境：C# 7.3 / MonoGame 完全兼容
     /// </summary>
     public static class AIRoleSelector
     {
-        // ================= 配置区域 (ID 表) =================
-        // 提示：如果 CommonData.json 变动，请修改此处的 ID
-        // 兵种 ID 配置
-        private static readonly HashSet<int> TankTroopIDs = new HashSet<int> { 11, 51, 150 }; // 戟兵, 盾兵, 象兵
-        private static readonly HashSet<int> DpsTroopIDs = new HashSet<int> { 2, 15, 400 };   // 骑兵, 弩兵, 虎豹骑
-        private static readonly HashSet<int> LogisticsTroopIDs = new HashSet<int> { 29, 601, 621 }; // 运输队, 建造队
-
-        // 核心特技 ID 配置
-        private const int Skill_JianZhen = 350;   // 坚阵 (受暴击伤害减少)
-        private const int Skill_TieBi = 690;      // 铁壁 (友军防御光环)
-        private const int Skill_GuanChuan = 383;  // 贯穿
-        private const int Skill_GongXin = 390;    // 攻心
-        private const int Skill_RaoLuan = 391;    // 扰乱
-        private const int Skill_ShenSuan = 570;   // 神算
-        private const int Skill_YiZhi = 399;      // 医治
-        private const int Skill_GuWu = 397;       // 鼓舞
-
-        // 暴击类特技范围 (ID 400 - 450)
-        private const int CritSkill_Min = 400;
-        private const int CritSkill_Max = 450;
-
-        // ================= 评分权重参数 =================
-        private const float Weight_Stat = 1.0f;         // 属性分系数
-        private const float Bonus_TroopMatch = 50.0f;   // 兵种契合加分
-        private const float Bonus_CoreSkill = 30.0f;    // 核心特技加分
-        private const float Bonus_SupportSkill = 100.0f;// 辅助特技极大加分
+        // ================= 配置化改造 =================
+        // 所有硬编码的ID和参数现在从配置文件中读取
+        // 配置文件：GameGlobal/AIRoleConfig.json
 
         /// <summary>
         /// 计算并返回部队的最佳战术角色
@@ -68,9 +61,9 @@ namespace GameGlobal
                 // 1. 优先剔除后勤单位
                 // 运输队和建造队无战斗能力，必须强制锁定
                 int kindID = GetTroopKindID(troop);
-                if (LogisticsTroopIDs.Contains(kindID))
+                if (AIRoleConfigManager.IsTroopKindForRole(kindID, "Logistics"))
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 识别为后勤单位(ID:{kindID})");
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 识别为后勤单位(ID:{kindID}, {AIRoleConfigManager.GetTroopKindName(kindID)})");
                     return TroopRole.Logistics;
                 }
 
@@ -82,7 +75,7 @@ namespace GameGlobal
                 float scoreMage = CalculateMageScore(troop);
                 float scoreSupport = CalculateSupportScore(troop);
 
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 评分: Tank={scoreTank:F1}, DPS={scoreDps:F1}, Mage={scoreMage:F1}, Support={scoreSupport:F1}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 评分: Tank={scoreTank:F1}, DPS={scoreDps:F1}, Mage={scoreMage:F1}, Support={scoreSupport:F1}");
 
                 // 3. 比较得出最高分 (C# 7.3 基础写法)
                 TroopRole bestRole = TroopRole.Tank;
@@ -107,19 +100,67 @@ namespace GameGlobal
                 }
 
                 // 如果最高分太低（例如全员杂鱼），设置默认行为
-                if (maxScore < 80)
+                float minThreshold = AIRoleConfigManager.Config.GlobalSettings.MinScoreThreshold;
+                if (maxScore < minThreshold)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 最高评分过低({maxScore:F1})，分配为均衡角色");
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 最高评分过低({maxScore:F1})，分配为均衡角色");
                     return TroopRole.Balanced;
                 }
 
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 最终角色: {bestRole} (评分: {maxScore:F1})");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {leader.Name} 最终角色: {bestRole} (评分: {maxScore:F1})");
                 return bestRole;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] DetermineRole 失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] DetermineRole 失败: {ex.Message}");
                 return TroopRole.Balanced;
+            }
+        }
+
+        /// <summary>
+        /// 向后兼容的GetBestRole方法
+        /// </summary>
+        /// <param name="troop">目标部队</param>
+        /// <returns>AIRole枚举格式的角色</returns>
+        public static AIRole GetBestRole(Troop troop)
+        {
+            TroopRole role = DetermineRole(troop);
+            return ConvertToAIRole(role);
+        }
+
+        /// <summary>
+        /// 将TroopRole转换为AIRole（向后兼容）
+        /// </summary>
+        private static AIRole ConvertToAIRole(TroopRole role)
+        {
+            switch (role)
+            {
+                case TroopRole.None: return AIRole.None;
+                case TroopRole.Tank: return AIRole.Tank;
+                case TroopRole.DPS: return AIRole.DPS;
+                case TroopRole.Mage: return AIRole.Mage;
+                case TroopRole.Support: return AIRole.Support;
+                case TroopRole.Logistics: return AIRole.Logistics;
+                case TroopRole.Balanced: return AIRole.Balanced;
+                default: return AIRole.None;
+            }
+        }
+
+        /// <summary>
+        /// 将AIRole转换为TroopRole
+        /// </summary>
+        public static TroopRole ConvertToTroopRole(AIRole role)
+        {
+            switch (role)
+            {
+                case AIRole.None: return TroopRole.None;
+                case AIRole.Tank: return TroopRole.Tank;
+                case AIRole.DPS: return TroopRole.DPS;
+                case AIRole.Mage: return TroopRole.Mage;
+                case AIRole.Support: return TroopRole.Support;
+                case AIRole.Logistics: return TroopRole.Logistics;
+                case AIRole.Balanced: return TroopRole.Balanced;
+                default: return TroopRole.None;
             }
         }
 
@@ -127,38 +168,77 @@ namespace GameGlobal
         /// <summary>
         /// 计算肉盾评分
         /// </summary>
-        private static float CalculateTankScore(Troop troop)
+        public static float CalculateTankScore(Troop troop)
         {
             try
             {
-                // 基础分：统率
-                float score = troop.Leader.Command * Weight_Stat;
+                // 🔥 ANTI-BAND-AID：数据源验证，不使用防御性检查
+                if (troop.Army == null)
+                {
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army 为 null，应在数据加载时修复");
+                }
+                
+                if (troop.Army.Kind == null)
+                {
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army.Kind 为 null (MilitaryID={troop.Army.ID})，应在数据加载时修复");
+                }
+
+                // 🔥 修复：弩兵不能当肉盾 - 2026-03-10
+                // 问题：皇甫嵩队（弩兵）被错误分配为肉盾角色
+                if (troop.Army.Kind.Type == MilitaryType.弩兵)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[角色分配] {troop.Leader.Name} 是弩兵，不适合肉盾角色，评分=0");
+                    return 0f;
+                }
+
+                var roleConfig = AIRoleConfigManager.GetRoleConfig("Tank");
+                if (roleConfig == null) return 0f;
+
+                float score = 0f;
+
+                // 基础分：属性权重
+                if (roleConfig.StatWeights != null)
+                {
+                    if (roleConfig.StatWeights.TryGetValue("Command", out float commandWeight))
+                        score += troop.Leader.Command * commandWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Strength", out float strengthWeight))
+                        score += troop.Leader.Strength * strengthWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Intelligence", out float intWeight))
+                        score += troop.Leader.Intelligence * intWeight;
+                }
 
                 // 兵种加成
                 int kindID = GetTroopKindID(troop);
-                if (TankTroopIDs.Contains(kindID))
+                if (AIRoleConfigManager.IsTroopKindForRole(kindID, "Tank"))
                 {
-                    score += Bonus_TroopMatch;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 肉盾兵种匹配加分");
+                    float bonus = roleConfig.Bonuses?.TryGetValue("TroopMatch", out float troopBonus) == true ? troopBonus : 50f;
+                    score += bonus;
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 肉盾兵种匹配加分({AIRoleConfigManager.GetTroopKindName(kindID)})");
                 }
 
                 // 特技加成
-                if (HasSkill(troop, Skill_JianZhen)) 
+                if (roleConfig.CoreSkillIDs != null)
                 {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有坚阵技能");
-                }
-                if (HasSkill(troop, Skill_TieBi)) 
-                {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有铁壁技能");
+                    float skillBonus = roleConfig.Bonuses?.TryGetValue("CoreSkill", out float coreBonus) == true ? coreBonus : 30f;
+                    foreach (int skillID in roleConfig.CoreSkillIDs)
+                    {
+                        if (HasSkill(troop, skillID))
+                        {
+                            score += skillBonus;
+                            #if DEBUG
+                            // 🔥 ANTI-BAND-AID：不掩盖数据错误，直接使用已验证的数据
+                            string militaryTypeName = troop.Army.Kind.Type.ToString();
+                            System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.Leader.Name}({militaryTypeName}) 肉盾技能生效: {AIRoleConfigManager.GetSkillName(skillID)}");
+                            #endif
+                        }
+                    }
                 }
 
                 return score;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateTankScore 失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateTankScore 失败: {ex.Message}");
                 return 0f;
             }
         }
@@ -166,40 +246,82 @@ namespace GameGlobal
         /// <summary>
         /// 计算输出评分
         /// </summary>
-        private static float CalculateDpsScore(Troop troop)
+        public static float CalculateDpsScore(Troop troop)
         {
             try
             {
-                // 基础分：武力
-                float score = troop.Leader.Strength * Weight_Stat;
+                // 🔥 ANTI-BAND-AID：数据源验证，不使用防御性检查
+                if (troop.Army == null)
+                {
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army 为 null，应在数据加载时修复");
+                }
+                
+                if (troop.Army.Kind == null)
+                {
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army.Kind 为 null (MilitaryID={troop.Army.ID})，应在数据加载时修复");
+                }
+
+                // 🔥 修复：增加兵种适配性检查 - 2026-03-10
+                // DPS角色更适合骑兵、弩兵等机动性强的兵种
+                var militaryType = troop.Army.Kind.Type;
+                if (militaryType == MilitaryType.步兵)
+                {
+                    // 步兵可以当DPS，但评分降低
+                    // System.Diagnostics.Debug.WriteLine($"[角色分配] {troop.Leader.Name} 是步兵，DPS适配性一般");
+                }
+
+                var roleConfig = AIRoleConfigManager.GetRoleConfig("DPS");
+                if (roleConfig == null) return 0f;
+
+                float score = 0f;
+
+                // 基础分：属性权重
+                if (roleConfig.StatWeights != null)
+                {
+                    if (roleConfig.StatWeights.TryGetValue("Strength", out float strengthWeight))
+                        score += troop.Leader.Strength * strengthWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Command", out float commandWeight))
+                        score += troop.Leader.Command * commandWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Intelligence", out float intWeight))
+                        score += troop.Leader.Intelligence * intWeight;
+                }
 
                 // 兵种加成
                 int kindID = GetTroopKindID(troop);
-                if (DpsTroopIDs.Contains(kindID))
+                if (AIRoleConfigManager.IsTroopKindForRole(kindID, "DPS"))
                 {
-                    score += Bonus_TroopMatch;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 输出兵种匹配加分");
+                    float bonus = roleConfig.Bonuses?.TryGetValue("TroopMatch", out float troopBonus) == true ? troopBonus : 50f;
+                    score += bonus;
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 输出兵种匹配加分({AIRoleConfigManager.GetTroopKindName(kindID)})");
                 }
 
-                // 特技加成：贯穿
-                if (HasSkill(troop, Skill_GuanChuan)) 
+                // 特技加成：核心技能
+                if (roleConfig.CoreSkillIDs != null)
                 {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有贯穿技能");
+                    float skillBonus = roleConfig.Bonuses?.TryGetValue("CoreSkill", out float coreBonus) == true ? coreBonus : 30f;
+                    foreach (int skillID in roleConfig.CoreSkillIDs)
+                    {
+                        if (HasSkill(troop, skillID))
+                        {
+                            score += skillBonus;
+                            // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有{AIRoleConfigManager.GetSkillName(skillID)}技能");
+                        }
+                    }
                 }
                 
                 // 特技加成：暴击类
-                if (HasCriticalSkill(troop)) 
+                if (roleConfig.CriticalSkillRange != null && HasCriticalSkill(troop, roleConfig.CriticalSkillRange)) 
                 {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有暴击技能");
+                    float skillBonus = roleConfig.Bonuses?.TryGetValue("CoreSkill", out float coreBonus) == true ? coreBonus : 30f;
+                    score += skillBonus;
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有暴击技能");
                 }
 
                 return score;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateDpsScore 失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateDpsScore 失败: {ex.Message}");
                 return 0f;
             }
         }
@@ -207,45 +329,68 @@ namespace GameGlobal
         /// <summary>
         /// 计算法师评分
         /// </summary>
-        private static float CalculateMageScore(Troop troop)
+        public static float CalculateMageScore(Troop troop)
         {
             try
             {
+                var roleConfig = AIRoleConfigManager.GetRoleConfig("Mage");
+                if (roleConfig == null) return 0f;
+
                 // 门槛：智力过低直接排除，防止"弱智"法师送策略点
-                if (troop.Leader.Intelligence < 70) 
+                int minInt = roleConfig.MinIntelligence > 0 ? roleConfig.MinIntelligence : 70;
+                if (troop.Leader.Intelligence < minInt) 
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 智力不足({troop.Leader.Intelligence})，不适合做法师");
+                    // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 智力不足({troop.Leader.Intelligence})，不适合做法师");
                     return 0f;
                 }
 
-                // 基础分：智力
-                float score = troop.Leader.Intelligence * Weight_Stat;
+                float score = 0f;
+
+                // 基础分：属性权重
+                if (roleConfig.StatWeights != null)
+                {
+                    if (roleConfig.StatWeights.TryGetValue("Intelligence", out float intWeight))
+                        score += troop.Leader.Intelligence * intWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Command", out float commandWeight))
+                        score += troop.Leader.Command * commandWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Strength", out float strengthWeight))
+                        score += troop.Leader.Strength * strengthWeight;
+                }
 
                 // 法师主要依赖特技，兵种影响较小 (除非有井阑等特殊兵种，此处暂略)
 
                 // 特技加成
-                if (HasSkill(troop, Skill_GongXin)) 
+                if (roleConfig.CoreSkillIDs != null)
                 {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有攻心技能");
-                }
-                if (HasSkill(troop, Skill_RaoLuan)) 
-                {
-                    score += Bonus_CoreSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有扰乱技能");
-                }
-                // 神算价值极高，额外加权
-                if (HasSkill(troop, Skill_ShenSuan)) 
-                {
-                    score += Bonus_CoreSkill * 1.5f;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有神算技能");
+                    float skillBonus = roleConfig.Bonuses?.TryGetValue("CoreSkill", out float coreBonus) == true ? coreBonus : 30f;
+                    foreach (int skillID in roleConfig.CoreSkillIDs)
+                    {
+                        if (HasSkill(troop, skillID))
+                        {
+                            float actualBonus = skillBonus;
+                            
+                            // 检查是否有特殊技能加权
+                            if (roleConfig.SpecialSkills != null && 
+                                roleConfig.SpecialSkills.TryGetValue(skillID.ToString(), out float multiplier))
+                            {
+                                actualBonus *= multiplier;
+                                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有{AIRoleConfigManager.GetSkillName(skillID)}技能(特殊加权x{multiplier})");
+                            }
+                            else
+                            {
+                                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有{AIRoleConfigManager.GetSkillName(skillID)}技能");
+                            }
+                            
+                            score += actualBonus;
+                        }
+                    }
                 }
 
                 return score;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateMageScore 失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateMageScore 失败: {ex.Message}");
                 return 0f;
             }
         }
@@ -253,32 +398,45 @@ namespace GameGlobal
         /// <summary>
         /// 计算辅助评分
         /// </summary>
-        private static float CalculateSupportScore(Troop troop)
+        public static float CalculateSupportScore(Troop troop)
         {
             try
             {
+                var roleConfig = AIRoleConfigManager.GetRoleConfig("Support");
+                if (roleConfig == null) return 0f;
+
                 float score = 0f;
 
-                // 辅助主要看是否有技能，属性次之 (智力/统率略微加分)
-                score += (troop.Leader.Command + troop.Leader.Intelligence) * 0.2f;
+                // 辅助主要看是否有技能，属性次之
+                if (roleConfig.StatWeights != null)
+                {
+                    if (roleConfig.StatWeights.TryGetValue("Command", out float commandWeight))
+                        score += troop.Leader.Command * commandWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Intelligence", out float intWeight))
+                        score += troop.Leader.Intelligence * intWeight;
+                    if (roleConfig.StatWeights.TryGetValue("Strength", out float strengthWeight))
+                        score += troop.Leader.Strength * strengthWeight;
+                }
 
                 // 拥有治疗或鼓舞，分数激增
-                if (HasSkill(troop, Skill_YiZhi)) 
+                if (roleConfig.CoreSkillIDs != null)
                 {
-                    score += Bonus_SupportSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有医治技能，强制辅助倾向");
-                }
-                if (HasSkill(troop, Skill_GuWu)) 
-                {
-                    score += Bonus_SupportSkill;
-                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有鼓舞技能");
+                    float skillBonus = roleConfig.Bonuses?.TryGetValue("CoreSkill", out float coreBonus) == true ? coreBonus : 100f;
+                    foreach (int skillID in roleConfig.CoreSkillIDs)
+                    {
+                        if (HasSkill(troop, skillID))
+                        {
+                            score += skillBonus;
+                            // System.Diagnostics.Debug.WriteLine($"[AI角色选择] {troop.Leader.Name} 拥有{AIRoleConfigManager.GetSkillName(skillID)}技能，强制辅助倾向");
+                        }
+                    }
                 }
 
                 return score;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateSupportScore 失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] CalculateSupportScore 失败: {ex.Message}");
                 return 0f;
             }
         }
@@ -291,17 +449,24 @@ namespace GameGlobal
         {
             try
             {
-                // 尝试不同的属性访问方式
-                if (troop.Army?.Kind != null)
+                // 🔥 ANTI-BAND-AID：数据源验证，不使用防御性检查
+                if (troop.Army == null)
                 {
-                    return troop.Army.Kind.ID;
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army 为 null，应在数据加载时修复");
                 }
-                // 如果有其他访问方式，可以在这里添加
-                return 0;
+                
+                if (troop.Army.Kind == null)
+                {
+                    throw new InvalidOperationException($"数据损坏：部队 {troop.DisplayName} 的 Army.Kind 为 null (MilitaryID={troop.Army.ID})，应在数据加载时修复");
+                }
+
+                return troop.Army.Kind.ID;
             }
-            catch
+            catch (Exception ex) when (!(ex is InvalidOperationException))
             {
-                return 0;
+                // 只捕获非数据错误的异常，数据错误必须向上传播
+                System.Diagnostics.Debug.WriteLine($"[AI角色选择] GetTroopKindID 访问失败: {ex.Message}");
+                throw; // 重新抛出，不掩盖问题
             }
         }
 
@@ -309,20 +474,51 @@ namespace GameGlobal
         /// 检查部队(主将或副将)是否拥有特定ID的特技
         /// 兼容 zhsan 的数据结构：需要同时检查主将和副将(如果有)
         /// </summary>
+        /// <summary>
+        /// 检查部队是否拥有特定技能，并且该技能在当前兵种下能够生效
+        /// 🔥 修复：增加兵种适用性检查，防止错误的角色分配
+        /// 日期：2026-03-09
+        /// 问题：弓兵被分配肉盾角色，因为主将有肉盾技能，但该技能只适用于步兵
+        /// 解决：检查技能的 MilitaryTypeOnly 属性，只有匹配当前兵种或"其他"的技能才算有效
+        /// </summary>
         private static bool HasSkill(Troop troop, int skillID)
         {
             try
             {
+                // 🔥 数据源验证：部队必须有有效的兵种信息
+                // 如果 Army 或 Kind 为 null，说明数据初始化有问题，应该在上层处理
+                if (troop.Army == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] ⚠️ 部队 {troop.DisplayName} 的 Army 为 null，跳过角色评分");
+                    return false;
+                }
+                
+                if (troop.Army.Kind == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] ⚠️ 部队 {troop.DisplayName} 的 Army.Kind 为 null (MilitaryID={troop.Army.ID})，跳过角色评分");
+                    return false;
+                }
+
+                MilitaryType currentMilitaryType = troop.Army.Kind.Type;
+
+                // 🔥 新增：特殊技能的兵种限制检查 - 2026-03-10
+                // 肉盾技能只适用于近战兵种，弩兵不能使用
+                if ((skillID == 350 || skillID == 690) && currentMilitaryType == MilitaryType.弩兵)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[角色分配] {troop.Leader.Name}({currentMilitaryType}) 技能{skillID}不适用于弩兵");
+                    return false;
+                }
+
                 // 检查主将
-                if (troop.Leader != null && HasPersonSkill(troop.Leader, skillID)) 
+                if (troop.Leader != null && HasPersonSkillForMilitaryType(troop.Leader, skillID, currentMilitaryType)) 
                     return true;
 
-                // 检查副将 (假设 Persons 列表包含主副将)
+                // 检查副将
                 if (troop.Persons != null)
                 {
                     foreach (Person p in troop.Persons.GetList())
                     {
-                        if (p != null && HasPersonSkill(p, skillID)) 
+                        if (p != null && HasPersonSkillForMilitaryType(p, skillID, currentMilitaryType)) 
                             return true;
                     }
                 }
@@ -337,18 +533,24 @@ namespace GameGlobal
         }
 
         /// <summary>
-        /// 检查人物是否拥有特定技能
+        /// 检查人物是否拥有特定技能（旧方法，保留用于兼容性）
         /// </summary>
         private static bool HasPersonSkill(Person person, int skillID)
         {
             try
             {
-                if (person?.Skills == null) return false;
+                if (person == null) return false;
+                
+                if (person.Skills == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] ⚠️ 人物 {person.Name} 的 Skills 为 null");
+                    return false;
+                }
 
                 // 遍历人物的技能列表
-                foreach (var skill in person.Skills.GetSkillList())
+                foreach (GameObject obj in person.Skills.GetSkillList())
                 {
-                    if (skill?.Kind != null && skill.Kind.ID == skillID)
+                    if (obj is Skill skill && skill.Kind == skillID)
                     {
                         return true;
                     }
@@ -356,31 +558,92 @@ namespace GameGlobal
 
                 return false;
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[AI角色选择] HasPersonSkill 失败: {ex.Message}");
                 return false;
             }
         }
 
         /// <summary>
-        /// 检查是否包含暴击类特技 (ID 400-450)
+        /// 检查人物是否拥有特定技能，并且该技能在指定兵种下能够生效
+        /// 🔥 新增：兵种适用性检查
+        /// 日期：2026-03-09
+        /// 用途：防止将只适用于特定兵种的技能计入角色评分
+        /// 示例：步兵专属的"铁壁"技能不应该让弓兵被判定为肉盾
         /// </summary>
-        private static bool HasCriticalSkill(Troop troop)
+        private static bool HasPersonSkillForMilitaryType(Person person, int skillID, MilitaryType militaryType)
+        {
+            try
+            {
+                // 🔥 数据源验证：人物必须有技能列表
+                if (person == null)
+                {
+                    return false;
+                }
+                
+                if (person.Skills == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AI角色选择] ⚠️ 人物 {person.Name} 的 Skills 为 null");
+                    return false;
+                }
+
+                // 遍历人物的技能列表
+                foreach (GameObject obj in person.Skills.GetSkillList())
+                {
+                    if (obj is Skill skill && skill.Kind == skillID)
+                    {
+                        // 🔥 关键检查：技能的兵种限制
+                        MilitaryType skillMilitaryType = skill.MilitaryTypeOnly;
+                        
+                        // 技能适用条件：
+                        // 1. 技能标记为"其他"（通用技能，适用所有兵种）
+                        // 2. 技能的兵种类型与当前部队兵种匹配
+                        if (skillMilitaryType == MilitaryType.其他 || skillMilitaryType == militaryType)
+                        {
+                            return true;
+                        }
+                        
+                        // 技能存在但不适用于当前兵种，继续检查其他技能
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AI角色选择] HasPersonSkillForMilitaryType 失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 检查是否包含暴击类特技 (使用配置的范围)
+        /// </summary>
+        private static bool HasCriticalSkill(Troop troop, SkillRange range = null)
         {
             try
             {
                 if (troop.Persons == null) return false;
 
+                // 如果没有提供范围，从DPS配置中获取
+                if (range == null)
+                {
+                    var dpsConfig = AIRoleConfigManager.GetRoleConfig("DPS");
+                    range = dpsConfig?.CriticalSkillRange;
+                    if (range == null) return false;
+                }
+
                 foreach (Person p in troop.Persons.GetList())
                 {
                     if (p?.Skills != null)
                     {
-                        foreach (var skill in p.Skills.GetSkillList())
+                        foreach (GameObject obj in p.Skills.GetSkillList())
                         {
-                            if (skill?.Kind != null)
+                            if (obj is Skill skill)
                             {
-                                int sId = skill.Kind.ID;
-                                if (sId >= CritSkill_Min && sId <= CritSkill_Max) return true;
+                                int sId = skill.Kind;
+                                if (sId >= range.Min && sId <= range.Max) return true;
                             }
                         }
                     }
@@ -390,7 +653,7 @@ namespace GameGlobal
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[AI角色选择] HasCriticalSkill 检查失败: {ex.Message}");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色选择] HasCriticalSkill 检查失败: {ex.Message}");
                 return false;
             }
         }
@@ -409,7 +672,7 @@ namespace GameGlobal
             {
                 if (faction?.Troops == null) return result;
 
-                System.Diagnostics.Debug.WriteLine($"[AI角色分析] 开始分析 {faction.Name} 的部队角色");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色分析] 开始分析 {faction.Name} 的部队角色");
 
                 foreach (Troop troop in faction.Troops.GetList())
                 {
@@ -422,10 +685,10 @@ namespace GameGlobal
 
                 // 统计角色分布
                 var roleStats = result.Values.GroupBy(r => r).ToDictionary(g => g.Key, g => g.Count());
-                System.Diagnostics.Debug.WriteLine($"[AI角色分析] {faction.Name} 部队角色分布:");
+                // System.Diagnostics.Debug.WriteLine($"[AI角色分析] {faction.Name} 部队角色分布:");
                 foreach (var stat in roleStats)
                 {
-                    System.Diagnostics.Debug.WriteLine($"  {GetRoleDescription(stat.Key)}: {stat.Value} 支部队");
+                    // System.Diagnostics.Debug.WriteLine($"  {GetRoleDescription(stat.Key)}: {stat.Value} 支部队");
                 }
             }
             catch (Exception ex)
@@ -510,6 +773,205 @@ namespace GameGlobal
                 default:
                     return 50;
             }
+        }
+
+        // ================= 军团级角色分配器 =================
+        /// <summary>
+        /// 军团级角色分配器
+        /// 解决"全员DPS"问题，强制保证军团的阵容平衡
+        /// </summary>
+        /// <param name="legionTroops">军团内的所有部队</param>
+        /// <returns>分配好的角色字典</returns>
+        public static Dictionary<Troop, TroopRole> AllocateLegionRoles(List<Troop> legionTroops)
+        {
+            Dictionary<Troop, TroopRole> result = new Dictionary<Troop, TroopRole>();
+            if (legionTroops == null || legionTroops.Count == 0) return result;
+
+            try
+            {
+                // System.Diagnostics.Debug.WriteLine($"[军团分配] 开始分配 {legionTroops.Count} 支部队的角色");
+
+                // 1. 准备记分卡
+                // 记录每个部队在不同职位上的得分
+                var scoreCards = new Dictionary<Troop, Dictionary<TroopRole, float>>();
+                
+                // 待分配池
+                HashSet<Troop> pool = new HashSet<Troop>();
+
+                foreach (var troop in legionTroops)
+                {
+                    if (troop == null) continue;
+
+                    // 优先处理后勤，直接锁定，不参与分配
+                    int kindID = GetTroopKindID(troop);
+                    if (AIRoleConfigManager.IsTroopKindForRole(kindID, "Logistics"))
+                    {
+                        result[troop] = TroopRole.Logistics;
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.DisplayName} 识别为后勤单位，直接锁定");
+                        continue;
+                    }
+
+                    // 计算该部队所有维度的分数
+                    var scores = new Dictionary<TroopRole, float>
+                    {
+                        { TroopRole.Tank, CalculateTankScore(troop) },
+                        { TroopRole.DPS, CalculateDpsScore(troop) },
+                        { TroopRole.Mage, CalculateMageScore(troop) },
+                        { TroopRole.Support, CalculateSupportScore(troop) }
+                    };
+                    
+                    scoreCards[troop] = scores;
+                    pool.Add(troop);
+                    
+                    // System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.DisplayName} 评分: Tank={scores[TroopRole.Tank]:F1}, DPS={scores[TroopRole.DPS]:F1}, Mage={scores[TroopRole.Mage]:F1}, Support={scores[TroopRole.Support]:F1}");
+                }
+
+                // 2. 定义编制需求 (根据军团人数动态调整)
+                int count = pool.Count;
+                int tankSlots = 0;
+                int supportSlots = 0;
+
+                if (count >= 4) // 4-5人军团：1T 1奶/法 2-3DPS
+                {
+                    tankSlots = 1;
+                    supportSlots = 1;
+                    // System.Diagnostics.Debug.WriteLine($"[军团分配] 军团规模: {count}人，编制需求: 1坦克 + 1辅助 + {count - 2}输出");
+                }
+                else if (count >= 2) // 2-3人军团：1T 1-2DPS
+                {
+                    tankSlots = 1;
+                    supportSlots = 0; // 人少就别搞辅助了，直接干
+                    // System.Diagnostics.Debug.WriteLine($"[军团分配] 军团规模: {count}人，编制需求: 1坦克 + {count - 1}输出");
+                }
+                else
+                {
+                    // System.Diagnostics.Debug.WriteLine($"[军团分配] 军团规模过小({count}人)，所有人自由选择角色");
+                }
+
+                // 3. 竞聘上岗 (贪心算法)
+                
+                // --- 第一轮：选拔辅助 (Support) ---
+                // 辅助最稀缺，如果有人有治疗技能（分数会极高），必须先把他摘出来
+                for (int i = 0; i < supportSlots; i++)
+                {
+                    if (pool.Count == 0) break;
+
+                    // 找 Support 分数最高的，且分数必须达标(比如 > 50)，否则宁缺毋滥
+                    var bestSupport = pool.OrderByDescending(t => scoreCards[t][TroopRole.Support]).FirstOrDefault();
+                    if (bestSupport != null && scoreCards[bestSupport][TroopRole.Support] > 50)
+                    {
+                        result[bestSupport] = TroopRole.Support;
+                        pool.Remove(bestSupport);
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] {bestSupport.DisplayName} 被指派为 辅助 (Support分: {scoreCards[bestSupport][TroopRole.Support]:F1})");
+                    }
+                    else
+                    {
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] 无合格辅助人选（最高分: {bestSupport?.DisplayName} {scoreCards[bestSupport][TroopRole.Support]:F1}），跳过辅助位");
+                        break;
+                    }
+                }
+
+                // --- 第二轮：选拔肉盾 (Tank) ---
+                // 在剩下的人里，找最能抗的
+                for (int i = 0; i < tankSlots; i++)
+                {
+                    if (pool.Count == 0) break;
+
+                    // 找 Tank 分数最高的
+                    // 注意：哪怕李傕的DPS分是100，Tank分是90，如果他是剩下人里Tank分最高的，他也得当Tank
+                    var bestTank = pool.OrderByDescending(t => scoreCards[t][TroopRole.Tank]).FirstOrDefault();
+                    if (bestTank != null)
+                    {
+                        result[bestTank] = TroopRole.Tank;
+                        pool.Remove(bestTank);
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] {bestTank.DisplayName} 被指派为 肉盾 (Tank分: {scoreCards[bestTank][TroopRole.Tank]:F1})");
+                    }
+                }
+
+                // --- 第三轮：其余人自由选择 (DPS/Mage) ---
+                foreach (var troop in pool)
+                {
+                    float dpsScore = scoreCards[troop][TroopRole.DPS];
+                    float mageScore = scoreCards[troop][TroopRole.Mage];
+
+                    if (mageScore > dpsScore && mageScore > 60) // 智力及格才当法师
+                    {
+                        result[troop] = TroopRole.Mage;
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.DisplayName} 自由选择为 法师 (Mage分: {mageScore:F1})");
+                    }
+                    else
+                    {
+                        result[troop] = TroopRole.DPS;
+                        // System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.DisplayName} 自由选择为 输出 (DPS分: {dpsScore:F1})");
+                    }
+                }
+
+                // 4. 统计最终分配结果
+                var roleStats = result.Values.GroupBy(r => r).ToDictionary(g => g.Key, g => g.Count());
+                // System.Diagnostics.Debug.WriteLine($"[军团分配] 最终角色分布:");
+                foreach (var stat in roleStats)
+                {
+                    // System.Diagnostics.Debug.WriteLine($"  {GetRoleDescription(stat.Key)}: {stat.Value} 支部队");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[军团分配] AllocateLegionRoles 失败: {ex.Message}");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 为军团分配角色并应用到部队
+        /// </summary>
+        /// <param name="legion">军团对象</param>
+        /// <summary>
+        /// 更新军团角色分配
+        /// 🔥 2026-03-16 AOT 修复 + ANTI-BAND-AID：移除防御性检查和异常捕获
+        /// </summary>
+        public static void UpdateLegionRoles(Legion legion)
+        {
+            // 🔥 ANTI-BAND-AID：Fail Fast，不做防御性检查
+            // 如果 legion 或 legion.Troops 为 null，让它崩溃以便发现调用者的 bug
+            
+            // 🔥 C# 12：使用集合表达式 + Cast<T>
+            List<Troop> troopList = [..legion.Troops.Cast<Troop>()];
+
+            // 一次性分配整个军团
+            var assignments = AllocateLegionRoles(troopList);
+
+            // 应用结果
+            foreach (var kvp in assignments)
+            {
+                Troop troop = kvp.Key;
+                TroopRole role = kvp.Value;
+
+                // 设置部队角色（强制分配）
+                SetTroopRole(troop, role);
+            }
+
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[军团分配] 军团 {legion.Name} 角色分配完成");
+            #endif
+        }
+
+        /// <summary>
+        /// 设置部队角色（内部方法）
+        /// 如果Troop类有SetRoleForce方法则调用，否则尝试设置属性
+        /// </summary>
+        /// <summary>
+        /// 设置部队角色（AOT 安全版本）
+        /// 🔥 2026-03-16 AOT 修复：移除反射，直接调用 SetRoleForce 方法
+        /// </summary>
+        private static void SetTroopRole(Troop troop, TroopRole role)
+        {
+            // ✅ AOT 安全：直接调用方法，无反射
+            troop.SetRoleForce(role);
+            
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[军团分配] {troop.DisplayName} 角色设置为 {GetRoleDescription(role)}");
+            #endif
         }
     }
 

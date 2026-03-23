@@ -9,8 +9,10 @@ using System.Text.RegularExpressions;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Platforms;
-using Newtonsoft.Json;
+using System.Text.Json;
 //using Microsoft.VisualBasic;
+
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace Tools
 {
@@ -35,9 +37,11 @@ namespace Tools
             string strTxt = content;
             string str = "";
             string chars = "";
-            Regex rx = new Regex("^[\u4e00-\u9fa5]$");
+            Regex rx = RegexPatterns.ChineseChar();
             for (int i = 0; i < strTxt.Length; i++)
             {
+                // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                if (i >= strTxt.Length) break;
                 chars = strTxt.Substring(i, 1);
 
                 bool convert = true;
@@ -75,8 +79,11 @@ namespace Tools
             int j = 0;
             for (int i = 0; i < txt.Length / 2; i++)
             {
+                // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                if (j >= txt.Length) break;
                 aa[i, 0] = txt.Substring(j, 1);
                 j++;
+                if (j >= txt.Length) break;
                 aa[i, 1] = txt.Substring(j, 1);
                 j++;
             }
@@ -89,7 +96,7 @@ namespace Tools
         /// <returns>经过转化的字符串</returns>
         public static string StripHtml(string strHtml, int? length)
         {
-            Regex objRegExp = new Regex("<(.|\n)+?>");
+            Regex objRegExp = RegexPatterns.HtmlTag();
             string strOutput = objRegExp.Replace(strHtml, "");
             strOutput = strOutput.Replace("<", "&lt;");
             strOutput = strOutput.Replace(">", "&gt;");
@@ -105,7 +112,7 @@ namespace Tools
         /// <returns></returns>
         public static string StringRemoveMoreSpace(this string str)
         {
-            Regex r = new Regex(@"\s+");
+            Regex r = RegexPatterns.Whitespace();
             return r.Replace(str, " ").Trim();
         }
 
@@ -119,6 +126,9 @@ namespace Tools
             {
                 dotString += ".";
             }
+            // 🔥 技术性修复：避免ArgumentOutOfRangeException
+            if (length < 0) length = 0;
+            if (length > str.Length) length = str.Length;
             return str.Length > length ? str.Substring(0, length) + dotString : str;
         }
 
@@ -155,7 +165,8 @@ namespace Tools
                 {
                     if (maxRow != 0 && row >= maxRow)
                     {
-                        if (dots > 0 && sb.Length - dots >= 1)
+                        // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                        if (dots > 0 && sb.Length > dots)
                         {
                             sb.Remove(sb.Length - dots, 1);
                         }
@@ -214,7 +225,7 @@ namespace Tools
             {
                 return String.Empty;
             }
-            Regex regex = new Regex("[\u4e00-\u9fa5]+", RegexOptions.None); // RegexOptions.Compiled);
+            Regex regex = RegexPatterns.ChineseString();
             char[] stringChar = stringToBackSpace.ToCharArray();
             StringBuilder sb = new StringBuilder();
             int nLength = 0;
@@ -268,9 +279,14 @@ namespace Tools
             for (int i = 0; i < json.Length; i++)
             {
                 char c = jsonArr[i];
-                if (level > 0 && '\n' == jsonTree.ToArray()[jsonTree.Length - 1])
+                // 🔥 技术性修复：避免IndexOutOfRangeException
+                if (level > 0 && jsonTree.Length > 0)
                 {
-                    jsonTree += TreeLevel(level);
+                    var treeArray = jsonTree.ToArray();
+                    if (treeArray.Length > 0 && '\n' == treeArray[jsonTree.Length - 1])
+                    {
+                        jsonTree += TreeLevel(level);
+                    }
                 }
                 switch (c)
                 {
@@ -311,25 +327,20 @@ namespace Tools
 
         public static string ConvertJsonString(string str)
         {
-            //格式化json字符串 
-            JsonSerializer serializer = new JsonSerializer();
-            TextReader tr = new StringReader(str);
-            JsonTextReader jtr = new JsonTextReader(tr);
-            object obj = serializer.Deserialize(jtr);
-            if (obj != null)
+            // 格式化json字符串 (使用 System.Text.Json)
+            try
             {
-                StringWriter textWriter = new StringWriter();
-                JsonTextWriter jsonWriter = new JsonTextWriter(textWriter)
+                using (JsonDocument doc = JsonDocument.Parse(str))
                 {
-                    Formatting = Formatting.Indented,
-                    Indentation = 4,
-                    IndentChar = ' '
+                    var options = JsonHelper.Options;
+                    if (!options.WriteIndented)
+                    {
+                        options = new JsonSerializerOptions(options) { WriteIndented = true };
+                    }
+                    return JsonSerializer.Serialize(doc.RootElement, options);
                 }
-                ;
-                serializer.Serialize(jsonWriter, obj);
-                return textWriter.ToString();
             }
-            else
+            catch
             {
                 return str;
             }

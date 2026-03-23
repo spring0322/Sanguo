@@ -1,6 +1,6 @@
 using Microsoft.Xna.Framework;
 using GameObjects;
-using WorldOfTheThreeKingdoms.GameManager;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameManager
 {
@@ -12,35 +12,22 @@ namespace GameManager
         /// <summary>
         /// 为部队播放音效
         /// </summary>
-        public static void PlaySound(this Troop troop, string soundName, float volume = 1.0f, WorldOfTheThreeKingdoms.GameManager.AudioPriority priority = WorldOfTheThreeKingdoms.GameManager.AudioPriority.Normal)
+        public static void PlaySound(this Troop troop, string soundName, float volume = 1.0f)
         {
             if (AudioManager.Instance != null)
             {
-                Vector2 position = new Vector2(troop.Position.X, troop.Position.Y);
-                AudioManager.Instance.PlaySound(soundName, position, volume, priority);
+                AudioManager.Instance.PlaySound(soundName);
             }
         }
 
         /// <summary>
         /// 为建筑播放音效
         /// </summary>
-        public static void PlaySound(this Architecture architecture, string soundName, float volume = 1.0f, WorldOfTheThreeKingdoms.GameManager.AudioPriority priority = WorldOfTheThreeKingdoms.GameManager.AudioPriority.Normal)
+        public static void PlaySound(this Architecture architecture, string soundName, float volume = 1.0f)
         {
             if (AudioManager.Instance != null)
             {
-                Vector2 position = new Vector2(architecture.ArchitectureArea.Centre.X, architecture.ArchitectureArea.Centre.Y);
-                AudioManager.Instance.PlaySound(soundName, position, volume, priority);
-            }
-        }
-
-        /// <summary>
-        /// 在指定位置播放音效
-        /// </summary>
-        public static void PlaySoundAt(Vector2 position, string soundName, float volume = 1.0f, WorldOfTheThreeKingdoms.GameManager.AudioPriority priority = WorldOfTheThreeKingdoms.GameManager.AudioPriority.Normal)
-        {
-            if (AudioManager.Instance != null)
-            {
-                AudioManager.Instance.PlaySound(soundName, position, volume, priority);
+                AudioManager.Instance.PlaySound(soundName);
             }
         }
 
@@ -51,23 +38,7 @@ namespace GameManager
         {
             if (AudioManager.Instance != null)
             {
-                // 在攻击者和防御者中间播放声音
-                Vector2 attackerPos = new Vector2(attacker.Position.X, attacker.Position.Y);
-                Vector2 defenderPos = new Vector2(defender.Position.X, defender.Position.Y);
-                Vector2 midPoint = (attackerPos + defenderPos) / 2f;
-                
-                AudioManager.Instance.PlaySound(soundName, midPoint, 1.0f, WorldOfTheThreeKingdoms.GameManager.AudioPriority.High);
-            }
-        }
-
-        /// <summary>
-        /// 播放UI音效（不受距离影响）
-        /// </summary>
-        public static void PlayUISound(string soundName, float volume = 1.0f)
-        {
-            if (AudioManager.Instance != null)
-            {
-                AudioManager.Instance.PlayUISound(soundName, volume);
+                AudioManager.Instance.PlaySound(soundName);
             }
         }
 
@@ -78,85 +49,87 @@ namespace GameManager
         {
             if (AudioManager.Instance != null && troop.Army != null)
             {
-                string soundName = "March"; // 默认行军声
-                
-                // 根据部队类型选择不同音效
-                if (troop.Army.Kind != null)
-                {
-                    switch (troop.Army.Kind.Type)
-                    {
-                        case global::GameObjects.TroopDetail.MilitaryType.步兵:
-                            soundName = "March_Infantry";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.弩兵:
-                            soundName = "March_Archer";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.骑兵:
-                            soundName = "March_Cavalry";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.器械:
-                            soundName = "March_Siege";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.水军:
-                            soundName = "March_Navy";
-                            break;
-                        default:
-                            soundName = "March";
-                            break;
-                    }
-                }
-                
-                troop.PlaySound(soundName, 0.7f, WorldOfTheThreeKingdoms.GameManager.AudioPriority.Low);
+                string soundName = "March";
+                AudioManager.Instance.PlaySound(soundName);
             }
         }
 
         /// <summary>
-        /// 播放战斗结果音效
+        /// 为势力播放对应的战斗状态音乐
         /// </summary>
-        public static void PlayBattleResultSound(this Troop winner, bool isVictory)
+        public static void PlayBattleStateMusic(this Faction faction)
         {
-            if (AudioManager.Instance != null)
+            if (AudioManager.Instance != null && faction.BattleState != null)
             {
-                string soundName = isVictory ? "Victory" : "Defeat";
-                winner.PlaySound(soundName, 1.0f, WorldOfTheThreeKingdoms.GameManager.AudioPriority.High);
+                AudioManager.Instance.PlayBattleMusic(faction.BattleState);
             }
         }
 
         /// <summary>
-        /// 根据武器类型播放攻击音效
+        /// 播放当前季节音乐
         /// </summary>
-        public static void PlayAttackSound(this Troop attacker, Troop defender)
+        public static void PlayCurrentSeasonMusic(this GameDate date)
         {
             if (AudioManager.Instance != null)
             {
-                string soundName = "Sword"; // 默认攻击声
-                
-                // 根据攻击类型选择音效
-                if (attacker.ArrowOffence)
-                {
-                    soundName = "Arrow";
-                }
-                else if (attacker.Army?.Kind != null)
-                {
-                    switch (attacker.Army.Kind.Type)
-                    {
-                        case global::GameObjects.TroopDetail.MilitaryType.骑兵:
-                            soundName = "Cavalry_Charge";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.器械:
-                            soundName = "Siege_Attack";
-                            break;
-                        case global::GameObjects.TroopDetail.MilitaryType.水军:
-                            soundName = "Naval_Attack";
-                            break;
-                        default:
-                            soundName = "Sword";
-                            break;
-                    }
-                }
-                
-                attacker.PlayCombatSound(defender, soundName);
+                AudioManager.Instance.PlaySeasonMusic(date.Season);
             }
+        }
+
+        /// <summary>
+        /// 为场景播放对应音乐
+        /// </summary>
+        public static void PlaySceneMusic(this object context, AudioManager.MusicScene scene)
+        {
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlaySceneMusic(scene);
+            }
+        }
+
+        /// <summary>
+        /// 智能播放音乐：根据当前游戏状态自动选择合适的音乐
+        /// </summary>
+        public static void PlayContextualMusic()
+        {
+            if (AudioManager.Instance == null || Session.Current?.Scenario == null) 
+                return;
+
+            var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+            if (currentPlayer != null && currentPlayer.BattleState != ZhandouZhuangtai.和平)
+            {
+                // 如果处于战斗状态，播放战斗音乐
+                AudioManager.Instance.PlayBattleMusic(currentPlayer.BattleState);
+            }
+            else if (Session.Current.Scenario.Date != null)
+            {
+                // 和平状态下播放季节音乐
+                AudioManager.Instance.PlaySeasonMusic(Session.Current.Scenario.Date.Season);
+            }
+        }
+
+        /// <summary>
+        /// 播放UI音效的便捷方法
+        /// </summary>
+        public static void PlayUISound(string soundName)
+        {
+            AudioManager.Instance?.PlaySound($"UI/{soundName}");
+        }
+
+        /// <summary>
+        /// 播放战斗音效的便捷方法
+        /// </summary>
+        public static void PlayBattleSound(string soundName)
+        {
+            AudioManager.Instance?.PlaySound($"Battle/{soundName}");
+        }
+
+        /// <summary>
+        /// 播放环境音效的便捷方法
+        /// </summary>
+        public static void PlayAmbientSound(string soundName)
+        {
+            AudioManager.Instance?.PlaySound($"Ambient/{soundName}");
         }
     }
 }

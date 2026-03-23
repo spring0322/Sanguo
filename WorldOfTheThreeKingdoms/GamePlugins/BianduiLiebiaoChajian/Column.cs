@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -22,6 +22,7 @@ namespace BianduiLiebiaoChajian
         public bool SmallToBig;
         private TabListInFrame tabList;
         internal FreeText Text;
+        public int Width { get; set; } // Missing Width property
 
         internal Column(TabListInFrame tabList)
         {
@@ -91,6 +92,12 @@ namespace BianduiLiebiaoChajian
 
         public object GetPropertyValue(object ClassInstance)
         {
+            // 🔥 三层忠诚度显示系统：使用 LoyaltyDisplay（根据军师智力显示误差）
+            if (this.Name.Equals("Loyalty") && ClassInstance is Person person)
+            {
+                return person.LoyaltyDisplay;
+            }
+            
             return StaticMethods.GetPropertyValue(ClassInstance, this.Name);
         }
 
@@ -135,7 +142,7 @@ namespace BianduiLiebiaoChajian
                 {
                     for (num2 = 0; num2 < this.tabList.gameObjectList.Count; num2++)
                     {
-                        this.ColumnTextList.AddText(StaticMethods.GetPropertyValue(this.tabList.gameObjectList[num2], this.Name).ToString());
+                        this.ColumnTextList.AddText(this.GetPropertyValue(this.tabList.gameObjectList[num2]).ToString());
 
 
                     }
@@ -161,7 +168,7 @@ namespace BianduiLiebiaoChajian
             {
                 for (num = 0; num < this.tabList.gameObjectList.Count; num++)
                 {
-                    if ((bool) StaticMethods.GetPropertyValue(this.tabList.gameObjectList[num], this.Name))
+                    if ((bool) this.GetPropertyValue(this.tabList.gameObjectList[num]))
                     {
                         this.ColumnTextList[num].TextTexture = this.tabList.MultiSelecting ? this.tabList.checkboxSelectedTexture : this.tabList.roundcheckboxSelectedTexture;
                     }
@@ -176,7 +183,7 @@ namespace BianduiLiebiaoChajian
             {
                 for (num = 0; num < this.tabList.gameObjectList.Count; num++)
                 {
-                    this.ColumnTextList[num].Text = StaticMethods.GetPropertyValue(this.tabList.gameObjectList[num], this.Name).ToString();
+                    this.ColumnTextList[num].Text = this.GetPropertyValue(this.tabList.gameObjectList[num]).ToString();
                     
                     
                 }
@@ -191,7 +198,7 @@ namespace BianduiLiebiaoChajian
             {
                 for (int i = 0; i < this.tabList.gameObjectList.Count; i++)
                 {
-                    if ((bool) StaticMethods.GetPropertyValue(this.tabList.gameObjectList[i], this.Name))
+                    if ((bool) this.GetPropertyValue(this.tabList.gameObjectList[i]))
                     {
                         this.ColumnTextList[i].TextTexture = this.tabList.MultiSelecting ? this.tabList.checkboxSelectedTexture : this.tabList.roundcheckboxSelectedTexture;
                     }

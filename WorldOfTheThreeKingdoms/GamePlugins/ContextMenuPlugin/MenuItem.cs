@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -23,7 +23,7 @@ namespace ContextMenuPlugin
         public bool IsParamIDItem;
         public bool IsRootItem;
         public List<MenuItem> MenuItems;
-        private MenuKind menuKind;
+        public MenuKind menuKind;
         public string Name;
         private bool open;
         public string OppositeIfTrue;
@@ -34,8 +34,11 @@ namespace ContextMenuPlugin
         //public Texture2D TextTexture;
         private bool visible;
         private bool enabled;
+        public Action SelectedAction;
+        public Func<bool> VisibleCondition;
 
         public string DisplayPlatform;
+        private string customResult; // 存储XML中定义的Result属性
 
         public MenuItem(MenuKind menuKind, ContextMenu contextMenu)
         {
@@ -75,7 +78,7 @@ namespace ContextMenuPlugin
                         {
                             nullable = null;
                             var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
-                            var pos = new Vector2(rec.X, rec.Y);
+                            var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
                             var scale = this.contextMenu.LeftClickFreeTextBuilder.Scale;
                             CacheManager.DrawString(Session.Current.Font, this.DisplayName, pos, this.Enabled ? Color.White : this.contextMenu.DisabledTextColor, 0f, Vector2.Zero, scale, SpriteEffects.None, 0.0399f);
                         }
@@ -83,7 +86,7 @@ namespace ContextMenuPlugin
                         {
                             nullable = null;
                             var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
-                            var pos = new Vector2(rec.X, rec.Y);
+                            var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
                             var color = this.Enabled ? Color.Gold : this.contextMenu.DisabledTextColor;
                             var scale = this.contextMenu.LeftClickFreeTextBuilder.Scale;
                             CacheManager.DrawString(Session.Current.Font, this.DisplayName, pos, color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0.0399f);
@@ -96,7 +99,7 @@ namespace ContextMenuPlugin
                         nullable = null;
 
                         var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
-                        var pos = new Vector2(rec.X, rec.Y);
+                        var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
                         var color = this.Enabled ? Color.White : this.contextMenu.RightDisabledTextColor;
 
                         var scale = this.contextMenu.RightClickFreeTextBuilder.Scale;
@@ -135,7 +138,7 @@ namespace ContextMenuPlugin
                         CacheManager.Draw(this.contextMenu.LeftClickItemTexture, this.Position, nullable, Color.White, 0f, Vector2.Zero, SpriteEffects.None,0.04f);                                             
 
                         var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
-                        var pos = new Vector2(rec.X, rec.Y);
+                        var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
 
                         var scale = this.contextMenu.LeftClickFreeTextBuilder.Scale;
 
@@ -149,7 +152,7 @@ namespace ContextMenuPlugin
 
                         var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
 
-                        var pos = new Vector2(rec.X, rec.Y);
+                        var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
 
                         var scale = this.contextMenu.LeftClickFreeTextBuilder.Scale;
 
@@ -166,7 +169,7 @@ namespace ContextMenuPlugin
 
                         var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
 
-                        var pos = new Vector2(rec.X, rec.Y);
+                        var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
 
                         var scale = this.contextMenu.RightClickFreeTextBuilder.Scale;
 
@@ -179,7 +182,7 @@ namespace ContextMenuPlugin
                         CacheManager.Draw(this.contextMenu.RightDisabledItemTexture, this.Position, nullable, Color.White, 0f, Vector2.Zero, SpriteEffects.None,0.04f);
 
                         var rec = StaticMethods.CenterRectangle(this.Position, new Rectangle(0, 0, width, height));
-                        var pos = new Vector2(rec.X, rec.Y);
+                        var pos = new Vector2(rec.X, rec.Y - 6); // Fix alignment
 
                         var scale = this.contextMenu.RightClickFreeTextBuilder.Scale;
 
@@ -224,7 +227,7 @@ namespace ContextMenuPlugin
                     {
                         return num;
                     }
-                    if (item.visible)
+                    if (item.Visible)
                     {
                         if (reverse)
                         {
@@ -244,7 +247,7 @@ namespace ContextMenuPlugin
                 {
                     return num;
                 }
-                if (item.visible)
+                if (item.Visible)
                 {
                     if (reverse)
                     {
@@ -297,6 +300,10 @@ namespace ContextMenuPlugin
             {
                 this.DisplayPlatform = rootNode.Attributes.GetNamedItem("DisplayPlatform").Value;
             }
+            if (rootNode.Attributes.GetNamedItem("Result") != null)
+            {
+                this.customResult = rootNode.Attributes.GetNamedItem("Result").Value;
+            }
             foreach (XmlNode node in rootNode)
             {
                 // 只处理 MenuItem 元素节点，忽略注释和其他类型的节点
@@ -337,16 +344,16 @@ namespace ContextMenuPlugin
                 {
                     if (this.menuKind.ShowLeft)
                     {
-                        this.MoveMargin(-10);
+                        //this.MoveMargin(-10);
                     }
                     else
                     {
-                        this.MoveMargin(10);
+                        //this.MoveMargin(10);
                     }
                 }
                 for (num = 0; num < this.MenuItems.Count; num++)
                 {
-                    if (this.MenuItems[num].visible)
+                    if (this.MenuItems[num].Visible)
                     {
                         this.MenuItems[num].Prepare();
                     }
@@ -387,16 +394,16 @@ namespace ContextMenuPlugin
                 {
                     if (this.menuKind.ShowLeft)
                     {
-                        this.MoveMargin(-10);
+                        //this.MoveMargin(-10);
                     }
                     else
                     {
-                        this.MoveMargin(10);
+                        //this.MoveMargin(10);
                     }
                 }
                 for (num = 0; num < this.MenuItems.Count; num++)
                 {
-                    if (this.MenuItems[num].visible)
+                    if (this.MenuItems[num].Visible)
                     {
                         this.MenuItems[num].Prepare();
                     }
@@ -454,6 +461,11 @@ namespace ContextMenuPlugin
             {
                 this.Visible = true;
             }
+            if (this.VisibleCondition != null)
+            {
+                this.Visible = this.Visible && this.VisibleCondition();
+            }
+
             if (this.MenuItems.Count > 0)
             {
                 bool flag = false;
@@ -470,10 +482,12 @@ namespace ContextMenuPlugin
                 }
             }
             this.Enabled = this.Visible;
+
             if (this.fatherItem == null ? this.menuKind.DisplayAll : this.fatherItem.DisplayAll)
             {
                 this.Visible = true;
             }
+            
             return this.Visible;
         }
 
@@ -664,6 +678,13 @@ namespace ContextMenuPlugin
         {
             get
             {
+                // 如果XML中定义了自定义Result，优先使用
+                if (!string.IsNullOrEmpty(this.customResult))
+                {
+                    return this.customResult;
+                }
+                
+                // 否则使用默认的层级生成方式
                 string name = this.Name;
                 for (MenuItem item = this; !item.IsRootItem; item = item.fatherItem)
                 {
@@ -745,7 +766,7 @@ namespace ContextMenuPlugin
                 int num = 0;
                 foreach (MenuItem item in this.MenuItems)
                 {
-                    if (item.visible)
+                    if (item.Visible)
                     {
                         num += this.menuKind.ItemHeight;
                     }
@@ -774,7 +795,16 @@ namespace ContextMenuPlugin
         {
             get
             {
-                if (!Session.GlobalVariables.EnableCheat && this.DisplayName.Contains("*")) return false;
+                // 系统内置作弊项过滤
+                if (this.DisplayName != null && !Session.GlobalVariables.EnableCheat && this.DisplayName.Contains("*")) return false;
+                
+                // ID 100 为“编辑数据”，ChangeFaction 为转变势力。
+                // 只有在 ContextMenuPlugin.CheatMode 或 Session.GlobalVariables.EnableCheat 为 true 时才显示。
+                if (this.ID == 100 || (this.Name != null && this.Name.Equals("ChangeFaction")))
+                {
+                    if (!ContextMenuPlugin.CheatMode && !Session.GlobalVariables.EnableCheat) return false;
+                }
+
                 if (Session.GlobalVariables.hougongGetChildrenRate <= 0 && this.Name.Equals("hougongTop")) return false;
                 if (this.DisplayPlatform == "Mobile")
                 {
@@ -787,8 +817,8 @@ namespace ContextMenuPlugin
             }
             set
             {
-                if (!Session.GlobalVariables.EnableCheat && this.DisplayName.Contains("*")) return;
-                if (Session.GlobalVariables.hougongGetChildrenRate <= 0 && this.Name.Equals("hougongTop")) return;
+                if (this.DisplayName != null && !Session.GlobalVariables.EnableCheat && this.DisplayName.Contains("*")) return;
+                if (this.Name != null && Session.GlobalVariables.hougongGetChildrenRate <= 0 && this.Name.Equals("hougongTop")) return;
                 this.visible = value;
                 if (value)
                 {

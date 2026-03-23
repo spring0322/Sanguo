@@ -2,18 +2,36 @@
 using GameObjects.PersonDetail;
 using GameObjects.TroopDetail;
 using System;
+using System.Collections.Generic;
 using System.Runtime.Serialization;
 
 namespace GameObjects
 {
-    [DataContract]
+    // 🔥 2026-02-12 根本修复：移除 [DataContract]，添加 [JsonConverter]
+    [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.GameObjectListConverter))]
     public class TroopList : GameObjectList
     {
+        // ID索引表 - 用于O(1)快速查找部队（AI专用）
+        // 注意：不使用 readonly，因为反序列化会绕过构造函数
+        private Dictionary<int, Troop> _troopMap = new();
         public void AddTroopWithEvent(Troop troop, bool add = true)
         {
             if (add)
             {
                 base.Add(troop);
+                
+                // 维护ID索引表
+                // 反序列化后 _troopMap 可能为 null，需要延迟初始化
+                _troopMap ??= new();
+                if (!_troopMap.ContainsKey(troop.ID))
+                {
+                    _troopMap[troop.ID] = troop;
+                }
+                
+                // ====== 异步寻路系统：注册新创建的部队 ======
+                // 🧊 Cold Path - 部队创建时执行一次
+                // 前置条件：Session.Current 必须已初始化（由调用方保证）
+                GameManager.Session.Current.RegisterTroop(troop);
             }
             //if (Session.MainGame.mainGameScreen != null)
             //{
@@ -64,8 +82,17 @@ namespace GameObjects
         {
             int antiCriticalStrikeChance = -1;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -83,8 +110,17 @@ namespace GameObjects
         {
             int defence = -1;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -102,8 +138,17 @@ namespace GameObjects
         {
             int troopIntelligence = -1;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -121,8 +166,17 @@ namespace GameObjects
         {
             int morale = -1;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -140,8 +194,17 @@ namespace GameObjects
         {
             int offence = -1;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -159,8 +222,17 @@ namespace GameObjects
         {
             int antiCriticalStrikeChance = 0x7fffffff;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -178,8 +250,22 @@ namespace GameObjects
         {
             int defence = 0x7fffffff;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            // 日期：2026-03-21
+            // 原因：AOT 环境下 foreach (Troop in List<GameObject>) 的隐式转换失效
+            // 解决：使用 for 循环 + 显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                
+                // ANTI-BAND-AID：如果转换失败，说明 TroopList 中混入了非 Troop 对象
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -197,8 +283,17 @@ namespace GameObjects
         {
             int troopIntelligence = 0x7fffffff;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -216,8 +311,17 @@ namespace GameObjects
         {
             int morale = 0x7fffffff;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -235,8 +339,17 @@ namespace GameObjects
         {
             int offence = 0x7fffffff;
             Troop troop = null;
-            foreach (Troop troop2 in base.GameObjects)
+            
+            // 🔥 AOT 修复：显式类型转换
+            for (int i = 0; i < base.GameObjects.Count; i++)
             {
+                Troop troop2 = base.GameObjects[i] as Troop;
+                if (troop2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
+                }
+                
                 if (target == troop2)
                 {
                     return troop2;
@@ -250,8 +363,55 @@ namespace GameObjects
             return troop;
         }
 
+        /// <summary>
+        /// 添加部队并维护ID索引表
+        /// </summary>
+        public void AddTroop(Troop troop)
+        {
+            if (troop == null) return;
+            base.Add(troop);
+            
+            // 反序列化后 _troopMap 可能为 null，需要延迟初始化
+            _troopMap ??= new();
+            if (!_troopMap.ContainsKey(troop.ID))
+            {
+                _troopMap[troop.ID] = troop;
+            }
+        }
+
+        /// <summary>
+        /// 安全获取部队 - O(1)查找，返回null如果部队已销毁或不存在
+        /// AI专用接口，避免持有失效引用
+        /// </summary>
+        public Troop GetTroopSafe(int id)
+        {
+            if (id < 0) return null;
+            
+            // 反序列化后 _troopMap 可能为 null，需要延迟初始化
+            _troopMap ??= new();
+            
+            if (_troopMap.TryGetValue(id, out var troop))
+            {
+                // 双重检查：确保部队未被标记为销毁
+                if (troop != null && !troop.Destroyed)
+                {
+                    return troop;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 移除部队并从ID索引表中删除
+        /// </summary>
         public void RemoveTroop(Troop troop)
         {
+            if (troop != null)
+            {
+                // 反序列化后 _troopMap 可能为 null，需要延迟初始化
+                _troopMap ??= new();
+                _troopMap.Remove(troop.ID);
+            }
             base.Remove(troop);
         }
 
@@ -455,18 +615,34 @@ namespace GameObjects
             Session.MainGame.mainGameScreen.AskWhenTransportArrived(troop, destination);
         }
 
-        public bool HasAnimatingTroop
+        /// <summary>
+        /// [已废弃] 全局动画检查属性
+        /// 新系统通过 Troop.IsAnimationPlaying 进行部队级检查，不再需要全局遍历
+        /// 保留此属性以兼容旧代码，但始终返回 false
+        /// 日期：2026-02-28 动画阻塞重构
+        /// </summary>
+        [Obsolete("已废弃：使用 Troop.IsAnimationPlaying 代替全局检查，避免 O(n) 遍历")]
+        public bool HasAnimatingTroop => false;
+        
+        /// <summary>
+        /// 🆕 批量应用势力范围增益到所有部队
+        /// 🧊 Cold Path：势力范围更新或读档后调用
+        /// 日期：2026-03-16
+        /// </summary>
+        public void ApplyInfluenceBuff()
         {
-            get
+            GameObjectList troops = this.GetList();
+            int troopCount = troops.Count;
+            
+            if (troopCount == 0) return;
+            
+            // 🔥 使用 for 循环，避免 LINQ
+            for (int i = 0; i < troopCount; i++)
             {
-                foreach (Troop troop in base.GameObjects)
+                if (troops[i] is Troop troop)
                 {
-                    if ((((troop.Action != TroopAction.Stop) || troop.ShowNumber) || (troop.PreAction != TroopPreAction.无)) || (troop.WaitForDeepChaosFrameCount > 0))
-                    {
-                        return true;
-                    }
+                    troop.ApplyInfluenceBuff();
                 }
-                return false;
             }
         }
     }

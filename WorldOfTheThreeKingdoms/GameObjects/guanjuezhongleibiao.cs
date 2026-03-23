@@ -47,6 +47,9 @@ namespace GameObjects
 
         public void LoadFromString(guanjuezhongleibiao suoyouguanjuedezhonglei, string guanjuedezhongleiIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(guanjuedezhongleiIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = guanjuedezhongleiIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             guanjuezhongleilei kind = null;

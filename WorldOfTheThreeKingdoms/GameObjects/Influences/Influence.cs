@@ -1,4 +1,5 @@
 ﻿using GameObjects;
+using GameObjects.TroopDetail;
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework;
@@ -6,6 +7,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
 using GameManager;
+using GameObjects.Influences.InfluenceKindPack;
 
 namespace GameObjects.Influences
 {
@@ -13,6 +15,7 @@ namespace GameObjects.Influences
     public class Influence : GameObject
     {
         private string description;
+
 
         [DataMember]
         public InfluenceKind Kind;
@@ -42,9 +45,17 @@ namespace GameObjects.Influences
         
         public void ApplyInfluence(Architecture architecture, Applier applier, int applierID)
         {
+
+            
             ApplyingArchitecture a = new ApplyingArchitecture(architecture, applier, applierID);
+            
+
+            
             this.Kind.InitializeParameter(this.Parameter);
             this.Kind.InitializeParameter2(this.Parameter2);
+            
+
+            
             try
             {
                 this.Kind.ApplyInfluenceKind(architecture, this, applier, applierID);
@@ -52,6 +63,8 @@ namespace GameObjects.Influences
             catch
             {
             }
+            
+
         }         
 
         public void ApplyInfluence(Faction faction, Applier applier, int applierID)
@@ -103,9 +116,9 @@ namespace GameObjects.Influences
             this.Kind.DoWork(architecture);
         }
 
-        public int GetCredit(Troop source, Troop destination)
+        public int GetCredit(Troop source, Troop destination, Stratagem stratagem = null)
         {
-            return this.Kind.GetCredit(source, destination);
+            return this.Kind.GetCredit(source, destination, stratagem);
         }
 
         public int GetCreditWithPosition(Troop source, out Point? position)

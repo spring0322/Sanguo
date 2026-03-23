@@ -9,6 +9,7 @@ namespace GameObjects
         public Architecture a1;
         public Architecture a2;
         public MilitaryKind k;
+        private PathCacheKey() { }
         public PathCacheKey(Architecture a1, Architecture a2, MilitaryKind k)
         {
             this.a1 = a1;

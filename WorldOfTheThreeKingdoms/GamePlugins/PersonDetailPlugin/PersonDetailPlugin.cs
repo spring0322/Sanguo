@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -167,6 +167,32 @@ namespace PersonDetailPlugin
             StaticMethods.LoadFontAndColorFromXMLNode(node, out font, out color);
             this.personDetail.BiographyText.Builder.SetFreeTextBuilder(font);
             this.personDetail.BiographyText.DefaultColor = color;
+            
+            // 🔥 加载宝物显示区域（12个宝物分组）
+            // 日期：2026-03-18
+            // 原因：人物详情界面需要显示宝物图标
+            int[] treasureGroups = [10, 15, 20, 25, 30, 40, 50, 55, 60, 70, 90, 100];
+            foreach (int groupId in treasureGroups)
+            {
+                string nodeName = $"Treasure1group{groupId}Client";
+                XmlNode treasureNode = null;
+                
+                // 遍历所有子节点查找对应的宝物区域节点
+                for (int i = 0; i < nextSibling.ChildNodes.Count; i++)
+                {
+                    if (nextSibling.ChildNodes.Item(i).Name == nodeName)
+                    {
+                        treasureNode = nextSibling.ChildNodes.Item(i);
+                        break;
+                    }
+                }
+                
+                if (treasureNode != null)
+                {
+                    Rectangle treasureRect = StaticMethods.LoadRectangleFromXMLNode(treasureNode);
+                    this.personDetail.TreasureClients[groupId] = treasureRect;
+                }
+            }
             /*
             node = nextSibling.ChildNodes.Item(12);
             this.personDetail.GuanzhiClient = StaticMethods.LoadRectangleFromXMLNode(node);
@@ -186,7 +212,7 @@ namespace PersonDetailPlugin
 
         public void SetPerson(object person)
         {
-            this.personDetail.SetPerson(person as Person);
+            this.personDetail.SetPerson((person is Person ? (Person)person : null));
         }
 
         public void SetPosition(ShowPosition showPosition)
@@ -256,4 +282,5 @@ namespace PersonDetailPlugin
         }
     }
 }
+
 

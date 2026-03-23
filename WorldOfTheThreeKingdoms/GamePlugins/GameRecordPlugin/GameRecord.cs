@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -37,6 +37,10 @@ namespace GameRecordPlugin
         public PlatformTexture Tool1SelectedTexture;
         public PlatformTexture Tool1Texture;
 
+        // 🔥 性能优化：缓存常量，避免在 Draw() 中每帧分配
+        // 日期：2026-02-17
+        private static readonly Point Record1DisplayOffset = new Point(500, 100);
+        private static readonly Rectangle Record1BackgroundRect = new Rectangle(500, 100, 500, 600);
 
         public void AddBranch(GameObject gameObject, string branchName, Point position)
         {
@@ -87,16 +91,22 @@ namespace GameRecordPlugin
                 CacheManager.Draw(this.Tool1DisplayTexture, this.Tool1DisplayPosition, sourceRectangle, this.ButtonDrawingColor, 0f, Vector2.Zero, SpriteEffects.None, 0.099f);
             }
 
+            // 🔥 修复：防止重复绘制 + 性能优化
+            // 日期：2026-02-17
+            // 说明：
+            // 1. 原代码中 IsRecordShowing 和 IsRecord1Showing 可能同时为 true，
+            //    导致 Record.Draw() 被调用两次，造成信息重复显示
+            // 2. 使用 else if 确保只绘制一次
+            // 3. 使用缓存的常量避免每帧分配内存
             if (this.IsRecordShowing)
             {
                 CacheManager.Draw(this.RecordBackgroundTexture, this.RecordDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.102f);
                 this.Record.Draw(0.101f);
             }
-
-            if (this.IsRecord1Showing)
+            else if (this.IsRecord1Showing)
             {
-                 Record.DisplayOffset = new Point(500, 100);
-                CacheManager.Draw(this.RecordBackgroundTexture, new Rectangle(500, 100, 500, 600), null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.1f);
+                Record.DisplayOffset = Record1DisplayOffset;
+                CacheManager.Draw(this.RecordBackgroundTexture, Record1BackgroundRect, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.1f);
                 Record.Draw(0.0999f);
             }
 

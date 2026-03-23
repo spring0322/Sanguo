@@ -1,6 +1,6 @@
 ﻿using GameFreeText;
 using GameObjects;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -31,6 +31,7 @@ namespace TabListPlugin
             this.Text = new FreeText(tabList.TabTextBuilder);
             this.Text.TextColor = tabList.TabTextColor;
             this.Text.Align = tabList.TabTextAlign;
+            this.Text.DisplayOffset = new Point(-10, -6); // Shift Left-Up (Center). Adjusted from -2.
             this.tabList = tabList;
             this.listKind = listKind;
             this.Columns = new List<Column>();

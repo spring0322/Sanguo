@@ -11,6 +11,7 @@ namespace GameObjects.PersonDetail
 {
 	public  class PersonGenerateParam
 	{
+        private PersonGenerateParam() { }
         public PersonGenerateParam(Architecture foundLocation, Person finder, bool inGame, PersonGeneratorType preferredType, bool isAI)
         {
             this.foundLocation = foundLocation;

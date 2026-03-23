@@ -7,9 +7,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Graphics.PackedVector;
 using System.IO;
 using Microsoft.Xna.Framework.Media;
-using SharpCompress.Common;
-using SharpCompress.Writer;
-using SharpCompress.Reader;
+using System.IO.Compression;
 using Platforms;
 using GameManager;
 using Tools;
@@ -43,7 +41,11 @@ namespace Tools
                 lens.Add(dir + " " + length);
             }
 
-            return String.Join("\r\n", lens.OrderBy(le => le.Split(' ')[1]));
+            // 🔥 技术性修复：避免IndexOutOfRangeException
+            return String.Join("\r\n", lens.OrderBy(le => {
+                var parts = le.Split(' ');
+                return parts.Length > 1 ? parts[1] : "0";
+            }));
         }
 
         /// <summary>
@@ -62,8 +64,11 @@ namespace Tools
 
             foreach (var dir in dires)
             {
-
-                var di = dir.Split(new string[] { directory }, StringSplitOptions.None)[1];
+                // 🔥 技术性修复：避免IndexOutOfRangeException
+                var splitResult = dir.Split(new string[] { directory }, StringSplitOptions.None);
+                if (splitResult.Length <= 1) continue;
+                
+                var di = splitResult[1];
 
                 if (android)
                 {
@@ -88,7 +93,11 @@ namespace Tools
                         continue;
                     }
 
-                    string fi = directory + file.Split(new string[] { directory }, StringSplitOptions.None)[1];
+                    // 🔥 技术性修复：避免IndexOutOfRangeException
+                    var fileSplitResult = file.Split(new string[] { directory }, StringSplitOptions.None);
+                    if (fileSplitResult.Length <= 1) continue;
+                    
+                    string fi = directory + fileSplitResult[1];
 
                     if (android)
                     {
@@ -98,7 +107,16 @@ namespace Tools
                         if (fi.Contains(".mp3"))
                         {
                             //<Link>Assets\Attack.mp3</Link>
-                            fi2 = fi.Substring(fi.LastIndexOf('\\') + 1);
+                            // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                            int lastBackslash = fi.LastIndexOf('\\');
+                            if (lastBackslash >= 0 && lastBackslash < fi.Length - 1)
+                            {
+                                fi2 = fi.Substring(lastBackslash + 1);
+                            }
+                            else
+                            {
+                                fi2 = Path.GetFileName(fi);
+                            }
                         }
                         else if (fi.Contains("ditu"))
                         {
@@ -131,7 +149,7 @@ namespace Tools
         {
             using (var zip = Platform.Current.LoadUserFileStream(zipFile, true))
             {
-                using (var zipWriter = WriterFactory.Open(zip, SharpCompress.Common.ArchiveType.Zip, SharpCompress.Common.CompressionType.BZip2))
+                using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
                 {
                     foreach (var filePath in files)
                     {
@@ -140,7 +158,11 @@ namespace Tools
                         {
                             if (stream != null)
                             {
-                                zipWriter.Write(filePath, stream);
+                                var entry = archive.CreateEntry(filePath, CompressionLevel.Optimal);
+                                using (var entryStream = entry.Open())
+                                {
+                                    stream.CopyTo(entryStream);
+                                }
                             }
                         }
                     }
@@ -154,16 +176,22 @@ namespace Tools
             List<string> files = new List<string>();
             using (Stream stream = Platform.Current.LoadUserFileStream(zipFile, false))
             {
-                using (var reader = ReaderFactory.Open(stream))
+                if (stream == null) return files.ToArray();
+                
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
                 {
-                    while (reader.MoveToNextEntry())
+                    foreach (var entry in archive.Entries)
                     {
-                        if (!reader.Entry.IsDirectory)
+                        if (!string.IsNullOrEmpty(entry.Name)) // Skip directories
                         {
-                            files.Add(reader.Entry.FilePath);
-                            using (var ms = Platform.Current.LoadUserFileStream(reader.Entry.FilePath, true))
+                            files.Add(entry.FullName);
+                            using (var entryStream = entry.Open())
+                            using (var ms = Platform.Current.LoadUserFileStream(entry.FullName, true))
                             {
-                                reader.WriteEntryTo(ms);
+                                if (ms != null)
+                                {
+                                    entryStream.CopyTo(ms);
+                                }
                             }
                         }
                     }
@@ -188,11 +216,18 @@ namespace Tools
 
         public static string WordsSubString(this string str, int length)
         {
+            // 🔥 技术性修复：避免ArgumentOutOfRangeException
+            if (length < 0) length = 0;
+            if (length > str.Length) length = str.Length;
             return str.Length > length ? str.Substring(0, length) + ".." : str;
         }
         public static string WordsSubString2(this string str, int length)
         {
             //return str.Length > length ? str.Substring(0, length) + ".." : str;
+            // 🔥 技术性修复：避免ArgumentOutOfRangeException
+            if (length < 0) length = 0;
+            if (length > str.Length) length = str.Length;
+            
             if (str.Length == length)
             {
                 return str;

@@ -1,0 +1,211 @@
+暴击图资源目录结构
+====================
+
+Content/Textures/CriticalHit/
+│
+├── Male/                           # 男武将暴击图
+│   ├── Normal/                     # 普通攻击暴击
+│   │   ├── Infantry/               # 步兵专用
+│   │   │   ├── Default.png        # 【推荐】步兵默认图片
+│   │   │   ├── 1.png              # 可选：武将ID=1的步兵专属图片
+│   │   │   └── ...
+│   │   ├── Archer/                 # 弓兵（弩兵）专用
+│   │   │   ├── Default.png        # 【推荐】弓兵默认图片
+│   │   │   └── ...
+│   │   ├── Cavalry/                # 骑兵专用
+│   │   │   ├── Default.png        # 【推荐】骑兵默认图片
+│   │   │   └── ...
+│   │   ├── Siege/                  # 器械专用
+│   │   │   ├── Default.png        # 【推荐】器械默认图片
+│   │   │   └── ...
+│   │   ├── Navy/                   # 水军专用
+│   │   │   ├── Default.png        # 【推荐】水军默认图片
+│   │   │   └── ...
+│   │   ├── Default.png            # 【必需】总默认图片（所有兵种回退）
+│   │   ├── 1.png                  # 可选：武将ID=1的通用图片（不区分兵种）
+│   │   └── ...
+│   │
+│   └── Skill/                      # 战法攻击暴击
+│       ├── Infantry/               # 步兵专用
+│       │   ├── Default.png        # 【推荐】步兵默认图片
+│       │   └── ...
+│       ├── Archer/                 # 弓兵专用
+│       │   ├── Default.png        # 【推荐】弓兵默认图片
+│       │   └── ...
+│       ├── Cavalry/                # 骑兵专用
+│       │   ├── Default.png        # 【推荐】骑兵默认图片
+│       │   └── ...
+│       ├── Siege/                  # 器械专用
+│       │   ├── Default.png        # 【推荐】器械默认图片
+│       │   └── ...
+│       ├── Navy/                   # 水军专用
+│       │   ├── Default.png        # 【推荐】水军默认图片
+│       │   └── ...
+│       ├── Default.png            # 【必需】总默认图片
+│       └── ...
+│
+└── Female/                         # 女武将暴击图
+    ├── Normal/                     # 普通攻击暴击
+    │   ├── Infantry/               # 步兵专用
+    │   │   ├── Default.png        # 【推荐】步兵默认图片
+    │   │   └── ...
+    │   ├── Archer/                 # 弓兵专用
+    │   │   ├── Default.png        # 【推荐】弓兵默认图片
+    │   │   └── ...
+    │   ├── Cavalry/                # 骑兵专用
+    │   │   ├── Default.png        # 【推荐】骑兵默认图片
+    │   │   └── ...
+    │   ├── Siege/                  # 器械专用
+    │   │   ├── Default.png        # 【推荐】器械默认图片
+    │   │   └── ...
+    │   ├── Navy/                   # 水军专用
+    │   │   ├── Default.png        # 【推荐】水军默认图片
+    │   │   └── ...
+    │   ├── Default.png            # 【必需】总默认图片
+    │   └── ...
+    │
+    └── Skill/                      # 战法攻击暴击
+        ├── Infantry/               # 步兵专用
+        │   ├── Default.png        # 【推荐】步兵默认图片
+        │   └── ...
+        ├── Archer/                 # 弓兵专用
+        │   ├── Default.png        # 【推荐】弓兵默认图片
+        │   └── ...
+        ├── Cavalry/                # 骑兵专用
+        │   ├── Default.png        # 【推荐】骑兵默认图片
+        │   └── ...
+        ├── Siege/                  # 器械专用
+        │   ├── Default.png        # 【推荐】器械默认图片
+        │   └── ...
+        ├── Navy/                   # 水军专用
+        │   ├── Default.png        # 【推荐】水军默认图片
+        │   └── ...
+        ├── Default.png            # 【必需】总默认图片
+        └── ...
+
+
+图片规格建议
+============
+
+格式：PNG（推荐，支持透明度）或 JPG
+尺寸：建议 400x300 到 800x600 像素
+比例：正方形或横向长方形均可
+内容：武将立绘、特效文字、暴击特效等
+
+
+最小配置（4个必需文件）
+=======================
+
+1. Content/Textures/CriticalHit/Male/Normal/Default.png
+   - 男武将普通攻击暴击总默认图
+
+2. Content/Textures/CriticalHit/Male/Skill/Default.png
+   - 男武将战法攻击暴击总默认图
+
+3. Content/Textures/CriticalHit/Female/Normal/Default.png
+   - 女武将普通攻击暴击总默认图
+
+4. Content/Textures/CriticalHit/Female/Skill/Default.png
+   - 女武将战法攻击暴击总默认图
+
+
+推荐配置（24个推荐文件）
+========================
+
+在最小配置基础上，为每个兵种添加默认图片：
+
+男武将普通攻击（5个）：
+- Male/Normal/Infantry/Default.png   （步兵）
+- Male/Normal/Archer/Default.png     （弓兵）
+- Male/Normal/Cavalry/Default.png    （骑兵）
+- Male/Normal/Siege/Default.png      （器械）
+- Male/Normal/Navy/Default.png       （水军）
+
+男武将战法攻击（5个）：
+- Male/Skill/Infantry/Default.png
+- Male/Skill/Archer/Default.png
+- Male/Skill/Cavalry/Default.png
+- Male/Skill/Siege/Default.png
+- Male/Skill/Navy/Default.png
+
+女武将普通攻击（5个）：
+- Female/Normal/Infantry/Default.png
+- Female/Normal/Archer/Default.png
+- Female/Normal/Cavalry/Default.png
+- Female/Normal/Siege/Default.png
+- Female/Normal/Navy/Default.png
+
+女武将战法攻击（5个）：
+- Female/Skill/Infantry/Default.png
+- Female/Skill/Archer/Default.png
+- Female/Skill/Cavalry/Default.png
+- Female/Skill/Siege/Default.png
+- Female/Skill/Navy/Default.png
+
+
+图片查找优先级
+==============
+
+系统按以下优先级查找图片（从高到低）：
+
+1. 【最高优先级】武将ID + 兵种
+   例如：Male/Normal/Cavalry/1.png
+   （关羽骑兵普通攻击暴击专属图）
+
+2. 武将ID（不区分兵种）
+   例如：Male/Normal/1.png
+   （关羽普通攻击暴击通用图，所有兵种共用）
+
+3. 兵种默认图
+   例如：Male/Normal/Cavalry/Default.png
+   （男武将骑兵普通攻击暴击默认图）
+
+4. 【最低优先级】总默认图
+   例如：Male/Normal/Default.png
+   （男武将普通攻击暴击总默认图，所有兵种回退）
+
+
+使用示例
+========
+
+场景1：关羽（ID=2，男）骑兵普通攻击暴击
+查找顺序：
+1. Male/Normal/Cavalry/2.png          （不存在）
+2. Male/Normal/2.png                  （不存在）
+3. Male/Normal/Cavalry/Default.png    （存在！使用此图）
+
+场景2：貂蝉（ID=100，女）弓兵战法攻击暴击
+查找顺序：
+1. Female/Skill/Archer/100.png        （不存在）
+2. Female/Skill/100.png               （存在！使用此图）
+
+场景3：普通武将（ID=999，男）步兵普通攻击暴击
+查找顺序：
+1. Male/Normal/Infantry/999.png       （不存在）
+2. Male/Normal/999.png                （不存在）
+3. Male/Normal/Infantry/Default.png   （不存在）
+4. Male/Normal/Default.png            （存在！使用此图）
+
+
+兵种文件夹对应关系
+==================
+
+游戏兵种类型 → 文件夹名称：
+- 步兵 (MilitaryType.步兵) → Infantry
+- 弩兵 (MilitaryType.弩兵) → Archer
+- 骑兵 (MilitaryType.骑兵) → Cavalry
+- 器械 (MilitaryType.器械) → Siege
+- 水军 (MilitaryType.水军) → Navy
+
+
+注意事项
+========
+
+1. 文件名必须是纯数字（武将ID）或 "Default"
+2. 文件扩展名必须是 .png 或 .jpg（代码中使用.png）
+3. 目录结构必须严格按照上述格式
+4. 图片不宜过大，建议单个文件不超过1MB
+5. 建议使用PNG格式以支持透明背景
+6. 兵种文件夹名称必须使用英文（Infantry/Archer/Cavalry/Siege/Navy）
+7. 如果只想区分兵种而不区分武将，只需准备兵种默认图即可
+8. 如果想为特定武将的特定兵种定制图片，使用优先级1的路径

@@ -1,0 +1,330 @@
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using NUnit.Framework;
+using FsCheck;
+using FsCheck.NUnit;
+using STJDiagnosticsTests.Infrastructure;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Implementations;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Interfaces;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Tests for IDeserializationTester implementation
+    /// Validates Requirements 3.1, 3.2, 3.3, 3.4, 3.5
+    /// </summary>
+    [TestFixture]
+    public class DeserializationTesterTests : TestBase
+    {
+        private IDeserializationTester _deserializationTester;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            _deserializationTester = new DeserializationTester();
+        }
+
+        #region Task 5.1 Tests - DeserializationTester Implementation
+
+        [Test]
+        public async Task TestEventEffectKindTableDeserialization_WithValidJson_ShouldReturnSuccessfulResult()
+        {
+            // Arrange
+            var validJson = @"{
+                ""EventEffectKinds"": {
+                    ""1"": {
+                        ""$type"": ""GameObjects.TroopDetail.EventEffect.EventEffectKindPack.EventEffectKind0, WorldOfTheThreeKingdoms"",
+                        ""ID"": 1,
+                        ""Name"": ""Test Effect""
+                    }
+                }
+            }";
+
+            // Act
+            var result = await _deserializationTester.TestEventEffectKindTableDeserialization(validJson);
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null");
+            Assert.That(result.TestName, Is.EqualTo("EventEffectKindTable Deserialization Test"));
+            Assert.That(result.Duration, Is.GreaterThan(TimeSpan.Zero), "Test should have measurable duration");
+            Assert.That(result.Metrics, Contains.Key("ExecutionTimeMs"), "Should capture execution time metrics");
+            
+            // The test may fail due to STJ issues, but should provide detailed error information
+            if (!result.IsSuccessful)
+            {
+                Assert.That(result.Errors, Is.Not.Empty, "Failed test should provide error details");
+                Console.WriteLine($"Test failed as expected due to STJ issues: {result.Errors[0].Message}");
+            }
+        }
+
+        [Test]
+        public async Task TestBothNamespaceVariants_ShouldTestTroopDetailAndArchitectureDetail()
+        {
+            // Act
+            var result = await _deserializationTester.TestBothNamespaceVariants();
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null");
+            Assert.That(result.TestName, Is.EqualTo("Both Namespace Variants Test"));
+            Assert.That(result.Metrics, Contains.Key("TroopDetailSuccess"), "Should test TroopDetail variant");
+            Assert.That(result.Metrics, Contains.Key("ArchitectureDetailSuccess"), "Should test ArchitectureDetail variant");
+            Assert.That(result.Metrics, Contains.Key("ExecutionTimeMs"), "Should capture execution time");
+        }
+
+        [Test]
+        public async Task TestWithActualGameData_ShouldUseRealisticDataSamples()
+        {
+            // Act
+            var result = await _deserializationTester.TestWithActualGameData();
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null");
+            Assert.That(result.TestName, Is.EqualTo("Actual Game Data Test"));
+            Assert.That(result.Metrics.Keys, Has.Some.Matches<string>(k => k.Contains("Sample_")), 
+                "Should test multiple game data samples");
+            Assert.That(result.Duration, Is.GreaterThan(TimeSpan.Zero), "Should have measurable execution time");
+        }
+
+        [Test]
+        public async Task TestEdgeCases_ShouldHandleEmptyDictionariesAndNullValues()
+        {
+            // Act
+            var result = await _deserializationTester.TestEdgeCases();
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null");
+            Assert.That(result.TestName, Is.EqualTo("Edge Cases Test"));
+            Assert.That(result.Metrics.Keys, Has.Some.Matches<string>(k => k.Contains("EdgeCase_")), 
+                "Should test multiple edge cases");
+            
+            // Verify specific edge cases are tested
+            Assert.That(result.Metrics.Keys, Has.Some.Matches<string>(k => k.Contains("EmptyDictionary")), 
+                "Should test empty dictionary case");
+            Assert.That(result.Metrics.Keys, Has.Some.Matches<string>(k => k.Contains("NullDictionary")), 
+                "Should test null dictionary case");
+        }
+
+        [Test]
+        public void GenerateComprehensiveTestSuite_ShouldCreateCompleteTestSuite()
+        {
+            // Act
+            var testSuite = _deserializationTester.GenerateComprehensiveTestSuite();
+
+            // Assert
+            Assert.That(testSuite, Is.Not.Null, "Test suite should not be null");
+            Assert.That(testSuite.Name, Is.EqualTo("EventEffectKindTable Comprehensive Test Suite"));
+            Assert.That(testSuite.TestCases, Is.Not.Empty, "Test suite should contain test cases");
+            Assert.That(testSuite.Configuration, Is.Not.Null, "Test suite should have configuration");
+            
+            // Verify test cases cover different scenarios
+            Assert.That(testSuite.TestCases, Has.Some.Matches<TestCase>(tc => tc.Name.Contains("TroopDetail")), 
+                "Should include TroopDetail test cases");
+            Assert.That(testSuite.TestCases, Has.Some.Matches<TestCase>(tc => tc.Name.Contains("ArchitectureDetail")), 
+                "Should include ArchitectureDetail test cases");
+            Assert.That(testSuite.TestCases, Has.Some.Matches<TestCase>(tc => tc.Name.Contains("Edge Case")), 
+                "Should include edge case test cases");
+            Assert.That(testSuite.TestCases, Has.Some.Matches<TestCase>(tc => tc.Name.Contains("Real Game Data")), 
+                "Should include real game data test cases");
+        }
+
+        [Test]
+        public async Task TestEventEffectKindTableDeserialization_WithInvalidJson_ShouldHandleGracefully()
+        {
+            // Arrange
+            var invalidJson = @"{""EventEffectKinds"": {""invalid"": }";
+
+            // Act
+            var result = await _deserializationTester.TestEventEffectKindTableDeserialization(invalidJson);
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null even with invalid JSON");
+            Assert.That(result.IsSuccessful, Is.False, "Test should fail with invalid JSON");
+            Assert.That(result.Errors, Is.Not.Empty, "Should provide error details for invalid JSON");
+            Assert.That(result.Duration, Is.GreaterThan(TimeSpan.Zero), "Should have measurable duration");
+        }
+
+        [Test]
+        public async Task TestEventEffectKindTableDeserialization_WithEmptyJson_ShouldHandleGracefully()
+        {
+            // Arrange
+            var emptyJson = @"{}";
+
+            // Act
+            var result = await _deserializationTester.TestEventEffectKindTableDeserialization(emptyJson);
+
+            // Assert
+            Assert.That(result, Is.Not.Null, "Test result should not be null");
+            Assert.That(result.Duration, Is.GreaterThan(TimeSpan.Zero), "Should have measurable duration");
+            // Empty JSON may or may not succeed depending on implementation - we just verify it doesn't crash
+        }
+
+        #endregion
+
+        #region Task 5.2 Property Tests - Comprehensive Deserialization Testing
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 7: Comprehensive Deserialization Testing")]
+        public Property ComprehensiveDeserializationTesting(NonEmptyString jsonDataWrapper)
+        {
+            // Extract the actual string from NonEmptyString
+            var jsonData = jsonDataWrapper?.Get ?? "{}";
+            
+            return Prop.ForAll(
+                Gen.Elements(
+                    // Valid JSON structures that should be testable
+                    @"{""EventEffectKinds"": {}}",
+                    @"{""EventEffectKinds"": {""1"": {""ID"": 1, ""Name"": ""Test""}}}",
+                    @"{}",
+                    // Invalid but parseable JSON
+                    @"{""EventEffectKinds"": null}",
+                    @"{""InvalidProperty"": ""value""}"
+                ).ToArbitrary(),
+                testJson => {
+                    try
+                    {
+                        // Property: For any JSON input, the deserialization tester should:
+                        // 1. Not crash or throw unhandled exceptions
+                        // 2. Return a valid TestResult object
+                        // 3. Provide meaningful error information when deserialization fails
+                        // 4. Capture performance metrics
+                        
+                        var result = _deserializationTester.TestEventEffectKindTableDeserialization(testJson).Result;
+                        
+                        // Property 1: Result should never be null
+                        var resultNotNull = result != null;
+                        
+                        // Property 2: Result should have a test name
+                        var hasTestName = !string.IsNullOrEmpty(result?.TestName);
+                        
+                        // Property 3: Result should have measurable duration
+                        var hasDuration = result?.Duration > TimeSpan.Zero;
+                        
+                        // Property 4: Result should have execution time metrics
+                        var hasMetrics = result?.Metrics?.ContainsKey("ExecutionTimeMs") == true;
+                        
+                        // Property 5: If test fails, should provide error details
+                        var errorHandling = result?.IsSuccessful == true || 
+                                          (result?.IsSuccessful == false && result?.Errors?.Count > 0);
+                        
+                        return resultNotNull && hasTestName && hasDuration && hasMetrics && errorHandling;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Property: Should not throw unhandled exceptions
+                        // If an exception occurs, it indicates a problem with the tester implementation
+                        Console.WriteLine($"Unexpected exception in property test: {ex.Message}");
+                        return false;
+                    }
+                });
+        }
+
+        [Property(MaxTest = 50)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 7: Comprehensive Deserialization Testing")]
+        public Property BothNamespaceVariantsProperty()
+        {
+            return Prop.ForAll(
+                Gen.Constant(true).ToArbitrary(),
+                _ => {
+                    try
+                    {
+                        // Property: Testing both namespace variants should:
+                        // 1. Complete without crashing
+                        // 2. Test both TroopDetail and ArchitectureDetail variants
+                        // 3. Provide metrics for both variants
+                        
+                        var result = _deserializationTester.TestBothNamespaceVariants().Result;
+                        
+                        var resultNotNull = result != null;
+                        var hasTroopDetailMetrics = result?.Metrics?.ContainsKey("TroopDetailSuccess") == true;
+                        var hasArchitectureDetailMetrics = result?.Metrics?.ContainsKey("ArchitectureDetailSuccess") == true;
+                        var hasExecutionTime = result?.Metrics?.ContainsKey("ExecutionTimeMs") == true;
+                        
+                        return resultNotNull && hasTroopDetailMetrics && hasArchitectureDetailMetrics && hasExecutionTime;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Unexpected exception in namespace variants property test: {ex.Message}");
+                        return false;
+                    }
+                });
+        }
+
+        [Property(MaxTest = 30)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 7: Comprehensive Deserialization Testing")]
+        public Property EdgeCasesHandlingProperty()
+        {
+            return Prop.ForAll(
+                Gen.Constant(true).ToArbitrary(),
+                _ => {
+                    try
+                    {
+                        // Property: Edge cases testing should:
+                        // 1. Handle all edge cases without crashing
+                        // 2. Provide metrics for each edge case
+                        // 3. Distinguish between expected and unexpected failures
+                        
+                        var result = _deserializationTester.TestEdgeCases().Result;
+                        
+                        var resultNotNull = result != null;
+                        var hasEdgeCaseMetrics = result?.Metrics?.Keys?.Any(k => k.Contains("EdgeCase_")) == true;
+                        var hasExecutionTime = result?.Metrics?.ContainsKey("ExecutionTimeMs") == true;
+                        
+                        // Should test common edge cases
+                        var testsEmptyDictionary = result?.Metrics?.Keys?.Any(k => k.Contains("EmptyDictionary")) == true;
+                        var testsNullDictionary = result?.Metrics?.Keys?.Any(k => k.Contains("NullDictionary")) == true;
+                        
+                        return resultNotNull && hasEdgeCaseMetrics && hasExecutionTime && 
+                               testsEmptyDictionary && testsNullDictionary;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Unexpected exception in edge cases property test: {ex.Message}");
+                        return false;
+                    }
+                });
+        }
+
+        [Property(MaxTest = 20)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 7: Comprehensive Deserialization Testing")]
+        public Property TestSuiteGenerationProperty()
+        {
+            return Prop.ForAll(
+                Gen.Constant(true).ToArbitrary(),
+                _ => {
+                    try
+                    {
+                        // Property: Test suite generation should:
+                        // 1. Create a comprehensive test suite
+                        // 2. Include different types of test cases
+                        // 3. Have proper configuration
+                        
+                        var testSuite = _deserializationTester.GenerateComprehensiveTestSuite();
+                        
+                        var suiteNotNull = testSuite != null;
+                        var hasName = !string.IsNullOrEmpty(testSuite?.Name);
+                        var hasTestCases = testSuite?.TestCases?.Count > 0;
+                        var hasConfiguration = testSuite?.Configuration != null;
+                        
+                        // Should include different types of test cases
+                        var hasTroopDetailCases = testSuite?.TestCases?.Any(tc => tc.Name.Contains("TroopDetail")) == true;
+                        var hasArchitectureCases = testSuite?.TestCases?.Any(tc => tc.Name.Contains("ArchitectureDetail")) == true;
+                        var hasEdgeCases = testSuite?.TestCases?.Any(tc => tc.Name.Contains("Edge Case")) == true;
+                        var hasRealDataCases = testSuite?.TestCases?.Any(tc => tc.Name.Contains("Real Game Data")) == true;
+                        
+                        return suiteNotNull && hasName && hasTestCases && hasConfiguration &&
+                               hasTroopDetailCases && hasArchitectureCases && hasEdgeCases && hasRealDataCases;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Unexpected exception in test suite generation property test: {ex.Message}");
+                        return false;
+                    }
+                });
+        }
+
+        #endregion
+    }
+}

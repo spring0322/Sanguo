@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework;
 using GameObjects;
 using GameObjects.AI;
 using GameObjects.AI.Helper;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects.AI
 {
@@ -60,14 +61,14 @@ namespace GameObjects.AI
                 // 根据角色应用不同的评分策略
                 switch (me.CurrentRole)
                 {
-                    case AIRole.Tank:
+                    case TroopRole.Tank:
                         currentScore += EvaluateTankPosition(point, target, vulnerableAlly);
                         break;
-                    case AIRole.DPS:
-                    case AIRole.Mage:
+                    case TroopRole.DPS:
+                    case TroopRole.Mage:
                         currentScore += EvaluateRangedPosition(me, point, target);
                         break;
-                    case AIRole.Support:
+                    case TroopRole.Support:
                         currentScore += EvaluateSupportPosition(point, allies);
                         break;
                     default:
@@ -93,9 +94,9 @@ namespace GameObjects.AI
         /// <param name="troop">需要检查角色的部队</param>
         private static void EnsureRoleAssigned(Troop troop)
         {
-            if (troop.CurrentRole == AIRole.None)
+            if (troop.CurrentRole == TroopRole.None)
             {
-                troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                troop.CurrentRole = AIRoleSelector.DetermineRole(troop);
                 Console.WriteLine($"自动为部队 {troop.ID} 分配角色: {GetRoleDescription(troop.CurrentRole)}");
             }
         }
@@ -103,15 +104,15 @@ namespace GameObjects.AI
         /// <summary>
         /// 获取角色的中文描述
         /// </summary>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case TroopRole.Tank: return "肉盾";
+                case TroopRole.DPS: return "输出";
+                case TroopRole.Mage: return "法师";
+                case TroopRole.Support: return "辅助";
+                case TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }
@@ -153,7 +154,7 @@ namespace GameObjects.AI
         /// <summary>
         /// 远程/脆皮 评分：保持距离，避免接敌
         /// </summary>
-        private static float EvaluateRangedPosition(Troop me, Point pos, Troop target)
+        public static float EvaluateRangedPosition(Troop me, Point pos, Troop target)
         {
             float score = 0;
             int distToEnemy = GetManhattanDistance(pos, target.Position);
@@ -245,9 +246,9 @@ namespace GameObjects.AI
                 if (ally == me) continue;
 
                 // 只有脆皮需要保护
-                if (ally.CurrentRole == AIRole.Mage || 
-                    ally.CurrentRole == AIRole.Support || 
-                    ally.CurrentRole == AIRole.DPS)
+                if (ally.CurrentRole == TroopRole.Mage || 
+                    ally.CurrentRole == TroopRole.Support || 
+                    ally.CurrentRole == TroopRole.DPS)
                 {
                     int dist = GetManhattanDistance(me.Position, ally.Position);
                     if (dist < minDistance)
@@ -278,11 +279,11 @@ namespace GameObjects.AI
                 // 如果获取失败，根据角色返回默认值
                 switch (troop.CurrentRole)
                 {
-                    case AIRole.Mage:
+                    case TroopRole.Mage:
                         return 3; // 法师通常射程较远
-                    case AIRole.DPS:
+                    case TroopRole.DPS:
                         return 2; // 弓兵等远程单位
-                    case AIRole.Tank:
+                    case TroopRole.Tank:
                         return 1; // 近战单位
                     default:
                         return 2; // 默认值
@@ -304,8 +305,8 @@ namespace GameObjects.AI
             {
                 if (troop != null)
                 {
-                    AIRole oldRole = troop.CurrentRole;
-                    troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                    TroopRole oldRole = troop.CurrentRole;
+                    troop.CurrentRole = AIRoleSelector.DetermineRole(troop);
                     
                     if (oldRole != troop.CurrentRole)
                     {

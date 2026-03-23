@@ -4,6 +4,7 @@ using GameObjects.Conditions;
 using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 2026-03-05 添加：支持 [GenerateUIAccessor] 特性
 
 namespace GameObjects
 {
@@ -21,7 +22,8 @@ namespace GameObjects
     }
 
     [DataContract]
-    public class Event : GameObject
+    [GenerateUIAccessor]  // 🔥 2026-03-05 修复：添加源生成器特性，支持 UI 访问 ID 等属性
+    public partial class Event : GameObject
     {
         [DataMember]
         public int AfterEventHappened = -1;
@@ -74,8 +76,11 @@ namespace GameObjects
         [DataMember]
         public string effectString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<int, List<EventEffect>> effect;
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<PersonDialog> matchedDialog;
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<Person, List<EventEffect>> matchedEffect;
 
         public List<PersonDialog> matchedyesDialog = new List<PersonDialog>();
@@ -89,7 +94,9 @@ namespace GameObjects
         [DataMember]
         public string nodialogString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<Person, List<EventEffect>> matchedYesEffect;
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<Person, List<EventEffect>> matchedNoEffect;
 
         [DataMember]
@@ -98,17 +105,21 @@ namespace GameObjects
         [DataMember]
         public string noEffectString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<int, List<EventEffect>> yesEffect = new Dictionary<int,List<EventEffect>>();
+        [System.Text.Json.Serialization.JsonIgnore]
         public Dictionary<int, List<EventEffect>> noEffect = new Dictionary<int,List<EventEffect>>();
 
         [DataMember]
         public string architectureEffectString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<EventEffect> architectureEffect = new List<EventEffect>();
 
         [DataMember]
         public string factionEffectIDString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<EventEffect> factionEffect = new List<EventEffect>();
 
         [DataMember]
@@ -117,7 +128,9 @@ namespace GameObjects
         [DataMember]
         public string noArchitectureEffectString { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<EventEffect> yesArchitectureEffect = new List<EventEffect>();
+        [System.Text.Json.Serialization.JsonIgnore]
         public List<EventEffect> noArchitectureEffect = new List<EventEffect>();
 
         public List<PersonIdDialog> scenBiography = new List<PersonIdDialog>() ;
@@ -193,11 +206,22 @@ namespace GameObjects
 
         public void ApplyEventDialogs(Architecture a, Screen screen)
         {
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[Event.ApplyEventDialogs] Event ID={this.ID}, Name={this.Name}, Architecture={a.Name}, OnApplyEvent订阅数={(this.OnApplyEvent?.GetInvocationList().Length ?? 0)}");
+            #endif
+            
             Session.Current.Scenario = Session.Current.Scenario;
             if (this.OnApplyEvent != null)
             {
                 this.OnApplyEvent(this, a, screen);
             }
+            else
+            {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[Event.ApplyEventDialogs] ⚠️ OnApplyEvent 为 null！事件未订阅！");
+                #endif
+            }
+            
             foreach (PersonDialog i in matchedScenBiography) 
             {
                 if (i.SpeakingPerson != null)
@@ -515,7 +539,7 @@ namespace GameObjects
 
             if (this.AfterEventHappened >= 0)
             {
-                if (!(Session.Current.Scenario.AllEvents.GetGameObject(this.AfterEventHappened) as Event).happened)
+                if (!((Session.Current.Scenario.AllEvents.GetGameObject(this.AfterEventHappened) is Event ? (Event)Session.Current.Scenario.AllEvents.GetGameObject(this.AfterEventHappened) : null)).happened)
                 {
                     return false;
                 }
@@ -608,7 +632,7 @@ namespace GameObjects
                 }
                 if (pid != -1)
                 {
-                    this.person[n].Add(persons.GetGameObject(pid) as Person);
+                    this.person[n].Add((persons.GetGameObject(pid) is Person ? (Person)persons.GetGameObject(pid) : null));
                 }
                 else
                 {
@@ -1034,3 +1058,4 @@ namespace GameObjects
 
     }
 }
+

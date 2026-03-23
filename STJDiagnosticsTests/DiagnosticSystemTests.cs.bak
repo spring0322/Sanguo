@@ -1,0 +1,290 @@
+using NUnit.Framework;
+using FsCheck;
+using FsCheck.NUnit;
+using System;
+using System.Threading.Tasks;
+using Moq;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Interfaces;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Implementations;
+using WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models;
+using WorldOfTheThreeKingdoms.Helpers;
+using WorldOfTheThreeKingdoms.Serialization;
+using STJDiagnosticsTests.Infrastructure;
+using TestResult = WorldOfTheThreeKingdoms.Diagnostics.STJDiagnostics.Models.TestResult;
+
+namespace STJDiagnosticsTests
+{
+    /// <summary>
+    /// Tests for IDiagnosticSystem implementation
+    /// Validates Requirements 6.1, 6.2, 6.3, 6.4, 6.5
+    /// </summary>
+    [TestFixture]
+    public class DiagnosticSystemTests : TestBase
+    {
+        private Mock<IRootCauseAnalyzer> _mockRootCauseAnalyzer;
+        private Mock<ITypeRegistrationValidator> _mockTypeRegistrationValidator;
+        private Mock<IDeserializationTester> _mockDeserializationTester;
+        private Mock<IFallbackHandler> _mockFallbackHandler;
+        private Mock<IAsyncFileService> _mockFileService;
+        private Mock<IAsyncSerializationService> _mockSerializationService;
+        private DiagnosticSystem _diagnosticSystem;
+
+        [SetUp]
+        public override void SetUp()
+        {
+            base.SetUp();
+            
+            _mockRootCauseAnalyzer = new Mock<IRootCauseAnalyzer>();
+            _mockTypeRegistrationValidator = new Mock<ITypeRegistrationValidator>();
+            _mockDeserializationTester = new Mock<IDeserializationTester>();
+            _mockFallbackHandler = new Mock<IFallbackHandler>();
+            _mockFileService = new Mock<IAsyncFileService>();
+            _mockSerializationService = new Mock<IAsyncSerializationService>();
+            
+            _diagnosticSystem = new DiagnosticSystem(
+                _mockRootCauseAnalyzer.Object,
+                _mockTypeRegistrationValidator.Object,
+                _mockDeserializationTester.Object,
+                _mockFallbackHandler.Object,
+                _mockFileService.Object,
+                _mockSerializationService.Object);
+        }
+
+        #region Unit Tests
+
+        [Test]
+        public async Task ValidateStartupRegistrations_ShouldReturnSystemHealthReport()
+        {
+            // Arrange
+            var validationResult = new ValidationResult { IsValid = true };
+            var testResult = new TestResult { IsSuccessful = true };
+            
+            _mockTypeRegistrationValidator
+                .Setup(x => x.ValidateEventEffectKindTableRegistration())
+                .Returns(validationResult);
+            
+            _mockTypeRegistrationValidator
+                .Setup(x => x.ValidateDependentTypes(It.IsAny<Type>()))
+                .Returns(validationResult);
+            
+            _mockDeserializationTester
+                .Setup(x => x.TestEventEffectKindTableDeserialization(It.IsAny<string>()))
+                .ReturnsAsync(testResult);
+
+            // Act
+            var result = await _diagnosticSystem.ValidateStartupRegistrations();
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.GeneratedAt, Is.Not.EqualTo(default(DateTime)));
+            Assert.That(result.HealthChecks, Is.Not.Empty);
+            Assert.That(result.Performance, Is.Not.Null);
+            Assert.That(result.Recommendations, Is.Not.Null);
+        }
+
+        [Test]
+        public void LogPerformanceMetrics_WithValidParameters_ShouldNotThrow()
+        {
+            // Arrange
+            var operationType = "TestOperation";
+            var duration = 100L;
+            var success = true;
+
+            // Act & Assert
+            Assert.DoesNotThrow(() => _diagnosticSystem.LogPerformanceMetrics(operationType, duration, success));
+        }
+
+        [Test]
+        public void LogPerformanceMetrics_WithNullOperationType_ShouldThrowArgumentException()
+        {
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => 
+                _diagnosticSystem.LogPerformanceMetrics(null, 100L, true));
+        }
+
+        [Test]
+        public async Task CaptureErrorContextAsync_WithValidContext_ShouldNotThrow()
+        {
+            // Arrange
+            var errorContext = new ErrorContext
+            {
+                Exception = new Exception("Test exception"),
+                OperationContext = "TestOperation",
+                Timestamp = DateTime.UtcNow
+            };
+
+            // Act & Assert
+            Assert.DoesNotThrowAsync(async () => await _diagnosticSystem.CaptureErrorContextAsync(errorContext));
+        }
+
+        [Test]
+        public void CaptureErrorContextAsync_WithNullContext_ShouldThrowArgumentNullException()
+        {
+            // Act & Assert
+            Assert.ThrowsAsync<ArgumentNullException>(async () => 
+                await _diagnosticSystem.CaptureErrorContextAsync(null));
+        }
+
+        [Test]
+        public void TrackTypeUsage_WithValidTypeName_ShouldNotThrow()
+        {
+            // Arrange
+            var typeName = "TestType";
+
+            // Act & Assert
+            Assert.DoesNotThrow(() => _diagnosticSystem.TrackTypeUsage(typeName));
+        }
+
+        [Test]
+        public void TrackTypeUsage_WithNullTypeName_ShouldNotThrow()
+        {
+            // Act & Assert (should handle null gracefully)
+            Assert.DoesNotThrow(() => _diagnosticSystem.TrackTypeUsage(null));
+        }
+
+        [Test]
+        public async Task GenerateActionableInsights_ShouldReturnInsightsReport()
+        {
+            // Act
+            var result = await _diagnosticSystem.GenerateActionableInsights();
+
+            // Assert
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.GeneratedAt, Is.Not.EqualTo(default(DateTime)));
+            Assert.That(result.Insights, Is.Not.Null);
+            Assert.That(result.Recommendations, Is.Not.Null);
+            Assert.That(result.Trends, Is.Not.Null);
+            Assert.That(result.Risks, Is.Not.Null);
+        }
+
+        #endregion
+
+        #region Property Tests
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 13: System Health Monitoring")]
+        public Property SystemHealthMonitoring_ValidateStartupRegistrations_AlwaysReturnsValidReport()
+        {
+            return Prop.ForAll(
+                TestArbitraries.ArbitraryValidationResult(),
+                TestArbitraries.ArbitraryValidationResult(),
+                (eventEffectValidation, dependencyValidation) =>
+                {
+                    // Arrange
+                    var testResult = new TestResult { IsSuccessful = true };
+                    
+                    _mockTypeRegistrationValidator
+                        .Setup(x => x.ValidateEventEffectKindTableRegistration())
+                        .Returns(eventEffectValidation);
+                    
+                    _mockTypeRegistrationValidator
+                        .Setup(x => x.ValidateDependentTypes(It.IsAny<Type>()))
+                        .Returns(dependencyValidation);
+                    
+                    _mockDeserializationTester
+                        .Setup(x => x.TestEventEffectKindTableDeserialization(It.IsAny<string>()))
+                        .ReturnsAsync(testResult);
+
+                    // Act
+                    var result = _diagnosticSystem.ValidateStartupRegistrations().Result;
+
+                    // Assert - Property: System health monitoring should always return a valid report
+                    return result != null &&
+                           result.GeneratedAt != default(DateTime) &&
+                           result.HealthChecks != null &&
+                           result.Performance != null &&
+                           result.Recommendations != null;
+                });
+        }
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 13: System Health Monitoring")]
+        public Property SystemHealthMonitoring_LogPerformanceMetrics_TracksAllOperations()
+        {
+            return Prop.ForAll(
+                Arb.Default.NonEmptyString(),
+                Arb.Default.PositiveInt(),
+                Arb.Default.Bool(),
+                (opType, dur, succ) =>
+                {
+                    var validOperationType = opType?.Get ?? "DefaultOperation";
+                    var validDuration = (long)dur.Get;
+
+                    // Act - Log performance metrics
+                    _diagnosticSystem.LogPerformanceMetrics(validOperationType, validDuration, succ);
+
+                    // Property: Performance metrics logging should not throw and should handle all valid inputs
+                    return true; // If we reach here without exception, the property holds
+                });
+        }
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 13: System Health Monitoring")]
+        public Property SystemHealthMonitoring_CaptureErrorContextAsync_HandlesAllErrorTypes()
+        {
+            return Prop.ForAll(
+                Arb.Default.String(),
+                Arb.Default.String(),
+                (operationContext, exceptionMessage) =>
+                {
+                    // Arrange
+                    var errorContext = new ErrorContext
+                    {
+                        Exception = new Exception(exceptionMessage ?? "Test exception"),
+                        OperationContext = operationContext ?? "TestOperation",
+                        Timestamp = DateTime.UtcNow
+                    };
+
+                    // Act - Capture error context (using sync wrapper for property test)
+                    try
+                    {
+                        _diagnosticSystem.CaptureErrorContextAsync(errorContext).GetAwaiter().GetResult();
+                        return true; // If we reach here without exception, the property holds
+                    }
+                    catch
+                    {
+                        return false; // Property fails if exception is thrown
+                    }
+                });
+        }
+
+        [Property(MaxTest = 100)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 13: System Health Monitoring")]
+        public Property SystemHealthMonitoring_TrackTypeUsage_HandlesAllTypeNames()
+        {
+            return Prop.ForAll(
+                Arb.Default.String(),
+                (typeName) =>
+                {
+                    // Act - Track type usage
+                    _diagnosticSystem.TrackTypeUsage(typeName);
+
+                    // Property: Type usage tracking should handle all type names without throwing
+                    return true; // If we reach here without exception, the property holds
+                });
+        }
+
+        [Property(MaxTest = 50)]
+        [Category("Feature: stj-deserialization-root-cause-fix, Property 13: System Health Monitoring")]
+        public Property SystemHealthMonitoring_GenerateActionableInsights_AlwaysReturnsValidReport()
+        {
+            return Prop.ForAll<bool>(
+                Arb.Default.Bool(),
+                (_) =>
+                {
+                    // Act
+                    var result = _diagnosticSystem.GenerateActionableInsights().Result;
+
+                    // Property: Actionable insights generation should always return a valid report
+                    return result != null &&
+                           result.GeneratedAt != default(DateTime) &&
+                           result.Insights != null &&
+                           result.Recommendations != null &&
+                           result.Trends != null &&
+                           result.Risks != null;
+                });
+        }
+
+        #endregion
+    }
+}

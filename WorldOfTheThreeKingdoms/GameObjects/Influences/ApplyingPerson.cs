@@ -8,6 +8,7 @@ namespace GameObjects.Influences
         public Applier applier;
         public int applierID;
 
+        private ApplyingPerson() { }
         public ApplyingPerson(Person a, Applier p, int i)
         {
             this.person = a;

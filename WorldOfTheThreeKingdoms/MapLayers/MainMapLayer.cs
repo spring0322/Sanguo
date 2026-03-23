@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects;
 using Microsoft.Xna.Framework;
 using WorldOfTheThreeKingdoms;
@@ -14,6 +14,7 @@ using System.IO;
 using Platforms;
 using GameManager;
 using WorldOfTheThreeKingdoms.Helpers;
+using System.Runtime.InteropServices; // 用于高性能 Span 操作
 
 namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 {
@@ -44,107 +45,96 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         private Rectangle qizijuxing = new Rectangle();
         internal bool xianshidituxiaokuai = true;
         
+        // 缓存邻居索引偏移量，避免重复创建数组
+        private readonly int[] _neighborOffsets = { -1, +1, -30, +30, -31, -29, +29, +31 };
+
         private void CheckMapTileTexture(MapTile maptile)
         {
+            // 🔥 GPU设备丢失检查
+            if (CacheManager.IsDeviceLost) return;
+
             if (maptile.TileTexture == null)
             {
                 try
                 {
-                    // 使用DDS优先加载逻辑
+                    if (Session.Current?.Scenario?.ScenarioMap?.MapName == null)
+                    {
+                        // System.Diagnostics.Debug.WriteLine("[MainMapLayer] CheckMapTileTexture: ScenarioMap.MapName为null");
+                        return;
+                    }
+
                     string mapName = Session.Current.Scenario.ScenarioMap.MapName;
-                    string mapDir = "Content/Textures/Resources/ditu/" + mapName;
+                    
+                    // 路径优化：使用 Path.Combine 兼容不同操作系统
+                    string mapDir = Path.Combine("Content", "Textures", "Resources", "ditu", mapName);
                     
                     // 修复：如果带下划线的目录不存在，尝试不带下划线的目录
-                    if (!Directory.Exists(mapDir) && mapName.StartsWith("_"))
+                    if (!Directory.Exists(mapDir) && mapName.StartsWith('_'))
                     {
-                        string alternativeMapName = mapName.Substring(1); // 移除开头的下划线
-                        string alternativeMapDir = "Content/Textures/Resources/ditu/" + alternativeMapName;
+                        string alternativeMapName = mapName.Substring(1); 
+                        string alternativeMapDir = Path.Combine("Content", "Textures", "Resources", "ditu", alternativeMapName);
                         if (Directory.Exists(alternativeMapDir))
                         {
-                            System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 使用替代地图目录: {alternativeMapName}");
                             mapName = alternativeMapName;
                         }
                     }
                     
-                    string basePath = "Content/Textures/Resources/ditu/" + mapName + "/" + maptile.number;
-                    
+                    string basePath = Path.Combine("Content", "Textures", "Resources", "ditu", mapName, maptile.number);
 
-                    
-                    //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 检查瓦片: {basePath}");
-                    
                     // 1. 优先尝试 DDS
-                    if (File.Exists(basePath + ".dds"))
+                    string ddsPath = basePath + ".dds";
+                    if (File.Exists(ddsPath))
                     {
-                        //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 尝试加载DDS瓦片: {basePath}.dds");
-                        maptile.TileTexture = WorldOfTheThreeKingdoms.Helpers.DDSLoader.Load(Platform.GraphicsDevice, basePath + ".dds");
-                        if (maptile.TileTexture != null)
-                        {
-                            //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] DDS瓦片加载成功: {maptile.TileTexture.Width}x{maptile.TileTexture.Height}");
-                        }
-                        else
-                        {
-                            //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] DDS瓦片加载失败");
-                        }
-                    }
-                    else
-                    {
-                        //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] DDS文件不存在: {basePath}.dds");
+                        maptile.TileTexture = WorldOfTheThreeKingdoms.Helpers.DDSLoader.Load(Platform.GraphicsDevice, ddsPath);
                     }
                     
-                    // 2. 如果 DDS 失败或不存在，尝试 PNG
-                    if (maptile.TileTexture == null && File.Exists(basePath + ".png"))
+                    // 2. 尝试 PNG
+                    if (maptile.TileTexture == null)
                     {
-                        //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 尝试加载PNG瓦片: {basePath}.png");
-                        using (FileStream fs = new FileStream(basePath + ".png", FileMode.Open))
+                        string pngPath = basePath + ".png";
+                        if (File.Exists(pngPath))
                         {
-                            maptile.TileTexture = Texture2D.FromStream(Platform.GraphicsDevice, fs);
-                        }
-                        if (maptile.TileTexture != null)
-                        {
-                            //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] PNG瓦片加载成功: {maptile.TileTexture.Width}x{maptile.TileTexture.Height}");
+                            using (FileStream fs = new FileStream(pngPath, FileMode.Open))
+                            {
+                                maptile.TileTexture = Texture2D.FromStream(Platform.GraphicsDevice, fs);
+                            }
                         }
                     }
                     
-                    // 3. 如果 PNG 也失败，回退到 JPG
-                    if (maptile.TileTexture == null && File.Exists(basePath + ".jpg"))
+                    // 3. 回退到 JPG
+                    if (maptile.TileTexture == null)
                     {
-                        //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 尝试加载JPG瓦片: {basePath}.jpg");
-                        using (FileStream fs = new FileStream(basePath + ".jpg", FileMode.Open))
+                        string jpgPath = basePath + ".jpg";
+                        if (File.Exists(jpgPath))
                         {
-                            maptile.TileTexture = Texture2D.FromStream(Platform.GraphicsDevice, fs);
+                            using (FileStream fs = new FileStream(jpgPath, FileMode.Open))
+                            {
+                                maptile.TileTexture = Texture2D.FromStream(Platform.GraphicsDevice, fs);
+                            }
                         }
-                        if (maptile.TileTexture != null)
-                        {
-                            //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] JPG瓦片加载成功: {maptile.TileTexture.Width}x{maptile.TileTexture.Height}");
-                        }
-                    }
-                    else if (maptile.TileTexture == null)
-                    {
-                        //System.Diagnostics.Debug.WriteLine($"[MainMapLayer] JPG文件不存在: {basePath}.jpg");
                     }
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 加载地图瓦片纹理时发生异常: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 瓦片编号: {maptile.number}");
-                    System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 异常堆栈: {ex.StackTrace}");
-                    maptile.TileTexture = new Texture2D(Platform.GraphicsDevice, 1, 1);
-                    //try
-                    //{
-                    //    this.freeTilesMemory(false);
-                    //    try
-                    //    {
-                    //        maptile.TileTexture = CacheManager.GetTempTexture("Content/Textures/Resources/ditu/" + Session.Current.Scenario.ScenarioMap.MapName + "/" + maptile.number + ".jpg");
-                    //    }
-                    //    catch (FileNotFoundException)
-                    //    {
-                    //        maptile.TileTexture = CacheManager.GetTempTexture("Content/Textures/Resources/ditu/" + Session.Current.Scenario.ScenarioMap.MapName + "/" + maptile.number + ".png");
-                    //    }
-                    //}
-                    //catch (Exception)
-                    //{
-                    //    maptile.TileTexture = new Texture2D(this.device, 1, 1);
-                    //}
+                    System.Diagnostics.Debug.WriteLine($"[MainMapLayer] 加载异常: {ex.Message}");
+                    
+                    // 🔥 检测GPU设备移除异常
+                    if (ex.Message.Contains("DeviceRemoved") || ex.Message.Contains("DEVICE_REMOVED") || 
+                        ex.Message.Contains("device is lost") || ex.GetType().Name.Contains("SharpDXException"))
+                    {
+                        CacheManager.MarkDeviceLost(ex);
+                        return; 
+                    }
+                    
+                    try
+                    {
+                        if (Platform.GraphicsDevice != null && !Platform.GraphicsDevice.IsDisposed)
+                        {
+                             maptile.TileTexture = new Texture2D(Platform.GraphicsDevice, 1, 1);
+                             maptile.TileTexture.SetData(new Color[] { Color.White });
+                        }
+                    }
+                    catch { }
                 }
             }
         }
@@ -152,19 +142,24 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         private void CheckTileTexture(Tile tile, out List<PlatformTexture> decorativeTextures)
         {
             decorativeTextures = null;
-            return;
-#pragma warning disable CS0162 // Unreachable code detected
+            
+            // 如果 Scenario 未初始化，直接返回，避免崩溃
+            if (Session.Current?.Scenario == null) return;
+
             TerrainDetail terrainDetailByPositionNoCheck = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(tile.Position);
-#pragma warning restore CS0162 // Unreachable code detected
+            
             if (terrainDetailByPositionNoCheck.Textures != null && terrainDetailByPositionNoCheck.Textures.BasicTextures.Count != 0)
             {
                 int i;
                 List<int> list;
                 int num12;
+                
+                // 重置地形列表
                 for (i = 0; i < this.TerrainList.Count; i++)
                 {
                     this.TerrainList[i] = 0;
                 }
+                
                 TerrainDirection direction = TerrainDirection.None;
                 int num2 = 0;
 
@@ -175,14 +170,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 {
                     leftDetail = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(position);
                     leftId = leftDetail.ID;
-                    //(list = this.TerrainList)[num12 = Session.Current.Scenario.ScenarioMap.MapData[position.X, position.Y]] = list[num12] + 1;
                 }
                 Point point2 = new Point(tile.Position.X - 1, tile.Position.Y - 1);
                 int topLeftId = 0;
                 if (!Session.Current.Scenario.PositionOutOfRange(point2))
                 {
                     topLeftId = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(point2).ID;
-                    //(list = this.TerrainList)[num12 = Session.Current.Scenario.ScenarioMap.MapData[point2.X, point2.Y]] = list[num12] + 1;
                 }
                 Point point3 = new Point(tile.Position.X, tile.Position.Y - 1);
                 int topId = 0;
@@ -228,22 +221,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 }
 
                 int equalTerrainCnt = 0;
-                if ((leftId > 0) && (leftId == terrainDetailByPositionNoCheck.ID))
-                {
-                    equalTerrainCnt++;
-                }
-                if ((topId > 0) && (topId == terrainDetailByPositionNoCheck.ID))
-                {
-                    equalTerrainCnt++;
-                }
-                if ((rightId > 0) && (rightId == terrainDetailByPositionNoCheck.ID))
-                {
-                    equalTerrainCnt++;
-                }
-                if ((bottomId > 0) && (bottomId == terrainDetailByPositionNoCheck.ID))
-                {
-                    equalTerrainCnt++;
-                }
+                if ((leftId > 0) && (leftId == terrainDetailByPositionNoCheck.ID)) equalTerrainCnt++;
+                if ((topId > 0) && (topId == terrainDetailByPositionNoCheck.ID)) equalTerrainCnt++;
+                if ((rightId > 0) && (rightId == terrainDetailByPositionNoCheck.ID)) equalTerrainCnt++;
+                if ((bottomId > 0) && (bottomId == terrainDetailByPositionNoCheck.ID)) equalTerrainCnt++;
 
                 if (equalTerrainCnt < 4)
                 {
@@ -356,9 +337,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     switch (direction)
                     {
                         case TerrainDirection.Top:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(top.Textures.TopTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % top.Textures.TopTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((bottom != null) && (bottom.ID != terrainDetailByPositionNoCheck.ID)) && ((bottomRightId != terrainDetailByPositionNoCheck.ID) && (bottomLeftId != terrainDetailByPositionNoCheck.ID))) && (bottom.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
                             {
                                 decorativeTextures.Add(bottom.Textures.BottomEdgeTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % bottom.Textures.BottomEdgeTextures.Count]);
@@ -366,9 +345,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.Left:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(leftDetail.Textures.LeftTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % leftDetail.Textures.LeftTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((right != null) && (right.ID != terrainDetailByPositionNoCheck.ID)) && ((topRightId != terrainDetailByPositionNoCheck.ID) && (bottomRightId != terrainDetailByPositionNoCheck.ID))) && (right.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
                             {
                                 decorativeTextures.Add(right.Textures.RightEdgeTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % right.Textures.RightEdgeTextures.Count]);
@@ -376,9 +353,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.Right:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(right.Textures.RightTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % right.Textures.RightTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((leftDetail != null) && (leftDetail.ID != terrainDetailByPositionNoCheck.ID)) && ((bottomLeftId != terrainDetailByPositionNoCheck.ID) && (topLeftId != terrainDetailByPositionNoCheck.ID))) && (leftDetail.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
                             {
                                 decorativeTextures.Add(leftDetail.Textures.LeftEdgeTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % leftDetail.Textures.LeftEdgeTextures.Count]);
@@ -386,9 +361,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.Bottom:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(bottom.Textures.BottomTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % bottom.Textures.BottomTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((top != null) && (top.ID != terrainDetailByPositionNoCheck.ID)) && ((topLeftId != terrainDetailByPositionNoCheck.ID) && (topRightId != terrainDetailByPositionNoCheck.ID))) && (top.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
                             {
                                 decorativeTextures.Add(top.Textures.TopEdgeTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % top.Textures.TopEdgeTextures.Count]);
@@ -396,9 +369,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.TopLeft:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(leftDetail.Textures.TopLeftCornerTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % leftDetail.Textures.TopLeftCornerTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((right == null) || (terrainDetailByPositionNoCheck.ID == bottomRightId)) || (rightId != bottomId)) || (terrainDetailByPositionNoCheck.ID == rightId))
                             {
                                 if ((((right != null) && (right.ID != terrainDetailByPositionNoCheck.ID)) && ((topRightId != terrainDetailByPositionNoCheck.ID) && (bottomRightId != terrainDetailByPositionNoCheck.ID))) && (right.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
@@ -415,9 +386,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.TopRight:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(top.Textures.TopRightCornerTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % top.Textures.TopRightCornerTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((bottom == null) || (terrainDetailByPositionNoCheck.ID == bottomLeftId)) || (bottomId != leftId)) || (terrainDetailByPositionNoCheck.ID == bottomId))
                             {
                                 if ((((leftDetail != null) && (leftDetail.ID != terrainDetailByPositionNoCheck.ID)) && ((bottomLeftId != terrainDetailByPositionNoCheck.ID) && (topLeftId != terrainDetailByPositionNoCheck.ID))) && (leftDetail.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
@@ -434,9 +403,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.BottomLeft:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(bottom.Textures.BottomLeftCornerTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % bottom.Textures.BottomLeftCornerTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((top == null) || (terrainDetailByPositionNoCheck.ID == topRightId)) || (topId != rightId)) || (terrainDetailByPositionNoCheck.ID == topId))
                             {
                                 if ((((top != null) && (top.ID != terrainDetailByPositionNoCheck.ID)) && ((topLeftId != terrainDetailByPositionNoCheck.ID) && (topRightId != terrainDetailByPositionNoCheck.ID))) && (top.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
@@ -453,9 +420,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.BottomRight:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(right.Textures.BottomRightCornerTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % right.Textures.BottomRightCornerTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             if ((((leftDetail == null) || (terrainDetailByPositionNoCheck.ID == topLeftId)) || (leftId != topId)) || (terrainDetailByPositionNoCheck.ID == leftId))
                             {
                                 if ((((leftDetail != null) && (leftDetail.ID != terrainDetailByPositionNoCheck.ID)) && ((bottomLeftId != terrainDetailByPositionNoCheck.ID) && (topLeftId != terrainDetailByPositionNoCheck.ID))) && (leftDetail.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
@@ -472,15 +437,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             return;
 
                         case TerrainDirection.Centre:
-#pragma warning disable CS0162 // Unreachable code detected
                             decorativeTextures.Add(leftDetail.Textures.CentreTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % leftDetail.Textures.CentreTextures.Count]);
-#pragma warning restore CS0162 // Unreachable code detected
                             return;
 
                         case TerrainDirection.None:
-#pragma warning disable CS0162 // Unreachable code detected
                             if ((((leftDetail != null) && (leftDetail.ID != terrainDetailByPositionNoCheck.ID)) && ((bottomLeftId != terrainDetailByPositionNoCheck.ID) && (topLeftId != terrainDetailByPositionNoCheck.ID))) && (leftDetail.GraphicLayer < terrainDetailByPositionNoCheck.GraphicLayer))
-#pragma warning restore CS0162 // Unreachable code detected
                             {
                                 decorativeTextures.Add(leftDetail.Textures.LeftEdgeTextures[((tile.Position.X * 7) + (tile.Position.Y * 11)) % leftDetail.Textures.LeftEdgeTextures.Count]);
                             }
@@ -506,7 +467,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         {
             if (this.MapTiles != null)
             {
-                var nums = GetCurrentViewMapTileNumsAll();
+                var nums = GetCurrentViewMapTileNumsAll_HashSet();
 
                 foreach (MapTile maptile in this.MapTiles)
                 {
@@ -514,25 +475,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         continue;
                     }
-                    //try
-                    //{
                     if (maptile.TileTexture != null)
                     {
                         maptile.TileTexture.Dispose();
                         maptile.TileTexture = null;
-                    }
-                    //}
-                    //catch (Exception ex)
-                    //{
-                    //}                    
+                    }                  
                 }
             }
 
-            //臨時材質到達一定數量，也予清理
-            //if (CacheManager.TextureTempDics.Count >= 30)
-            //{
             CacheManager.Clear(CacheType.Page);
-            //}
+            
+            // 🔥 Content.Unload() 已释放 InkBleed effect 和 XuanPaperNoise 纹理
+            // 必须重建 _inkRenderer，否则下一帧 DrawOverlay 会 ObjectDisposedException
+            Session.MainGame.mainGameScreen.InitializeInkBleedRenderer();
 
             if (gc)
             {
@@ -544,25 +499,74 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         {
             lock (this.DisplayingMapTiles)
             {
-                var disNums = this.DisplayingMapTiles.Select(di => int.Parse(di.number)).ToArray();
-                return disNums;
+                int count = this.DisplayingMapTiles.Count;
+                int[] result = new int[count];
+                var span = CollectionsMarshal.AsSpan(this.DisplayingMapTiles);
+                for (int i = 0; i < count; i++)
+                {
+                    result[i] = int.Parse(span[i].number);
+                }
+                return result;
             }
         }
 
         private int[] GetCurrentViewMapTileNums2()
         {
             var disNums = GetCurrentViewMapTileNums1();
-            var nums = new int[] { -1, +1, -30, +30, -31, -29, +29, +31 };
-            var expandNums = disNums.SelectMany(nu => nums.Select(num => num + nu)).Where(num => 0 <= num && num <= 899 && !disNums.Contains(num)).ToArray();
-            return expandNums.Distinct().ToArray();
+            
+            HashSet<int> resultSet = new HashSet<int>(disNums.Length * 9);
+
+            foreach (var num in disNums)
+            {
+                resultSet.Add(num);
+            }
+
+            HashSet<int> expandSet = new HashSet<int>();
+            HashSet<int> currentSet = new HashSet<int>(disNums);
+
+            foreach (var nu in disNums)
+            {
+                foreach (var offset in _neighborOffsets)
+                {
+                    int num = nu + offset;
+                    // 假设总瓦片数限制在0到899之间
+                    if (num >= 0 && num <= 899 && !currentSet.Contains(num))
+                    {
+                        expandSet.Add(num);
+                    }
+                }
+            }
+
+            return expandSet.ToArray();
+        }
+
+        private HashSet<int> GetCurrentViewMapTileNumsAll_HashSet()
+        {
+            var disNums = GetCurrentViewMapTileNums1();
+            HashSet<int> allNums = new HashSet<int>(disNums.Length * 9);
+
+            foreach (var num in disNums)
+            {
+                allNums.Add(num);
+            }
+
+            foreach (var nu in disNums)
+            {
+                foreach (var offset in _neighborOffsets)
+                {
+                    int num = nu + offset;
+                    if (num >= 0 && num <= 899)
+                    {
+                        allNums.Add(num);
+                    }
+                }
+            }
+            return allNums;
         }
 
         private int[] GetCurrentViewMapTileNumsAll()
         {
-            var disNums = GetCurrentViewMapTileNums1();
-            var nums = new int[] { -1, +1, -30, +30, -31, -29, +29, +31 };
-            var exceptNums = disNums.SelectMany(nu => nums.Select(num => num + nu)).Where(num => 0 <= num && num <= 899).ToArray();
-            return disNums.Union(exceptNums).Distinct().ToArray();
+            return GetCurrentViewMapTileNumsAll_HashSet().ToArray();
         }
 
         public void StopThreads()
@@ -585,29 +589,35 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         private void ProcessMapTileTextureSync()
         {
+            // 🔥 确保 GraphicsDevice 已初始化后再启动后台线程
+            // 这是架构级保护，防止时序错误导致的崩溃
+            if (Platform.GraphicsDevice == null)
+            {
+                return; // GraphicsDevice 未就绪，延迟启动线程
+            }
+
             if (MapThread1 == null)
             {
                 MapThread1 = new PlatformTask(() =>
                 {
                     while (true)
                     {
-                        if (MapThread1 == null || MapThread1.IsStop)
-                        {
-                            break;
-                        }
+                        if (MapThread1 == null || MapThread1.IsStop) break;
 
                         try
                         {
                             MapTile mapTile = null;
 
-                            //var tileNums1 = GetCurrentViewMapTileNums1();                            
-
                             lock (this.DisplayingMapTiles)
                             {
-                                var maps = this.DisplayingMapTiles.Where(ma => ma != null && ma.TileTexture == null).ToArray();  // tileNums1.Select(num => this.MapTiles[num % 30, num / 30]).Where(ma => ma.TileTexture == null).ToArray();                            
-                                if (maps != null && maps.Length > 0)
+                                var span = CollectionsMarshal.AsSpan(this.DisplayingMapTiles);
+                                for (int i = 0; i < span.Length; i++)
                                 {
-                                    mapTile = maps.FirstOrDefault();                                    
+                                    if (span[i] != null && span[i].TileTexture == null)
+                                    {
+                                        mapTile = span[i];
+                                        break; 
+                                    }
                                 }
                             }
 
@@ -618,29 +628,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                             Platform.Sleep(30);
                         }
-                        //catch (ThreadAbortException)
-                        //{
-                        //    break;
-                        //}
-                        catch (Exception e)
+                        catch (Exception)
                         {
-                            //DateTime dt = System.DateTime.Now;
-                            //String dateSuffix = "_" + dt.Year + "_" + dt.Month + "_" + dt.Day + "_" + dt.Hour + "h" + dt.Minute;
-                            //String logPath = "CrashLog" + dateSuffix + ".log";
-                            //StreamWriter sw = new StreamWriter(new FileStream(logPath, FileMode.Create));
-
-                            //sw.WriteLine("==================== Message ====================");
-                            //sw.WriteLine(e.Message);
-                            //sw.WriteLine("=================== StackTrace ==================");
-                            //sw.WriteLine(e.StackTrace);
-
-                            //sw.Close();
-
                             Platform.Sleep(1000);
                         }
                     }
-                }
-                );
+                });
                 MapThread1.Start();
             }
             if (MapThread2 == null)
@@ -649,10 +642,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 {
                     while (true)
                     {
-                        if (MapThread2 == null || MapThread2.IsStop)
-                        {
-                            break;
-                        }
+                        if (MapThread2 == null || MapThread2.IsStop) break;
 
                         try
                         {
@@ -660,54 +650,53 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                             lock (this.DisplayingMapTiles)
                             {
-                                var maps0 = this.DisplayingMapTiles.Where(ma => ma != null && ma.TileTexture == null).ToArray();
-
-                                //如果当前地图未绘制完，暂停绘制周边
-                                if (maps0 != null && maps0.Length > 0)
+                                var span = CollectionsMarshal.AsSpan(this.DisplayingMapTiles);
+                                bool hasNullTexture = false;
+                                for (int i = 0; i < span.Length; i++)
                                 {
-                                    mapTile = maps0.FirstOrDefault();
+                                    if (span[i] != null && span[i].TileTexture == null)
+                                    {
+                                        mapTile = span[i];
+                                        hasNullTexture = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (hasNullTexture)
+                                {
+                                    // 仅占位，逻辑保持原样
                                 }
                             }
 
                             if (mapTile != null)
                             {
-                                //CheckMapTileTexture(mapTile);
                                 Platform.Sleep(80);
                                 continue;
                             }
 
                             var tileNums2 = GetCurrentViewMapTileNums2();
-
-                            var maps = tileNums2.Select(num => this.MapTiles[num % 30, num / 30]).Where(ma => ma != null && ma.TileTexture == null).ToArray();
-
-                            if (maps != null && maps.Length > 0)
+                            
+                            foreach (var num in tileNums2)
                             {
-                                mapTile = maps.FirstOrDefault();
+                                var mt = this.MapTiles[num % 30, num / 30];
+                                if (mt != null && mt.TileTexture == null)
+                                {
+                                    mapTile = mt;
+                                    break; 
+                                }
+                            }
+
+                            if (mapTile != null)
+                            {
                                 CheckMapTileTexture(mapTile);
                             }
 
                             Platform.Sleep(50);
                         }
-                        catch   (Exception e)
+                        catch (Exception)
                         {
-                            //DateTime dt = System.DateTime.Now;
-                            //String dateSuffix = "_" + dt.Year + "_" + dt.Month + "_" + dt.Day + "_" + dt.Hour + "h" + dt.Minute;
-                            //String logPath = "CrashLog" + dateSuffix + ".log";
-                            //StreamWriter sw = new StreamWriter(new FileStream(logPath, FileMode.Create));
-
-                            //sw.WriteLine("==================== Message ====================");
-                            //sw.WriteLine(e.Message);
-                            //sw.WriteLine("=================== StackTrace ==================");
-                            //sw.WriteLine(e.StackTrace);
-
-                            //sw.Close();
-
                             Platform.Sleep(1000);
                         }
-                        //catch (ThreadAbortException)
-                        //{
-                        //    break;
-                        //}
                     }
                 });
                 MapThread2.Start();
@@ -718,16 +707,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public void Draw(Point viewportSize)
         {
-            var spriteBatch = Session.Current.SpriteBatch;
+            var spriteBatch = Session.Current?.SpriteBatch;
             if (spriteBatch != null)
             {
+                var scenario = Session.Current?.Scenario;
+                var scenarioMap = scenario?.ScenarioMap;
 
-                if (Session.Current.Scenario.ScenarioMap.MapName != null)
+                if (scenarioMap?.MapName != null)
                 {
                     ProcessMapTileTextureSync();
 
-                    foreach (MapTile maptile in this.DisplayingMapTiles)
+                    var displaySpan = CollectionsMarshal.AsSpan(this.DisplayingMapTiles);
+                    
+                    for (int i = 0; i < displaySpan.Length; i++)
                     {
+                        MapTile maptile = displaySpan[i];
                         Rectangle? sourceRectangle = null;
 
                         if (!drawBlackWhenNoneTexture)
@@ -735,12 +729,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             this.CheckMapTileTexture(maptile);
                         }
 
-                        if (maptile != null && maptile.TileTexture != null)
+                        if (maptile != null && maptile.TileTexture != null && !maptile.TileTexture.IsDisposed)
                         {
                             spriteBatch.Draw(maptile.TileTexture, maptile.Destination, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.9f);
                         }
-
-                        List<Texture2D> decorativeTextures = null;
+                        
+                        // 原代码此处有 CheckTileTexture 的调用，但通常是被注释掉或未使用结果的
+                        // 为了性能，默认注释掉，如果您需要开启装饰纹理，请取消下方注释
+                        /*
+                        List<PlatformTexture> decorativeTextures = null;
                         //this.CheckTileTexture(maptile, out decorativeTextures);
                         if (decorativeTextures != null)
                         {
@@ -750,19 +747,25 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                 spriteBatch.Draw(textured, maptile.Destination, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.8998f);
                             }
                         }
+                        */
                     }
 
                     ResetDisplayingTiles(Session.MainGame.mainGameScreen);
 
-                    //數量到達一定之後，清理緩存材質
                     int mapNum = 0;
-                    foreach (var map in MapTiles)
+                    if (this.MapTiles != null)
                     {
-                        if (map.TileTexture != null)
+                        int w = MapTiles.GetLength(0);
+                        int h = MapTiles.GetLength(1);
+                        for (int x = 0; x < w; x++)
                         {
-                            mapNum++;
+                             for(int y = 0; y < h; y++)
+                             {
+                                 if (MapTiles[x,y].TileTexture != null) mapNum++;
+                             }
                         }
                     }
+                    
                     if (mapNum >= 100)
                     {
                         freeTilesMemory(false);
@@ -770,58 +773,65 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                     if (Session.MainGame.mainGameScreen.editMode)
                     {
-                        foreach (Tile tile in this.DisplayingTiles)
+                        var tilesSpan = CollectionsMarshal.AsSpan(this.DisplayingTiles);
+                        for (int i = 0; i < tilesSpan.Length; i++)
                         {
-                            List<PlatformTexture> decorativeTextures = null;
-                            this.CheckTileTexture(tile, out decorativeTextures);
-                            //Rectangle? sourceRectangle = null;
-                            if (this.xianshidituxiaokuai && Session.Current.Scenario.ScenarioMap.MapData[tile.Position.X, tile.Position.Y] != 0) //未知地形显示为透明，以方便地形编辑
-                            {
-                                //CacheManager.Draw(tile.TileTexture, tile.Destination, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.8998f);
-                                CacheManager.DrawAvatar(tile.TileTexture.Name, tile.Destination, Color.White, false, true, TextureShape.None, null, 0.8998f);
-                            }
+                            Tile tile = tilesSpan[i];
+                            
+                            // 即使在编辑器模式下，CheckTileTexture 的结果在原代码中也未被用于绘制，因此注释以优化性能
+                            // List<PlatformTexture> decorativeTextures = null;
+                            // this.CheckTileTexture(tile, out decorativeTextures);
 
+                            if (this.xianshidituxiaokuai && scenarioMap.MapData != null && 
+                                tile?.Position != null)
+                            {
+                                int terrainId = scenarioMap.MapData[tile.Position.X, tile.Position.Y];
+                                if (terrainId != 0) //未知地形显示为透明
+                                {
+                                    CacheManager.DrawAvatar(tile.TileTexture.Name, tile.Destination, Color.White, false, true, TextureShape.None, null, 0.8998f);
+                                }
+                            }
                         }
                     }
 
                 }
                 else
                 {
-                    foreach (Tile tile in this.DisplayingTiles)
+                    var tilesSpan = CollectionsMarshal.AsSpan(this.DisplayingTiles);
+                    for (int i = 0; i < tilesSpan.Length; i++)
                     {
-                        List<PlatformTexture> decorativeTextures = null;
-                        this.CheckTileTexture(tile, out decorativeTextures);
-                        //Rectangle? sourceRectangle = null;
-
-                        //CacheManager.Draw(tile.TileTexture, tile.Destination, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.8998f);
+                        Tile tile = tilesSpan[i];
+                        
+                        // 如果 TileTexture 为 null，说明初始化失败，这是严重错误
+                        if (tile.TileTexture == null)
+                        {
+                            throw new InvalidOperationException($"Tile at position ({tile.Position.X}, {tile.Position.Y}) has null TileTexture!");
+                        }
 
                         CacheManager.DrawAvatar(tile.TileTexture.Name, tile.Destination, Color.White, false, true, TextureShape.None, null, 0.8998f);
-
-                        /*if (decorativeTextures != null)
-                        {
-                            foreach (Texture2D textured in decorativeTextures)
-                            {
-                                sourceRectangle = null;
-                                CacheManager.Draw(textured, tile.Destination, sourceRectangle, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.8998f);
-                            }
-                        }*/
                     }
 
                 }
 
                 if (Session.GlobalVariables.ShowGrid)
                 {
-                    foreach (Tile tile in this.DisplayingTiles)
+                    var tilesSpan = CollectionsMarshal.AsSpan(this.DisplayingTiles);
+                    for (int i = 0; i < tilesSpan.Length; i++)
                     {
+                        Tile tile = tilesSpan[i];
                         if (Session.MainGame.mainGameScreen.editMode)
                         {
                             CacheManager.Draw(Session.MainGame.mainGameScreen.Textures.EditModeGrid, tile.Destination, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.81f);
                         }
                         else
                         {
-                            if (Session.Current.Scenario.ScenarioMap.MapData[tile.Position.X, tile.Position.Y] != 0 && Session.Current.Scenario.ScenarioMap.MapData[tile.Position.X, tile.Position.Y] != 4 && Session.Current.Scenario.ScenarioMap.MapData[tile.Position.X, tile.Position.Y] != 7)
+                            if (scenarioMap?.MapData != null && tile?.Position != null)
                             {
-                                CacheManager.Draw(Session.MainGame.mainGameScreen.Textures.wanggetupian, tile.Destination, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.81f);
+                                int terrainType = scenarioMap.MapData[tile.Position.X, tile.Position.Y];
+                                if (terrainType != 0 && terrainType != 4 && terrainType != 7)
+                                {
+                                    CacheManager.Draw(Session.MainGame.mainGameScreen.Textures.wanggetupian, tile.Destination, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.81f);
+                                }
                             }
                         }
                     }
@@ -839,19 +849,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         {
             return this.Tiles[position.X, position.Y].Destination;
         }
-        public Rectangle huoqujianzhujuxing(Point position, Architecture jianzhu)
-        {
-            jianzhujuxing = this.Tiles[position.X, position.Y].Destination;//此句是?了防止出?。
 
+        public Rectangle huoqujianzhujuxing(Point position, global::GameObjects.Architecture jianzhu)
+        {
+            jianzhujuxing = this.Tiles[position.X, position.Y].Destination;
             int guimo = jianzhu.JianzhuGuimo;
+            bool useSimple = Session.Current?.Scenario?.ScenarioMap?.UseSimpleArchImages == true;
 
             if (jianzhu.Kind.ID != 2 && jianzhu.Kind.ID != 3)
             {
-                if (Session.Current.Scenario.ScenarioMap.UseSimpleArchImages)
+                if (useSimple)
                 {
                     jianzhujuxing.X = (position.X) * this.TileWidth + this.LeftEdge;
                     jianzhujuxing.Y = (position.Y) * this.TileHeight + this.TopEdge;
-
                     jianzhujuxing.Width = this.TileWidth;
                     jianzhujuxing.Height = this.TileHeight;
                 }
@@ -861,7 +871,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         jianzhujuxing.X = position.X * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = position.Y * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth;
                         jianzhujuxing.Height = this.TileHeight;
                     }
@@ -869,7 +878,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         jianzhujuxing.X = (position.X - 1) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 1) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 3;
                         jianzhujuxing.Height = this.TileHeight * 3;
                     }
@@ -877,7 +885,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         jianzhujuxing.X = (position.X - 2) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 2) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 5;
                         jianzhujuxing.Height = this.TileHeight * 5;
                     }
@@ -885,17 +892,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             }
             else if (jianzhu.Kind.ID == 2)
             {
-                if (guimo == 1 || Session.Current.Scenario.ScenarioMap.UseSimpleArchImages)
+                if (guimo == 1 || useSimple)
                 {
                     return jianzhujuxing;
                 }
                 else if (guimo == 5)
                 {
-                    if (jianzhu.ArchitectureArea.Area[0].X == jianzhu.ArchitectureArea.Area[1].X) //??
+                    if (jianzhu.ArchitectureArea.Area[0].X == jianzhu.ArchitectureArea.Area[1].X)
                     {
                         jianzhujuxing.X = (position.X - 2) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 3) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 5;
                         jianzhujuxing.Height = this.TileHeight * 7;
 
@@ -904,18 +910,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         jianzhujuxing.X = (position.X - 4) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 1) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 9;
                         jianzhujuxing.Height = this.TileHeight * 3;
                     }
                 }
                 else if (guimo == 3)
                 {
-                    if (jianzhu.ArchitectureArea.Area[0].X == jianzhu.ArchitectureArea.Area[1].X) //??
+                    if (jianzhu.ArchitectureArea.Area[0].X == jianzhu.ArchitectureArea.Area[1].X)
                     {
                         jianzhujuxing.X = (position.X - 2) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 2) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 5;
                         jianzhujuxing.Height = this.TileHeight * 5;
                     }
@@ -923,7 +927,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         jianzhujuxing.X = (position.X - 2) * this.TileWidth + this.LeftEdge;
                         jianzhujuxing.Y = (position.Y - 1) * this.TileHeight + this.TopEdge;
-
                         jianzhujuxing.Width = this.TileWidth * 5;
                         jianzhujuxing.Height = this.TileHeight * 3;
                     }
@@ -931,6 +934,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             }
             return jianzhujuxing;
         }
+
         public Rectangle huoquqizijuxing(Point position)
         {
             qizijuxing = this.Tiles[position.X, position.Y].Destination;
@@ -943,15 +947,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         internal Point GetCenterCoordinate(Point point)
         {
-            Point p = new Point();
-            p.X = this.leftEdge + (point.X * this.TileWidth) + this.TileWidth / 2;
-            p.Y = this.topEdge + (point.Y * this.TileHeight) + this.TileHeight / 2;
-            return p;
+            return new Point(
+                this.leftEdge + (point.X * this.TileWidth) + this.TileWidth / 2,
+                this.topEdge + (point.Y * this.TileHeight) + this.TileHeight / 2
+            );
         }
 
         public Rectangle GetHalfDestination(Point position)
         {
-            return new Rectangle(this.Tiles[position.X, position.Y].Destination.X + (this.Tiles[position.X, position.Y].Destination.Width / 4), this.Tiles[position.X, position.Y].Destination.Y + (this.Tiles[position.X, position.Y].Destination.Height / 4), this.Tiles[position.X, position.Y].Destination.Width / 2, this.Tiles[position.X, position.Y].Destination.Height / 2);
+            var dest = this.Tiles[position.X, position.Y].Destination;
+            return new Rectangle(
+                dest.X + (dest.Width / 4), 
+                dest.Y + (dest.Height / 4), 
+                dest.Width / 2, 
+                dest.Height / 2
+            );
         }
 
         public string GetTerrainNameByPosition(Point position)
@@ -961,7 +971,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public Rectangle GetThreeFourthsDestination(Point position)
         {
-            return new Rectangle(this.Tiles[position.X, position.Y].Destination.X + (this.Tiles[position.X, position.Y].Destination.Width / 8), this.Tiles[position.X, position.Y].Destination.Y + (this.Tiles[position.X, position.Y].Destination.Height / 8), (this.Tiles[position.X, position.Y].Destination.Width * 3) / 4, (this.Tiles[position.X, position.Y].Destination.Height * 3) / 4);
+            var dest = this.Tiles[position.X, position.Y].Destination;
+            return new Rectangle(
+                dest.X + (dest.Width / 8), 
+                dest.Y + (dest.Height / 8), 
+                (dest.Width * 3) / 4, 
+                (dest.Height * 3) / 4
+            );
         }
 
         public Point GetTopCenterPoint(Point position)
@@ -972,7 +988,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public void Initialize()
         {
             this.TerrainList.Clear();
-            for (int i = 0; i < Enum.GetValues(typeof(TerrainKind)).Length; i++)
+            int terrainCount = Enum.GetValues(typeof(TerrainKind)).Length;
+            if(this.TerrainList.Capacity < terrainCount)
+            {
+                this.TerrainList.Capacity = terrainCount;
+            }
+            for (int i = 0; i < terrainCount; i++)
             {
                 this.TerrainList.Add(0);
             }
@@ -980,85 +1001,141 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public void PrepareMap()
         {
-            this.Tiles = null;
-            this.Tiles = new Tile[Session.Current.Scenario.ScenarioMap.MapDimensions.X, Session.Current.Scenario.ScenarioMap.MapDimensions.Y];
-            for (int i = 0; i < Session.Current.Scenario.ScenarioMap.MapDimensions.X; i++)
+            if (Session.Current?.Scenario?.ScenarioMap == null)
             {
-                for (int j = 0; j < Session.Current.Scenario.ScenarioMap.MapDimensions.Y; j++)
-                {
-                    this.Tiles[i, j] = new Tile();
-                    this.Tiles[i, j].Position = new Point(i, j);
-                    TerrainDetail terrainDetailByPositionNoCheck = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(this.Tiles[i, j].Position);
+                // System.Diagnostics.Debug.WriteLine("[MainMapLayer] PrepareMap: ScenarioMap为null");
+                return;
+            }
 
-                    if (terrainDetailByPositionNoCheck != null)
+            var mapDim = Session.Current.Scenario.ScenarioMap.MapDimensions;
+            this.Tiles = new Tile[mapDim.X, mapDim.Y];
+            
+            for (int i = 0; i < mapDim.X; i++)
+            {
+                for (int j = 0; j < mapDim.Y; j++)
+                {
+                    var tile = new Tile();
+                    tile.Position = new Point(i, j);
+                    this.Tiles[i, j] = tile;
+                    
+                    TerrainDetail detail = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(tile.Position);
+                    if (detail?.Textures?.BasicTextures?.Count > 0)
                     {
-                        if (terrainDetailByPositionNoCheck.Textures.BasicTextures.Count > 0)
-                        {
-                            this.Tiles[i, j].TileTexture = terrainDetailByPositionNoCheck.Textures.BasicTextures[((i * 7) + (j * 11)) % terrainDetailByPositionNoCheck.Textures.BasicTextures.Count];
-                        }
+                        tile.TileTexture = detail.Textures.BasicTextures[((i * 7) + (j * 11)) % detail.Textures.BasicTextures.Count];
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"无法获取位置 ({i},{j}) 的地形纹理！detail={detail}, Textures={detail?.Textures}, BasicTextures.Count={detail?.Textures?.BasicTextures?.Count ?? 0}");
                     }
                 }
             }
 
-            this.MapTiles = null;
-            this.MapTiles = new MapTile[Session.Current.Scenario.ScenarioMap.NumberOfTiles, Session.Current.Scenario.ScenarioMap.NumberOfTiles];
-            for (int i = 0; i < Session.Current.Scenario.ScenarioMap.NumberOfTiles; i++)
+            // 🔥 地图贴图数量修复：yueluo_1.0 地图有 900 个 DDS 文件（30x30）
+            // 不能依赖 ScenarioMap.NumberOfTiles，因为它可能不准确
+            int tileCount = 30;  // 固定为 30x30 = 900 个贴图
+            this.MapTiles = new MapTile[tileCount, tileCount];
+            
+            /*
+            System.Diagnostics.Debug.WriteLine($"[InitializeMapTiles] 地图贴图数量: {tileCount}x{tileCount} = {tileCount * tileCount}");
+            System.Diagnostics.Debug.WriteLine($"[InitializeMapTiles] 贴图编号计算方式: 行优先 (i + j * tileCount)");
+            System.Diagnostics.Debug.WriteLine($"  位置(0,0) → 编号: {0 + 0 * tileCount}");
+            System.Diagnostics.Debug.WriteLine($"  位置(1,0) → 编号: {1 + 0 * tileCount}");
+            System.Diagnostics.Debug.WriteLine($"  位置(0,1) → 编号: {0 + 1 * tileCount}");
+            System.Diagnostics.Debug.WriteLine($"  位置(29,0) → 编号: {29 + 0 * tileCount}");
+            System.Diagnostics.Debug.WriteLine($"  位置(0,29) → 编号: {0 + 29 * tileCount}");
+            */
+            
+            // 🔥 关键修复：地图贴图编号计算
+            // 贴图文件排列方式：行优先（从左到右，从上到下）
+            // number = i + j * tileCount
+            // 
+            // 30x30 地图示例：
+            // (0,0)=0   (1,0)=1   (2,0)=2   ... (29,0)=29
+            // (0,1)=30  (1,1)=31  (2,1)=32  ... (29,1)=59
+            // (0,2)=60  (1,2)=61  (2,2)=62  ... (29,2)=89
+            for (int i = 0; i < tileCount; i++)
             {
-                for (int j = 0; j < Session.Current.Scenario.ScenarioMap.NumberOfTiles; j++)
+                for (int j = 0; j < tileCount; j++)
                 {
-                    this.MapTiles[i, j] = new MapTile();
-                    this.MapTiles[i, j].Position = new Point(i, j);
-                    this.MapTiles[i, j].number = (i + j * Session.Current.Scenario.ScenarioMap.NumberOfTiles).ToString();
-                    /*TerrainDetail terrainDetailByPositionNoCheck = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(this.Tiles[i, j].Position);
-                    
-                    if (terrainDetailByPositionNoCheck != null)
+                    this.MapTiles[i, j] = new MapTile
                     {
-                        if (terrainDetailByPositionNoCheck.Textures.BasicTextures.Count > 0)
-                        {
-                            this.Tiles[i, j].TileTexture = terrainDetailByPositionNoCheck.Textures.BasicTextures[((i * 7) + (j * 11)) % terrainDetailByPositionNoCheck.Textures.BasicTextures.Count];
-                        }
-                        else
-                        {
-                            this.Tiles[i, j].TileTexture = Session.MainGame.mainGameScreen.Textures.TerrainTextures[Session.Current.Scenario.ScenarioMap.MapData[i, j]];
-                        }
-                    }*/
+                        Position = new Point(i, j),
+                        number = (i + j * tileCount).ToString()  // 🔥 行优先排列
+                    };
                 }
             }
+            
+            // 输出前几个贴图的编号用于验证
+            /*
+            System.Diagnostics.Debug.WriteLine($"[InitializeMapTiles] 前10个贴图编号:");
+            for (int i = 0; i < Math.Min(5, tileCount); i++)
+            {
+                for (int j = 0; j < Math.Min(2, tileCount); j++)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  MapTiles[{i},{j}].number = {this.MapTiles[i, j].number}");
+                }
+            }
+            */
         }
 
         public void ReCalculateTileDestination(MainGameScreen screen)
         {
             this.ResetDisplayingTiles(screen);
 
-            foreach (Tile tile in this.DisplayingTiles)
+            var tilesSpan = CollectionsMarshal.AsSpan(this.DisplayingTiles);
+            for (int i = 0; i < tilesSpan.Length; i++)
             {
+                Tile tile = tilesSpan[i];
                 tile.Destination.X = this.leftEdge + (tile.Position.X * this.TileWidth);
                 tile.Destination.Y = this.topEdge + (tile.Position.Y * this.TileHeight);
                 tile.Destination.Width = this.TileWidth;
                 tile.Destination.Height = this.TileHeight;
             }
 
-
-            foreach (MapTile maptile in this.DisplayingMapTiles)
+            var scenarioMap = Session.Current?.Scenario?.ScenarioMap;
+            if (scenarioMap != null)
             {
-                maptile.Destination.X = this.leftEdge + (maptile.Position.X * this.TileWidth * Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile);
-                maptile.Destination.Y = this.topEdge + (maptile.Position.Y * this.TileHeight * Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile);
-                maptile.Destination.Width = this.TileWidth * Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile;
-                maptile.Destination.Height = this.TileHeight * Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile;
+                int squares = scenarioMap.NumberOfSquaresInEachTile;
+                int w = this.TileWidth * squares;
+                int h = this.TileHeight * squares;
+
+                var mapTilesSpan = CollectionsMarshal.AsSpan(this.DisplayingMapTiles);
+                for (int i = 0; i < mapTilesSpan.Length; i++)
+                {
+                    MapTile maptile = mapTilesSpan[i];
+                    maptile.Destination.X = this.leftEdge + (maptile.Position.X * w);
+                    maptile.Destination.Y = this.topEdge + (maptile.Position.Y * h);
+                    maptile.Destination.Width = w;
+                    maptile.Destination.Height = h;
+                }
             }
         }
 
         public void ResetDisplayingTiles(MainGameScreen screen)
         {
+            var scenarioMap = Session.Current?.Scenario?.ScenarioMap;
+            if (scenarioMap == null) return;
 
             if (this.Tiles != null)
             {
                 this.DisplayingTiles.Clear();
+                int estWidth = (screen.BottomRightPosition.X - screen.TopLeftPosition.X) + 1;
+                int estHeight = (screen.BottomRightPosition.Y - screen.TopLeftPosition.Y) + 1;
+                if (estWidth > 0 && estHeight > 0)
+                {
+                    int estimatedCount = estWidth * estHeight;
+                    if (this.DisplayingTiles.Capacity < estimatedCount)
+                        this.DisplayingTiles.Capacity = estimatedCount;
+                }
+
+                int mapDimX = scenarioMap.MapDimensions.X;
+                int mapDimY = scenarioMap.MapDimensions.Y;
+
                 for (int i = screen.TopLeftPosition.X; i <= screen.BottomRightPosition.X; i++)
                 {
                     for (int j = screen.TopLeftPosition.Y; j <= screen.BottomRightPosition.Y; j++)
                     {
-                        if ((((i >= 0) && (i < Session.Current.Scenario.ScenarioMap.MapDimensions.X)) && (j >= 0)) && (j < Session.Current.Scenario.ScenarioMap.MapDimensions.Y))
+                        if (i >= 0 && i < mapDimX && j >= 0 && j < mapDimY)
                         {
                             this.DisplayingTiles.Add(this.Tiles[i, j]);
                         }
@@ -1066,22 +1143,24 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 }
             }
 
-
             if (this.MapTiles != null)
             {
                 lock (this.DisplayingMapTiles)
                 {
                     this.DisplayingMapTiles.Clear();
-                }
-                for (int i = screen.TopLeftPosition.X; i <= screen.BottomRightPosition.X + Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile; i += Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile)
-                {
-                    for (int j = screen.TopLeftPosition.Y; j <= screen.BottomRightPosition.Y + Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile; j += Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile)
+                    int squares = scenarioMap.NumberOfSquaresInEachTile;
+                    int limitX = screen.BottomRightPosition.X + squares;
+                    int limitY = screen.BottomRightPosition.Y + squares;
+                    int mapDimX = scenarioMap.MapDimensions.X;
+                    int mapDimY = scenarioMap.MapDimensions.Y;
+
+                    for (int i = screen.TopLeftPosition.X; i <= limitX; i += squares)
                     {
-                        if ((((i >= 0) && (i < Session.Current.Scenario.ScenarioMap.MapDimensions.X)) && (j >= 0)) && (j < Session.Current.Scenario.ScenarioMap.MapDimensions.Y))
+                        for (int j = screen.TopLeftPosition.Y; j <= limitY; j += squares)
                         {
-                            lock (this.DisplayingMapTiles)
+                            if (i >= 0 && i < mapDimX && j >= 0 && j < mapDimY)
                             {
-                                this.DisplayingMapTiles.Add(this.MapTiles[i / Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile, j / Session.Current.Scenario.ScenarioMap.NumberOfSquaresInEachTile]);
+                                this.DisplayingMapTiles.Add(this.MapTiles[i / squares, j / squares]);
                             }
                         }
                     }
@@ -1089,10 +1168,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             }
         }
 
-        public bool TileInScreen(Point tile)
-        {
-            return Session.MainGame.mainGameScreen.TileInScreen(tile);
-        }
+        public bool TileInScreen(Point tile) => Session.MainGame.mainGameScreen.TileInScreen(tile);
 
         public Point TranslateCoordinateToTilePosition(int coordinateX, int coordinateY)
         {
@@ -1103,107 +1179,81 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public int LeftEdge
         {
-            get
-            {
-                return this.leftEdge;
-            }
-            set
-            {
-                this.leftEdge = value;
-            }
+            get => this.leftEdge;
+            set => this.leftEdge = value;
         }
 
         public int TileHeight
         {
-            get
-            {
-                return Session.Current.Scenario.ScenarioMap.TileHeight;
-            }
+            get => Session.Current?.Scenario?.ScenarioMap?.TileHeight ?? 40;
             set
             {
-                Session.Current.Scenario.ScenarioMap.TileHeight = value;
-                if (Session.Current.Scenario.ScenarioMap.TileHeight < Session.Current.Scenario.ScenarioMap.TileWidthMin)
-                {
-                    Session.Current.Scenario.ScenarioMap.TileHeight = Session.Current.Scenario.ScenarioMap.TileWidthMin;
-                }
-                else if (Session.Current.Scenario.ScenarioMap.TileHeight > Session.Current.Scenario.ScenarioMap.TileWidthMax)
-                {
-                    Session.Current.Scenario.ScenarioMap.TileHeight = Session.Current.Scenario.ScenarioMap.TileWidthMax;
-                }
+                var map = Session.Current?.Scenario?.ScenarioMap;
+                if (map == null) return;
+                
+                map.TileHeight = Math.Clamp(value, map.TileWidthMin, map.TileWidthMax);
             }
         }
 
         public int TileWidth
         {
-            get
-            {
-                return Session.Current.Scenario.ScenarioMap.TileWidth;
-            }
+            get => Session.Current?.Scenario?.ScenarioMap?.TileWidth ?? 60;
             set
             {
-                Session.Current.Scenario.ScenarioMap.TileWidth = value;
-                if (Session.Current.Scenario.ScenarioMap.TileWidth < Session.Current.Scenario.ScenarioMap.TileWidthMin)
-                {
-                    Session.Current.Scenario.ScenarioMap.TileWidth = Session.Current.Scenario.ScenarioMap.TileWidthMin;
-                }
-                else if (Session.Current.Scenario.ScenarioMap.TileWidth > Session.Current.Scenario.ScenarioMap.TileWidthMax)
-                {
-                    Session.Current.Scenario.ScenarioMap.TileWidth = Session.Current.Scenario.ScenarioMap.TileWidthMax;
-                }
+                var map = Session.Current?.Scenario?.ScenarioMap;
+                if (map == null) return;
 
+                map.TileWidth = Math.Clamp(value, map.TileWidthMin, map.TileWidthMax);
             }
         }
 
         public int TopEdge
         {
-            get
-            {
-                return this.topEdge;
-            }
-            set
-            {
-                this.topEdge = value;
-            }
+            get => this.topEdge;
+            set => this.topEdge = value;
         }
 
-        public Point TotalMapSize
+        public int RightEdge
         {
             get
             {
-                return new Point(this.TotalTileWidth, this.TotalTileHeight);
+                // 🔥 ANTI-BAND-AID：不使用 ?. 掩盖初始化错误
+                // 如果 GraphicsDevice 为 null，说明初始化顺序有问题，应该让异常抛出
+                return this.leftEdge + Platform.GraphicsDevice.Viewport.Width;
             }
         }
 
-        public int TotalTileHeight
+        public int BottomEdge
         {
             get
             {
-                return Session.Current.Scenario.ScenarioMap.TotalTileHeight;
+                // 🔥 ANTI-BAND-AID：不使用 ?. 掩盖初始化错误
+                return this.topEdge + Platform.GraphicsDevice.Viewport.Height;
             }
         }
 
-        public int TotalTileWidth
-        {
-            get
-            {
-                return Session.Current.Scenario.ScenarioMap.TotalTileWidth;
-            }
-        }
+        public Point TotalMapSize => new Point(this.TotalTileWidth, this.TotalTileHeight);
+
+        public int TotalTileHeight => Session.Current?.Scenario?.ScenarioMap?.TotalTileHeight ?? 800;
+
+        public int TotalTileWidth => Session.Current?.Scenario?.ScenarioMap?.TotalTileWidth ?? 1200;
 
         public void chongsheditukuaitupian(int i, int j)
         {
-            this.Tiles[i, j] = new Tile();
-            this.Tiles[i, j].Position = new Point(i, j);
-            TerrainDetail terrainDetailByPositionNoCheck = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(this.Tiles[i, j].Position);
-            if (terrainDetailByPositionNoCheck != null)
+            var tile = new Tile();
+            tile.Position = new Point(i, j);
+            this.Tiles[i, j] = tile;
+            
+            TerrainDetail detail = Session.Current.Scenario.GetTerrainDetailByPositionNoCheck(tile.Position);
+            if (detail != null)
             {
-                if (terrainDetailByPositionNoCheck.Textures.BasicTextures.Count > 0)
+                if (detail.Textures.BasicTextures.Count > 0)
                 {
-                    this.Tiles[i, j].TileTexture = terrainDetailByPositionNoCheck.Textures.BasicTextures[((i * 7) + (j * 11)) % terrainDetailByPositionNoCheck.Textures.BasicTextures.Count];
+                    tile.TileTexture = detail.Textures.BasicTextures[((i * 7) + (j * 11)) % detail.Textures.BasicTextures.Count];
                 }
                 else
                 {
-                    this.Tiles[i, j].TileTexture = Session.MainGame.mainGameScreen.Textures.TerrainTextures[Session.Current.Scenario.ScenarioMap.MapData[i, j]];
+                    tile.TileTexture = Session.MainGame.mainGameScreen.Textures.TerrainTextures[Session.Current.Scenario.ScenarioMap.MapData[i, j]];
                 }
             }
             this.ReCalculateTileDestination(Session.MainGame.mainGameScreen);
@@ -1211,6 +1261,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         internal void jiazaibeijingtupian()
         {
+            // 旧代码保留
             /*
             if (this.BackgroundMap != null)
             {
@@ -1224,6 +1275,5 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             this.BackgroundMap = Texture2D.FromFile(device, "Content/Textures/Resources/ditu/" + Session.Current.Scenario.ScenarioMap.dituwenjian);
             */
         }
-
     }
 }

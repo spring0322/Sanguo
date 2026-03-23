@@ -8,8 +8,11 @@ namespace GameObjects.SectionDetail
     [DataContract]
     public class SectionAIDetailTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, SectionAIDetail> SectionAIDetails = new Dictionary<int, SectionAIDetail>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, SectionAIDetail>))]
+        public Dictionary<int, SectionAIDetail> SectionAIDetails = [];
 
         public bool AddSectionAIDetail(SectionAIDetail sectionAIDetail)
         {
@@ -71,6 +74,9 @@ namespace GameObjects.SectionDetail
 
         public void LoadFromString(SectionAIDetailTable allSectionAIDetails, string sectionAIDetailIDs)
         {
+            // 🔥 防止 STJ 反序列化后的 null 导致崩溃
+            if (string.IsNullOrEmpty(sectionAIDetailIDs)) return;
+            
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = sectionAIDetailIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             SectionAIDetail detail = null;

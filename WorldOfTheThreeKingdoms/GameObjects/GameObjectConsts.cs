@@ -1,4 +1,5 @@
 ﻿using System;
+using Zhsan.GameLogic.Config;
 
 
 namespace GameObjects
@@ -63,7 +64,7 @@ namespace GameObjects
         public const int ArchitectureCommerceScaleUnit = 150;
         public const int ArchitectureCounterDamageMultiple = 15;
         public const int ArchitectureCriticalMultiple = 3;
-        public const int ArchitectureDamageConst = 10;
+        public static int ArchitectureDamageConst => ConfigManager.Balance.Architecture.DamageConst;
         public const double ArchitectureDominationGoodRate = 0.8;
         public const double ArchitectureDominationOKRate = 0.7;
         public const double ArchitectureDominationPoorRate = 0.5;
@@ -254,7 +255,7 @@ namespace GameObjects
         public static int FindConflictionMaxPathLength = 50;
         public static int FindMovableDestinationMaxCheckCount = 500;
         public const int FireCreditDivisor = 40;
-        public const float FireDamageDivisor = 200f;
+        public static float FireDamageDivisor => ConfigManager.Balance.Combat.FireDamageDivisor;
         public const int FireExtinguishChanceConst = 20;
         public const int FireSpreadChanceOnForestConst = 10;
         public const int FireSpreadChanceOnGrasslandConst = 4;
@@ -267,7 +268,7 @@ namespace GameObjects
         public const int FoodLackDivisor = 6;
         public const int FoodMaxConst = 0x989680;
         public const int FoodNormalConst = 3;
-        public const float FoodReduceDayRate = 0.001f;
+        public static float FoodReduceDayRate => ConfigManager.Balance.Rate.FoodReduceDayRate;
         public const int FoodShortageConst = 1;
         public const int FoodShortageDivisor = 4;
         public const int FoodTransferLevelConst = 3;
@@ -322,7 +323,7 @@ namespace GameObjects
         public const int InternalSurplusPopulationUnit = 0x2710;
         public const float InternalSurplusRateMax = 1f;
         public const float InternalSurplusRateMin = 0.2f;
-        public const float InternalSurplusRateUnit = 0.001f;
+        public static float InternalSurplusRateUnit => ConfigManager.Balance.Internal.SurplusRateUnit;
         public const int InternalTechniquePointMultiple = 100;
         public const int IntTripple = 3;
         public const int InvestigateCreditConst = 150;

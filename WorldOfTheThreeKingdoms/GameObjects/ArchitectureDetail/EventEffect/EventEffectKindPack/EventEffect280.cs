@@ -29,7 +29,7 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
         {
             FactionList factionlist = Session.Current.Scenario.Factions;
             Faction oldFaction = person .BelongedFaction ;
-            Faction mergeFaction = factionlist.GetGameObject(mergeFactionID) as Faction;
+            Faction mergeFaction = (factionlist.GetGameObject(mergeFactionID) is Faction ? (Faction)factionlist.GetGameObject(mergeFactionID) : null);
 
             if (oldFaction != null && mergeFaction != null && person == oldFaction.Leader)
             {
@@ -44,4 +44,5 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
 
     }
 }
+
 

@@ -8,8 +8,11 @@ namespace GameObjects.Conditions
     [DataContract]
     public class ConditionTable
     {
+        // 🔥 关键修复：CommonData.json 使用字符串键，需要转换为 int 键
+        // 日期：2026-03-20
         [DataMember]
-        public Dictionary<int, Condition> Conditions = new Dictionary<int, Condition>();
+        [System.Text.Json.Serialization.JsonConverter(typeof(WorldOfTheThreeKingdoms.Serialization.SystemTextJson.LegacyDictionaryConverter<int, Condition>))]
+        public Dictionary<int, Condition> Conditions = [];
 
         public bool AddCondition(Condition influence)
         {
@@ -46,6 +49,10 @@ namespace GameObjects.Conditions
         public List<string> LoadFromString(ConditionTable allConditions, string conditionIDs)
         {
             List<string> errorMsg = new List<string>();
+            if (string.IsNullOrEmpty(conditionIDs))
+            {
+                return errorMsg;
+            }
 
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = conditionIDs.Split(separator, StringSplitOptions.RemoveEmptyEntries);

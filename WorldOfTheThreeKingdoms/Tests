@@ -1,0 +1,193 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using Newtonsoft.Json;
+using WorldOfTheThreeKingdoms.Serialization;
+using GameObjects;
+using Tools;
+
+namespace WorldOfTheThreeKingdoms.Tests
+{
+    /// <summary>
+    /// SimpleSerializer 性能基准测试
+    /// 比较 System.Text.Json vs Newtonsoft.Json 的性能差异
+    /// </summary>
+    public class PerformanceBenchmark
+    {
+        private const int ITERATIONS = 1000;
+        private const int WARMUP_ITERATIONS = 100;
+        
+        public static void RunBenchmark()
+        {
+            Console.WriteLine("=== SimpleSerializer 性能基准测试 ===");
+            Console.WriteLine($"测试迭代次数: {ITERATIONS}");
+            Console.WriteLine($"预热迭代次数: {WARMUP_ITERATIONS}");
+            Console.WriteLine();
+            
+            // 创建测试数据
+            var testData = CreateTestData();
+            
+            // 预热
+            Console.WriteLine("预热中...");
+            for (int i = 0; i < WARMUP_ITERATIONS; i++)
+            {
+                var _ = SimpleSerializer.SerializeJson(testData);
+                var __ = Newtonsoft.Json.JsonConvert.SerializeObject(testData);
+            }
+            
+            Console.WriteLine("开始性能测试...");
+            Console.WriteLine();
+            
+            // 测试序列化性能
+            TestSerialization(testData);
+            
+            // 测试反序列化性能
+            var stjJson = SimpleSerializer.SerializeJson(testData);
+            var newtonsoftJson = Newtonsoft.Json.JsonConvert.SerializeObject(testData);
+            
+            TestDeserialization<TestGameData>(stjJson, newtonsoftJson);
+            
+            // 测试文件大小
+            TestFileSizes(stjJson, newtonsoftJson);
+        }
+        
+        private static void TestSerialization(TestGameData testData)
+        {
+            Console.WriteLine("=== 序列化性能测试 ===");
+            
+            // System.Text.Json 测试
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var _ = SimpleSerializer.SerializeJson(testData);
+            }
+            sw.Stop();
+            var stjTime = sw.ElapsedMilliseconds;
+            
+            // Newtonsoft.Json 测试
+            sw.Restart();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var _ = Newtonsoft.Json.JsonConvert.SerializeObject(testData);
+            }
+            sw.Stop();
+            var newtonsoftTime = sw.ElapsedMilliseconds;
+            
+            // 结果输出
+            Console.WriteLine($"System.Text.Json:  {stjTime} ms");
+            Console.WriteLine($"Newtonsoft.Json:   {newtonsoftTime} ms");
+            
+            if (newtonsoftTime > 0)
+            {
+                var improvement = ((double)(newtonsoftTime - stjTime) / newtonsoftTime) * 100;
+                Console.WriteLine($"性能提升:          {improvement:F1}%");
+            }
+            
+            Console.WriteLine();
+        }
+        
+        private static void TestDeserialization<T>(string stjJson, string newtonsoftJson)
+        {
+            Console.WriteLine("=== 反序列化性能测试 ===");
+            
+            // System.Text.Json 测试
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var _ = SimpleSerializer.DeserializeJson<T>(stjJson);
+            }
+            sw.Stop();
+            var stjTime = sw.ElapsedMilliseconds;
+            
+            // Newtonsoft.Json 测试
+            sw.Restart();
+            for (int i = 0; i < ITERATIONS; i++)
+            {
+                var _ = Newtonsoft.Json.JsonConvert.DeserializeObject<T>(newtonsoftJson);
+            }
+            sw.Stop();
+            var newtonsoftTime = sw.ElapsedMilliseconds;
+            
+            // 结果输出
+            Console.WriteLine($"System.Text.Json:  {stjTime} ms");
+            Console.WriteLine($"Newtonsoft.Json:   {newtonsoftTime} ms");
+            
+            if (newtonsoftTime > 0)
+            {
+                var improvement = ((double)(newtonsoftTime - stjTime) / newtonsoftTime) * 100;
+                Console.WriteLine($"性能提升:          {improvement:F1}%");
+            }
+            
+            Console.WriteLine();
+        }
+        
+        private static void TestFileSizes(string stjJson, string newtonsoftJson)
+        {
+            Console.WriteLine("=== 文件大小比较 ===");
+            
+            var stjSize = System.Text.Encoding.UTF8.GetByteCount(stjJson);
+            var newtonsoftSize = System.Text.Encoding.UTF8.GetByteCount(newtonsoftJson);
+            
+            Console.WriteLine($"System.Text.Json:  {stjSize:N0} bytes");
+            Console.WriteLine($"Newtonsoft.Json:   {newtonsoftSize:N0} bytes");
+            
+            if (newtonsoftSize > 0)
+            {
+                var sizeDiff = ((double)(newtonsoftSize - stjSize) / newtonsoftSize) * 100;
+                Console.WriteLine($"大小差异:          {sizeDiff:F1}%");
+            }
+            
+            Console.WriteLine();
+        }
+        
+        private static TestGameData CreateTestData()
+        {
+            return new TestGameData
+            {
+                Id = 12345,
+                Name = "测试游戏数据",
+                Description = "这是一个用于性能测试的示例游戏数据对象，包含各种类型的属性来模拟真实的游戏场景。",
+                CreatedTime = DateTime.Now,
+                IsActive = true,
+                Score = 98.5,
+                Tags = new List<string> { "测试", "性能", "基准", "System.Text.Json", "Newtonsoft.Json" },
+                Properties = new Dictionary<string, object>
+                {
+                    { "level", 10 },
+                    { "experience", 15000 },
+                    { "achievements", new[] { "新手", "探索者", "战士" } },
+                    { "settings", new { volume = 0.8, difficulty = "normal" } }
+                },
+                Players = new List<TestPlayer>
+                {
+                    new TestPlayer { Id = 1, Name = "玩家1", Level = 25, Experience = 50000 },
+                    new TestPlayer { Id = 2, Name = "玩家2", Level = 18, Experience = 32000 },
+                    new TestPlayer { Id = 3, Name = "玩家3", Level = 30, Experience = 75000 }
+                }
+            };
+        }
+    }
+    
+    public class TestGameData
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public DateTime CreatedTime { get; set; }
+        public bool IsActive { get; set; }
+        public double Score { get; set; }
+        public List<string> Tags { get; set; }
+        public Dictionary<string, object> Properties { get; set; }
+        public List<TestPlayer> Players { get; set; }
+    }
+    
+    public class TestPlayer
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public int Level { get; set; }
+        public long Experience { get; set; }
+    }
+}

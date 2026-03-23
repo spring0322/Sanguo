@@ -1,6 +1,6 @@
 ﻿using GameObjects;
 using GameObjects.Conditions;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 
 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using GameObjects;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects.TroopDetail;
 using GameObjects.PersonDetail;
 
@@ -66,12 +66,22 @@ namespace GameManager
 
             // C. 组建部队
             Troop t = new Troop();
+            t.ID = Session.Current.Scenario.Troops.GetFreeGameObjectID();
             t.Leader = leader;
             t.Init();
-            // t.StartArchitecture = city; // Unavailable
+            t.StartingArchitecture = city;  // 🔥 根本修复：设置出发城市
             t.Position = city.Position;
             t.BelongedFaction = city.BelongedFaction;
-            // t.BornArchitecture = city; // Unavailable
+            
+            // 🔥 修复：创建正确的 Military 对象并分配
+            Military military = new Military();
+            military.ID = Session.Current.Scenario.Militaries.GetFreeGameObjectID();
+            military.Kind = ship;
+            military.Leader = leader;
+            military.BelongedArchitecture = city;
+            military.Name = ship.Name + "队";
+            Session.Current.Scenario.Militaries.AddMilitary(military);
+            t.Army = military;
             
             // D. 搭配副将 (基于技能互补)
             AddNavalDeputies(t, cityPersons, leader, navyKind);
@@ -79,7 +89,7 @@ namespace GameManager
             // Add to Scenario Troops
             if (Session.Current.Scenario.Troops != null)
             {
-                Session.Current.Scenario.Troops.Add(t);
+                Session.Current.Scenario.Troops.AddTroopWithEvent(t);
             }
         }
         

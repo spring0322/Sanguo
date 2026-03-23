@@ -1,6 +1,6 @@
 ﻿using System;
 using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -21,6 +21,9 @@ namespace TroopTitlePlugin
         public PlatformTexture BackgroundTexture;
         internal PlatformTexture PictureNull;
         private Point displayOffset;
+        
+        // 添加静态纹理缓存用于绘制纯色背景
+        private static PlatformTexture _pixelTexture;
         public Rectangle FactionPosition;
         public PlatformTexture FactionTexture;
         internal Rectangle FoodIconPosition;
@@ -261,7 +264,9 @@ namespace TroopTitlePlugin
                     //{
                     //CacheManager.Draw(troop.Leader.TroopPortrait, new Rectangle(this.displayOffset.X + this.PortraitPosition.X, this.displayOffset.Y + this.PortraitPosition.Y, this.PortraitPosition.Width, this.PortraitPosition.Height), null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.4687f);
 
-                    CacheManager.DrawZhsanAvatar(troop.Leader, new Rectangle(this.displayOffset.X + this.PortraitPosition.X, this.displayOffset.Y + this.PortraitPosition.Y, this.PortraitPosition.Width, this.PortraitPosition.Height), 0.4687f, PortraitSize.Small);
+                    // 头像绘制已移至TroopSurvey，此处只绘制兵种文字
+                    Rectangle portraitRect = new Rectangle(this.displayOffset.X + this.PortraitPosition.X, this.displayOffset.Y + this.PortraitPosition.Y, this.PortraitPosition.Width, this.PortraitPosition.Height);
+                    DrawTroopKindText(troop, portraitRect, 0.4687f);
 
                     //}
                     //catch { }
@@ -349,7 +354,8 @@ namespace TroopTitlePlugin
                     //{ 
                         //CacheManager.Draw(troop.Leader.TroopPortrait, this.ThePortraitDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.469f);
 
-                        CacheManager.DrawZhsanAvatar(troop.Leader, this.ThePortraitDisplayPosition, 0.469f, PortraitSize.Small);
+                        // 在中央圆圈显示势力色背景+兵种文字
+                        DrawFactionColorAvatar(troop, this.ThePortraitDisplayPosition, 0.469f);
 
                         if (ShowFactionName1Background == "on")
                         {
@@ -359,11 +365,12 @@ namespace TroopTitlePlugin
                         CacheManager.Draw(this.FactionColor1Background, this.FactionColorDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.465f);
                     //}
                     //catch { }
-                    try
-                    { 
-                        CacheManager.Draw(this.TheTroopKindPicture, this.TheTroopKindDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.465f);
-                    }
-                    catch { }
+                    //try
+                    //{ 
+                        // 原来的兵种图标绘制已移除，兵种信息现在显示在中央头像位置
+                        // CacheManager.Draw(this.TheTroopKindPicture, this.TheTroopKindDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.465f);
+                    //}
+                    //catch { }
                     try
                     {
                         CacheManager.Draw(this.Theshiqi1Texture, this.TheshiqiDisplayPosition(troop), this.TheshiqiPosition(troop), Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.467f);
@@ -472,7 +479,8 @@ namespace TroopTitlePlugin
                     //catch { }
                     //try
                     //{
-                    CacheManager.DrawZhsanAvatar(troop.Leader, this.ThePortraitDisplayPosition, 0.469f, PortraitSize.Small);
+                    // 在中央圆圈显示势力色背景+兵种文字
+                    DrawFactionColorAvatar(troop, this.ThePortraitDisplayPosition, 0.469f);
                     //CacheManager.Draw(troop.Leader.TroopPortrait, this.ThePortraitDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.469f);
                         if (ShowFactionName2Background == "on" && this.FactionName2Background != null)
                         {
@@ -490,10 +498,11 @@ namespace TroopTitlePlugin
                     //catch { }
                     //try
                     //{
-                    if (this.TheTroopKindPicture != null)
-                    {
-                        CacheManager.Draw(this.TheTroopKindPicture, this.TheTroopKindDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.465f);
-                    }
+                    // 原来的兵种图标绘制已移除，兵种信息现在显示在中央头像位置
+                    // if (this.TheTroopKindPicture != null)
+                    // {
+                    //     CacheManager.Draw(this.TheTroopKindPicture, this.TheTroopKindDisplayPosition, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.465f);
+                    // }
                     //}
                     //catch { }
                     //try
@@ -876,6 +885,192 @@ namespace TroopTitlePlugin
         }
         //////////////
         
+        /// <summary>
+        /// 获取或创建1x1像素纹理用于绘制纯色背景
+        /// </summary>
+        private PlatformTexture GetPixelTexture()
+        {
+            if (_pixelTexture == null)
+            {
+                // 使用现有的Null.png作为像素纹理
+                _pixelTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\TroopTitle\Data\Null.png");
+                // 如果还是没有，使用PictureNull作为备选
+                if (_pixelTexture == null)
+                {
+                    _pixelTexture = this.PictureNull;
+                }
+            }
+            return _pixelTexture;
+        }
+
+        /// <summary>
+        /// 根据兵种类型获取对应的显示颜色
+        /// 使用更鲜明的颜色以提高识别度
+        /// </summary>
+        private Color GetTroopKindColor(int troopKind)
+        {
+            switch (troopKind)
+            {
+                case 0: // 步兵 - 明亮的橙棕色
+                    return new Color(255, 140, 0);
+                case 1: // 弩兵 - 鲜绿色
+                    return new Color(0, 255, 0);
+                case 2: // 骑兵 - 鲜红色
+                    return new Color(255, 0, 0);
+                case 3: // 水军 - 亮蓝色
+                    return new Color(0, 191, 255);
+                case 4: // 器械 - 亮紫色
+                    return new Color(255, 0, 255);
+                default: // 默认 - 白色
+                    return Color.White;
+            }
+        }
+
+        /// <summary>
+        /// 绘制兵种文字（不绘制背景）
+        /// 在中央圆圈显示兵种信息，如骑兵显示"骑"，步兵显示"步"
+        /// </summary>
+        private void DrawTroopKindText(Troop troop, Rectangle portraitRect, float depth)
+        {
+            // 🔥 HOT PATH：Draw方法每帧调用，必须高性能
+            // 🔥 ANTI-BAND-AID：调用方保证数据完整性，不在Hot Path中验证
+            
+            // 显示兵种名称的首字，如"步兵"显示"步"，"骑兵"显示"骑"
+            string text = troop.Army.Kind.Name.Substring(0, 1);
+            
+            // 获取兵种颜色
+            Color troopKindColor = GetTroopKindColor(troop.TheMilitaryType);
+            
+            // 绘制兵种文字，使用黑色描边确保在任何背景下都清晰可见
+            DrawCenteredText(text, portraitRect, troopKindColor, Color.Black, depth - 0.001f);
+        }
+
+        /// <summary>
+        /// 绘制势力颜色背景和兵种文字的头像替代方案
+        /// 在中央圆圈显示兵种信息，如骑兵显示"骑"，步兵显示"步"
+        /// </summary>
+        private void DrawFactionColorAvatar(Troop troop, Rectangle portraitRect, float depth)
+        {
+            // 🔥 HOT PATH：Draw方法每帧调用，必须高性能
+            // 🔥 ANTI-BAND-AID：不使用防御性检查，调用方保证数据完整性
+            
+            // [1] 准备数据：获取势力色和兵种
+            Color factionColor = Color.Gray; // 默认灰色
+            if (troop.BelongedFaction != null)
+            {
+                factionColor = troop.BelongedFaction.FactionColor;
+            }
+
+            // 🔥 ANTI-BAND-AID：数据源验证，不掩盖问题
+            string text = "兵"; // 默认显示
+            if (troop.Army != null && troop.Army.Kind != null && !string.IsNullOrEmpty(troop.Army.Kind.Name))
+            {
+                // 显示兵种名称的首字，如"步兵"显示"步"，"骑兵"显示"骑"
+                text = troop.Army.Kind.Name.Substring(0, 1);
+            }
+
+            // [2] 绘制底层：势力色方块 (替代原来的头像)
+            PlatformTexture pixel = GetPixelTexture();
+            if (pixel != null)
+            {
+                CacheManager.Draw(pixel, portraitRect, null, factionColor, 0f, Vector2.Zero, SpriteEffects.None, depth);
+            }
+
+            // [3] 获取兵种颜色：使用与右上角兵种圆圈相同的颜色方案
+            Color troopKindColor = GetTroopKindColor(troop.TheMilitaryType);
+            
+            // [4] 兵种文字总是单字居中显示（不需要竖排）
+            // 使用黑色描边确保在任何背景下都清晰可见
+            DrawCenteredText(text, portraitRect, troopKindColor, Color.Black, depth - 0.001f);
+        }
+
+        /// <summary>
+        /// 绘制居中的单字文本
+        /// 使用更大的字体和加粗效果
+        /// </summary>
+        /// <summary>
+        /// 绘制居中的单字文本
+        /// 使用更大的字体和加粗效果
+        /// </summary>
+        private void DrawCenteredText(string text, Rectangle rect, Color textColor, Color outlineColor, float depth)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (this.NameText?.Builder == null) return;
+            if (Session.Current == null || Session.Current.Font == null) return;
+
+            try
+            {
+                // 使用现有的字体，但增大缩放比例
+                var font = this.NameText.Builder;
+                float enlargedScale = font.Scale * 1.5f; // 增大1.5倍
+                
+                // 计算文字居中位置（使用放大后的尺寸）
+                Vector2 textSize = font.GetWidthHeight(text);
+                textSize *= 1.5f; // 对应放大的尺寸
+                Vector2 textPos = new Vector2(
+                    rect.X + (rect.Width - textSize.X) / 2,
+                    rect.Y + (rect.Height - textSize.Y) / 2
+                );
+
+                // 绘制多层描边来模拟加粗效果和提高对比度
+                Vector2[] outlineOffsets = {
+                    new Vector2(-1, -1), new Vector2(0, -1), new Vector2(1, -1),
+                    new Vector2(-1, 0),                      new Vector2(1, 0),
+                    new Vector2(-1, 1),  new Vector2(0, 1),  new Vector2(1, 1),
+                    new Vector2(-2, 0),  new Vector2(2, 0),  new Vector2(0, -2), new Vector2(0, 2)
+                };
+
+                // 绘制描边（黑色，确保在任何背景下都清晰）
+                foreach (var offset in outlineOffsets)
+                {
+                    CacheManager.DrawString(Session.Current.Font, text, textPos + offset, Color.Black, 0f, Vector2.Zero, enlargedScale, SpriteEffects.None, depth + 0.0001f);
+                }
+
+                // 绘制主文字
+                CacheManager.DrawString(Session.Current.Font, text, textPos, textColor, 0f, Vector2.Zero, enlargedScale, SpriteEffects.None, depth);
+            }
+            catch (Exception ex)
+            {
+                 // System.Diagnostics.Debug.WriteLine($"[TroopTitle] DrawCenteredText error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 绘制竖排的复姓文本
+        /// </summary>
+        private void DrawVerticalText(string text, Rectangle rect, Color textColor, Color outlineColor, float depth)
+        {
+            if (this.NameText?.Builder != null && text.Length > 0)
+            {
+                var font = this.NameText.Builder;
+                
+                // 计算单个字符的尺寸
+                Vector2 charSize = font.GetWidthHeight("字"); // 使用标准字符测量
+                
+                // 计算总高度和起始位置
+                float totalHeight = charSize.Y * text.Length;
+                float startY = rect.Y + (rect.Height - totalHeight) / 2;
+                float centerX = rect.X + rect.Width / 2;
+
+                // 逐字绘制
+                for (int i = 0; i < text.Length; i++)
+                {
+                    string singleChar = text[i].ToString();
+                    Vector2 singleCharSize = font.GetWidthHeight(singleChar);
+                    
+                    Vector2 charPos = new Vector2(
+                        centerX - singleCharSize.X / 2,
+                        startY + i * charSize.Y
+                    );
+
+                    // 绘制描边
+                    CacheManager.DrawString(Session.Current.Font, singleChar, charPos + new Vector2(1, 1), outlineColor, 0f, Vector2.Zero, font.Scale, SpriteEffects.None, depth + 0.0001f);
+                    // 绘制文字
+                    CacheManager.DrawString(Session.Current.Font, singleChar, charPos, textColor, 0f, Vector2.Zero, font.Scale, SpriteEffects.None, depth);
+                }
+            }
+        }
+
         /// <summary>
         /// 获取部队头像路径，支持DDS、PNG、JPG格式
         /// </summary>

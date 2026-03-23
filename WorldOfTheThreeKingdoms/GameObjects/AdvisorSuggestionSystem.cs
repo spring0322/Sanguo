@@ -4,7 +4,7 @@ using System.Linq;
 using GameObjects;
 using GameObjects.PersonDetail;
 using GameManager;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameObjects
 {

@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -65,14 +65,14 @@ namespace TreasureDetailPlugin
                 StaticMethods.LoadFontAndColorFromXMLNode(node3, out font, out color);
                 item.Label = new FreeText(font, color);
                 item.Label.Position = rectangle;
-                item.Label.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node3.Attributes.GetNamedItem("Align").Value);
+                item.Label.Align = Enum.Parse<TextAlign>(node3.Attributes.GetNamedItem("Align").Value);
                 item.Label.Text = node3.Attributes.GetNamedItem("Label").Value;
                 node3 = node.ChildNodes.Item(i + 1);
                 rectangle = StaticMethods.LoadRectangleFromXMLNode(node3);
                 StaticMethods.LoadFontAndColorFromXMLNode(node3, out font, out color);
                 item.Text = new FreeText(font, color);
                 item.Text.Position = rectangle;
-                item.Text.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node3.Attributes.GetNamedItem("Align").Value);
+                item.Text.Align = Enum.Parse<TextAlign>(node3.Attributes.GetNamedItem("Align").Value);
                 item.PropertyName = node3.Attributes.GetNamedItem("PropertyName").Value;
                 this.treasureDetail.LabelTexts.Add(item);
             }
@@ -118,7 +118,7 @@ namespace TreasureDetailPlugin
 
         public void SetTreasure(object treasure)
         {
-            this.treasureDetail.SetTreasure(treasure as Treasure);
+            this.treasureDetail.SetTreasure((treasure is Treasure ? (Treasure)treasure : null));
         }
 
         public void Update(GameTime gameTime)
@@ -178,4 +178,5 @@ namespace TreasureDetailPlugin
         }
     }
 }
+
 

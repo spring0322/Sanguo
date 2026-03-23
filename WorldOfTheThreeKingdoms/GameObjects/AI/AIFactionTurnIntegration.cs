@@ -6,8 +6,10 @@ using GameObjects;
 using GameObjects.AI;
 using GameObjects.AI.Helper;
 using GameManager;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
-namespace GameObjects.AI
+namespace GameObjects.AI;
+#if false
 {
     /// <summary>
     /// AI势力回合集成系统
@@ -93,10 +95,10 @@ namespace GameObjects.AI
                     if (troop != null && !troop.Destroyed)
                     {
                         // 如果部队还没有分配角色，或者需要重新评估角色
-                        if (troop.CurrentRole == AIRole.None || ShouldReassignRole(troop))
+                        if (troop.CurrentRole == TroopRole.None || ShouldReassignRole(troop))
                         {
                             var oldRole = troop.CurrentRole;
-                            troop.CurrentRole = AIRoleSelector.GetBestRole(troop);
+                            troop.CurrentRole = AIRoleSelector.DetermineRole(troop);
                             
                             if (oldRole != troop.CurrentRole)
                             {
@@ -349,17 +351,17 @@ namespace GameObjects.AI
 
                 switch (troop.CurrentRole)
                 {
-                    case AIRole.Tank:
+                    case TroopRole.Tank:
                         // 坦克寻找前线位置
                         ExecuteTankIdleBehavior(troop, battlefieldInfo);
                         break;
                         
-                    case AIRole.Support:
+                    case TroopRole.Support:
                         // 辅助寻找需要治疗的友军
                         ExecuteSupportIdleBehavior(troop, battlefieldInfo);
                         break;
                         
-                    case AIRole.Logistics:
+                    case TroopRole.Logistics:
                         // 后勤执行资源管理
                         ExecuteLogisticsIdleBehavior(troop, battlefieldInfo);
                         break;
@@ -383,7 +385,7 @@ namespace GameObjects.AI
         {
             // 寻找最需要保护的友军位置
             var vulnerableAllies = battlefieldInfo.AllAllies
-                .Where(a => a.CurrentRole == AIRole.Mage || a.CurrentRole == AIRole.Support)
+                .Where(a => a.CurrentRole == TroopRole.Mage || a.CurrentRole == TroopRole.Support)
                 .OrderBy(a => a.Quantity)
                 .ToList();
 
@@ -597,15 +599,15 @@ namespace GameObjects.AI
         /// </summary>
         /// <param name="role">角色</param>
         /// <returns>中文描述</returns>
-        private static string GetRoleDescription(AIRole role)
+        private static string GetRoleDescription(TroopRole role)
         {
             switch (role)
             {
-                case AIRole.Tank: return "肉盾";
-                case AIRole.DPS: return "输出";
-                case AIRole.Mage: return "法师";
-                case AIRole.Support: return "辅助";
-                case AIRole.Logistics: return "后勤";
+                case TroopRole.Tank: return "肉盾";
+                case TroopRole.DPS: return "输出";
+                case TroopRole.Mage: return "法师";
+                case TroopRole.Support: return "辅助";
+                case TroopRole.Logistics: return "后勤";
                 default: return "未定义";
             }
         }
@@ -634,3 +636,5 @@ namespace GameObjects.AI
         }
     }
 }
+
+#endif

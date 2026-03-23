@@ -1,7 +1,7 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
 using System;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 
 using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKindPack
@@ -9,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind120 : InfluenceKind
     {
+        [DataMember]
         private int increment = 0;
 
         public override void ApplyInfluenceKind(Architecture person)

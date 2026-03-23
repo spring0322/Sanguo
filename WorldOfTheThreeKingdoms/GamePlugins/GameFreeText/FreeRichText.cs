@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -6,28 +6,20 @@ using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
 
-
 namespace GameFreeText
 {
-
     public class FreeRichText
     {
-        //public FreeTextBuilder Builder;
-
         public Font Builder = new Font();
-
         public int ClientHeight;
         public int ClientWidth;
+
+        // 核心排版变量
         private int currentPageIndex;
         private int currentRow;
-        public Color DefaultColor;
-        public Point DisplayOffset;
-        public bool MultiPage;
-        public bool OnePage;
-        private List<int> PageIndexs;
-        public int RowMargin;
-        public List<SimpleText> Texts;
 
+        // 颜色配置
+        public Color DefaultColor;
         public Color TitleColor;
         public Color SubTitleColor;
         public Color SubTitleColor2;
@@ -35,31 +27,290 @@ namespace GameFreeText
         public Color PositiveColor;
         public Color NegativeColor;
 
+        public Point DisplayOffset;
+        public bool MultiPage;
+        public bool OnePage;
+        private List<int> PageIndexs;
+        public int RowMargin;
+        public List<SimpleText> Texts;
+
+        // 【新增】全局修正系数
+        // 如果所有字都挤，把这个改大，比如 1.1f (加宽10%)
+        // 如果所有字都太散，把这个改小，比如 0.9f
+        public float CharSpacing = 1.1f;
+
+        // 行距系数
+        public float LineSpacing = 1.0f;
+
         public FreeRichText()
         {
             this.Texts = new List<SimpleText>();
             this.PageIndexs = new List<int>();
             this.ClientWidth = 200;
             this.ClientHeight = 600;
-            //this.Builder = new FreeTextBuilder();
+            this.RowMargin = 10;
         }
 
+        public void Clear()
+        {
+            this.Texts.Clear();
+            this.PageIndexs.Clear();
+            this.currentRow = 0;
+            this.currentPageIndex = 0;
+            this.MultiPage = false;
+        }
+
+        // ==========================================
+        // 核心修复区域 1：计算行高
+        // ==========================================
+        public int RowHeight
+        {
+            get
+            {
+                float scale = this.Builder?.Scale ?? 1.0f;
+                float baseHeight = 24f; // 兜底默认值
+
+                if (Session.Current?.Font != null)
+                {
+                    try
+                    {
+                        // 获取标准汉字高度 ("测"字通常能代表平均高度)
+                        baseHeight = Session.Current.Font.MeasureString("测").Y;
+                    }
+                    catch { }
+                }
+
+                // 计算最终高度：基准高度 * 缩放 * 行距系数 + 额外边距
+                return (int)(baseHeight * scale * this.LineSpacing) + this.RowMargin;
+            }
+        }
+
+        // ==========================================
+        // 核心修复区域 2：计算字宽 (暴力纠错版)
+        // ==========================================
         public int GetTextWidth(string text)
         {
-            float scale = Builder == null ? 1f : Builder.Size / 20;
-            return Convert.ToInt32(28 * text.Length * scale);
-            //return this.myDrawing.MeasureString(text, this.font).ToSize().Width;
+            if (string.IsNullOrEmpty(text)) return 0;
+
+            float scale = this.Builder?.Scale ?? 1.0f;
+            float baseHeight = 24f;
+            float measuredWidth = 0f;
+
+            // 1. 获取字体的基础测量数据
+            if (Session.Current?.Font != null)
+            {
+                try
+                {
+                    Vector2 size = Session.Current.Font.MeasureString(text);
+                    measuredWidth = size.X;
+                    baseHeight = Session.Current.Font.MeasureString("测").Y; // 获取单字标准高度
+                }
+                catch
+                {
+                    measuredWidth = 20f * text.Length;
+                }
+            }
+            else
+            {
+                measuredWidth = 20f * text.Length;
+            }
+
+            // 2. 【核心修复逻辑】方块字强制对齐
+            // 汉字是方块字，宽度通常等于高度。但对于英文字母、数字和符号，宽度远小于高度
+            int blockCharCount = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] > 255) blockCharCount++;
+            }
+
+            float finalBaseWidth = measuredWidth;
+            if (blockCharCount > 0)
+            {
+                float theoreticalSquareWidth = blockCharCount * baseHeight + (text.Length - blockCharCount) * (baseHeight * 0.5f);
+                finalBaseWidth = Math.Max(measuredWidth, theoreticalSquareWidth);
+            }
+
+            // 3. 应用缩放和间距系数
+            // 使用 Math.Ceiling 向上取整，宁可宽一点也不要叠起来
+            return (int)Math.Ceiling(finalBaseWidth * scale * this.CharSpacing);
         }
 
-        //public FreeRichText(FreeTextBuilder builder)
-        //{
-        //    this.Texts = new List<SimpleText>();
-        //    this.PageIndexs = new List<int>();
-        //    this.ClientWidth = 200;
-        //    this.ClientHeight = 600;
-        //    //this.Builder = builder;
-        //}
+        // ==========================================
+        // 核心排版逻辑 (BuildRow)
+        // ==========================================
+        private void BuildRow(int index)
+        {
+            if (this.ClientWidth < 10) this.ClientWidth = 200;
 
+            int currentX = 0;
+            this.currentRow = 0;
+            int rh = this.RowHeight;
+
+            for (int i = 0; i < this.Texts.Count; i++)
+            {
+                SimpleText item = this.Texts[i];
+
+                if (item.NewLine)
+                {
+                    this.currentRow++;
+                    currentX = 0;
+                    item.Row = this.currentRow;
+                    item.TextPosition = new Rectangle(0, item.Row * rh, 0, 0);
+                    continue;
+                }
+
+                int w = GetTextWidth(item.Text);
+
+                // --- 核心修复：自动折行与分割 ---
+                if (currentX + w > this.ClientWidth)
+                {
+                    int spaceLeft = this.ClientWidth - currentX;
+                    
+                    // 如果剩余空间太小（小于20像素，约一个字宽），先换行
+                    if (currentX > 0 && spaceLeft < 20)
+                    {
+                        this.currentRow++;
+                        currentX = 0;
+                        spaceLeft = this.ClientWidth;
+                    }
+
+                    // 换行后如果还放不下，或者决定就在当前行拆分
+                    if (currentX + w > this.ClientWidth) // 重新检查
+                    {
+                        // 计算能放下多少个字符
+                        // 暴力寻找拆分点
+                        int fitCount = 0;
+                        int currentW = 0;
+                        for (int k = 1; k <= item.Text.Length; k++)
+                        {
+                            string sub = item.Text.Substring(0, k);
+                            int subW = GetTextWidth(sub);
+                            if (currentX + subW > this.ClientWidth)
+                            {
+                                break;
+                            }
+                            fitCount = k;
+                            currentW = subW;
+                        }
+
+                        if (fitCount > 0 && fitCount < item.Text.Length)
+                        {
+                            // 执行拆分
+                            string part1 = item.Text.Substring(0, fitCount);
+                            string part2 = item.Text.Substring(fitCount);
+
+                            // 修改当前项
+                            item.Text = part1;
+                            w = currentW; // 更新宽度
+
+                            // 插入剩余部分作为新项
+                            SimpleText newItem = new SimpleText();
+                            newItem.Text = part2;
+                            newItem.TextColor = item.TextColor;
+                            newItem.Builder = item.Builder;
+                            this.Texts.Insert(i + 1, newItem);
+                        }
+                        else if (fitCount == 0 && currentX > 0)
+                        {
+                            // 连一个字都放不下，强制换行（不应该发生，因为前面已经判断过 spaceLeft < 20）
+                            this.currentRow++;
+                            currentX = 0;
+                            i--; // 重新处理该项
+                            continue;
+                        }
+                    }
+                }
+                // -----------------------------
+
+                // 写入坐标
+                item.Row = this.currentRow;
+                item.TextPosition = new Rectangle(currentX, item.Row * rh, w, rh);
+
+                currentX += w;
+
+                // 分页判断
+                if ((this.currentRow + 1) * rh > this.ClientHeight)
+                {
+                    this.MultiPage = true;
+                    if (!this.PageIndexs.Contains(i + 1))
+                    {
+                        this.PageIndexs.Add(i + 1);
+                    }
+                    this.currentRow = 0;
+                    currentX = 0;
+                }
+            }
+        }
+
+        public void ResortTexts()
+        {
+            if (this.Texts.Count == 0) return;
+
+            this.MultiPage = false;
+            this.currentPageIndex = 0;
+            this.PageIndexs.Clear();
+            this.PageIndexs.Add(0);
+
+            foreach (var text in this.Texts)
+            {
+                if (text.Text == @"\n") text.NewLine = true;
+            }
+
+            this.BuildRow(0);
+
+            if (this.OnePage && (this.PageIndexs.Count > 1))
+            {
+                this.Texts.RemoveRange(this.PageIndexs[1], this.Texts.Count - this.PageIndexs[1]);
+            }
+        }
+
+        // ==========================================
+        // Draw 方法
+        // ==========================================
+        public void Draw(float Depth)
+        {
+            if (this.Texts.Count == 0) return;
+
+            int start = 0;
+            int end = this.Texts.Count;
+
+            if (this.PageIndexs.Count > 0 && this.currentPageIndex < this.PageIndexs.Count)
+            {
+                start = this.PageIndexs[this.currentPageIndex];
+                if (this.currentPageIndex + 1 < this.PageIndexs.Count)
+                {
+                    end = this.PageIndexs[this.currentPageIndex + 1];
+                }
+            }
+
+            for (int i = start; i < end; i++)
+            {
+                if (!this.Texts[i].NewLine && !string.IsNullOrEmpty(this.Texts[i].Text))
+                {
+                    // 使用 TextPosition
+                    Vector2 pos = new Vector2(
+                        this.Texts[i].TextPosition.X + this.DisplayOffset.X,
+                        this.Texts[i].TextPosition.Y + this.DisplayOffset.Y
+                    );
+
+                    CacheManager.DrawString(
+                        Session.Current.Font,
+                        this.Texts[i].Text,
+                        pos,
+                        this.TextDisplayColor(i),
+                        0f,
+                        Vector2.Zero,
+                        this.Builder.Scale,
+                        SpriteEffects.None,
+                        Depth
+                    );
+                }
+            }
+        }
+
+        // ==========================================
+        // 辅助方法 (保持不变)
+        // ==========================================
         public void AddGameObjectTextBranch(GameObject gameObject, GameObjectTextBranch branch)
         {
             if ((branch != null) && (branch.Leaves.Count != 0))
@@ -76,234 +327,6 @@ namespace GameFreeText
                     }
                 }
                 this.ResortTexts();
-            }
-        }
-
-        public void AddNewLine()
-        {
-            SimpleText item = new SimpleText {
-                Text = @"\n",
-                Builder = Builder
-            };
-            this.Texts.Add(item);
-        }
-
-        public void AddNewLine(int pos)
-        {
-            SimpleText item = new SimpleText {
-                Text = @"\n",
-                Builder = Builder
-            };
-            this.Texts.Insert(pos, item);
-        }
-
-        public void AddText(string text)
-        {
-            SimpleText item = new SimpleText {
-                Text = text,
-                Builder = Builder
-            };
-            this.Texts.Add(item);
-        }
-
-        public void AddText(string text, Color color)
-        {
-            SimpleText item = new SimpleText {
-                Text = text,
-                TextColor = color,
-                Builder = Builder
-            };
-            this.Texts.Add(item);
-        }
-
-        public void AddText(int pos, string text, Color color)
-        {
-            SimpleText item = new SimpleText {
-                Text = text,
-                TextColor = color,
-                Builder = Builder
-            };
-            this.Texts.Insert(pos, item);
-        }
-
-        private void BuildRow(int index)
-        {
-            int num = 0;
-            for (int i = index; i < this.Texts.Count; i++)
-            {
-                if (this.Texts[i].NewLine)
-                {
-                    this.currentRow++;
-                    num = 0;
-                }
-                else
-                {
-                    num += this.Texts[i].Width;
-                }
-                this.Texts[i].Row = this.currentRow;
-                if (num >= this.ClientWidth)
-                {
-                    this.currentRow++;
-                    if (this.DevideText(i, num - this.Texts[i].Width))
-                    {
-                        this.BuildRow(i + 1);
-                    }
-                    else
-                    {
-                        this.BuildRow(i);
-                    }
-                    break;
-                }
-                if (((this.Texts[i].Row + 1) * this.RowHeight) >= this.ClientHeight)
-                {
-                    this.MultiPage = true;
-                    this.Texts[i].Row = 0;
-                    this.currentRow = 0;
-                    this.PageIndexs.Add(i + 1);
-                }
-            }
-        }
-
-        private void BuildTextTextures()
-        {
-            foreach (SimpleText text in this.Texts)
-            {
-                if (text.Text == @"\n")
-                {
-                    text.NewLine = true;
-                }
-                else
-                {
-                    //text.TextTexture = this.Builder.CreateTextTexture(text.Text);
-                }
-            }
-        }
-
-        public void Clear()
-        {
-            this.Texts.Clear();
-            this.PageIndexs.Clear();
-        }
-
-        private bool DevideText(int index, int currentWidth)
-        {
-            SimpleText text;
-            string str = this.Texts[index].Text;
-            int textWidth = 0;
-            int length = 1;
-            do
-            {
-                textWidth = GetTextWidth(str.Substring(0, length));  // this.Builder.GetTextWidth(str.Substring(0, length));
-                if ((currentWidth + textWidth) >= this.ClientWidth)
-                {
-                    break;
-                }
-                length++;
-            }
-            while (length <= str.Length);
-            if (length > str.Length)
-            {
-                //暫去掉，待考慮
-                //throw new Exception("RichText Width Error.");
-            }
-            if (length == 1)
-            {
-                SimpleText local1 = this.Texts[index];
-                local1.Row++;
-                if (((this.Texts[index].Row + 1) * this.RowHeight) > this.ClientHeight)
-                {
-                    this.MultiPage = true;
-                    this.Texts[index].Row = 0;
-                    this.currentRow = 0;
-                    this.PageIndexs.Add(index + 1);
-                }
-                return false;
-            }
-            text = new SimpleText {
-                Text = str.Substring(length - 1),
-                TextColor = this.Texts[index].TextColor,
-                Row = this.Texts[index].Row + 1,
-                //TextTexture = this.Builder.CreateTextTexture(text.Text)
-                //TextTexture = this.Builder.CreateTextTexture(str.Substring(length - 1))
-            };
-            this.Texts.Insert(index + 1, text);
-            if (((text.Row + 1) * this.RowHeight) > this.ClientHeight)
-            {
-                this.MultiPage = true;
-                text.Row = 0;
-                this.currentRow = 0;
-                this.PageIndexs.Add(index + 1);
-            }
-            this.Texts[index].Text = str.Substring(0, length - 1);
-            //this.Texts[index].TextTexture = this.Builder.CreateTextTexture(this.Texts[index].Text);
-            return true;
-        }
-
-        public void Draw(float Depth)
-        {
-            if (this.PageIndexs.Count > 0)
-            {
-                for (int i = this.PageIndexs[this.currentPageIndex]; i < this.CurrentPageEndIndex; i++)
-                {
-                    if (!this.Texts[i].NewLine)  // && (this.Texts[i].TextTexture != null))
-                    {
-                        var pos = new Vector2(this.TextDisplayPosition(i).X, this.TextDisplayPosition(i).Y);
-
-                        CacheManager.DrawString(Session.Current.Font, this.Texts[i].Text, pos, this.TextDisplayColor(i), 0f, Vector2.Zero, Builder.Scale, SpriteEffects.None, Depth);
-
-                    }
-                }
-            }
-        }
-
-        public void FirstPage()
-        {
-            this.currentPageIndex = 0;
-        }
-
-        public void NextPage()
-        {
-            if (this.currentPageIndex < (this.PageIndexs.Count - 1))
-            {
-                this.currentPageIndex++;
-            }
-        }
-
-        private void RepositionTexts()
-        {
-            int row = 0;
-            int x = 0;
-            for (int i = 0; i < this.Texts.Count; i++)
-            {
-                if (!this.Texts[i].NewLine)
-                {
-                    if (row != this.Texts[i].Row)
-                    {
-                        x = 0;
-                    }
-                    this.Texts[i].TextPosition = new Rectangle(x, this.Texts[i].Row * this.RowHeight, this.Texts[i].Width, this.Texts[i].Height);
-                    x += this.Texts[i].Width;
-                    row = this.Texts[i].Row;
-                }
-            }
-        }
-
-        public void ResortTexts()
-        {
-            if ((this.Texts.Count != 0) && ((this.ClientWidth != 0) && (this.ClientHeight != 0)))
-            {
-                this.MultiPage = false;
-                this.currentPageIndex = 0;
-                this.PageIndexs.Clear();
-                this.PageIndexs.Add(0);
-                this.BuildTextTextures();
-                this.currentRow = 0;
-                this.BuildRow(0);
-                if (this.OnePage && (this.PageIndexs.Count > 1))
-                {
-                    this.Texts.RemoveRange(this.PageIndexs[1], this.Texts.Count - this.PageIndexs[1]);
-                }
-                this.RepositionTexts();
             }
         }
 
@@ -327,24 +350,13 @@ namespace GameFreeText
             }
         }
 
-        private Color TextDisplayColor(int index)
-        {
-            return ((this.Texts[index].TextColor == new Color()) ? this.DefaultColor : this.Texts[index].TextColor);
-        }
-
-        private Rectangle TextDisplayPosition(int index)
-        {
-            return new Rectangle(this.Texts[index].TextPosition.X + this.DisplayOffset.X, this.Texts[index].TextPosition.Y + this.DisplayOffset.Y, this.Texts[index].TextPosition.Width, this.Texts[index].TextPosition.Height);
-        }
-
         public int TopAddGameObjectTextBranch(GameObject gameObject, GameObjectTextBranch branch)
         {
             if (branch != null)
             {
-                if (branch.Leaves.Count == 0)
-                {
-                    return 0;
-                }
+                if (branch.Leaves.Count == 0) return 0;
+
+                this.AddNewLine(0);
                 for (int i = branch.Leaves.Count - 1; i >= 0; i--)
                 {
                     GameObjectTextLeaf leaf = branch.Leaves[i];
@@ -358,15 +370,103 @@ namespace GameFreeText
                     }
                 }
                 this.ResortTexts();
-                foreach (SimpleText text in this.Texts)
-                {
-                    if (text.NewLine)
-                    {
-                        return text.Row;
-                    }
-                }
+                return this.RowHeight;
             }
             return 0;
+        }
+
+        public void AddNewLine()
+        {
+            SimpleText item = new SimpleText
+            {
+                Text = @"\n",
+                Builder = Builder,
+                NewLine = true
+            };
+            this.Texts.Add(item);
+        }
+
+        public void AddNewLine(int pos)
+        {
+            SimpleText item = new SimpleText
+            {
+                Text = @"\n",
+                Builder = Builder,
+                NewLine = true
+            };
+            this.Texts.Insert(pos, item);
+        }
+
+        public void AddText(string text)
+        {
+            string[] parts = text.Split(new string[] { "\\n" }, StringSplitOptions.None);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (i > 0)
+                {
+                    this.Texts.Add(new SimpleText { Text = @"\n", Builder = Builder, NewLine = true });
+                }
+                if (!string.IsNullOrEmpty(parts[i]))
+                {
+                    this.Texts.Add(new SimpleText { Text = parts[i], Builder = Builder });
+                }
+            }
+        }
+
+        public void AddText(string text, Color color)
+        {
+            string[] parts = text.Split(new string[] { "\\n" }, StringSplitOptions.None);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (i > 0)
+                {
+                    this.Texts.Add(new SimpleText { Text = @"\n", Builder = Builder, NewLine = true });
+                }
+                if (!string.IsNullOrEmpty(parts[i]))
+                {
+                    this.Texts.Add(new SimpleText { Text = parts[i], TextColor = color, Builder = Builder });
+                }
+            }
+        }
+
+        public void AddText(int pos, string text, Color color)
+        {
+            string[] parts = text.Split(new string[] { "\\n" }, StringSplitOptions.None);
+            int currentPos = pos;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (i > 0)
+                {
+                    this.Texts.Insert(currentPos++, new SimpleText { Text = @"\n", Builder = Builder, NewLine = true });
+                }
+                if (!string.IsNullOrEmpty(parts[i]))
+                {
+                    this.Texts.Insert(currentPos++, new SimpleText { Text = parts[i], TextColor = color, Builder = Builder });
+                }
+            }
+        }
+
+        public void FirstPage()
+        {
+            this.currentPageIndex = 0;
+        }
+
+        public void NextPage()
+        {
+            if (this.currentPageIndex < (this.PageIndexs.Count - 1))
+            {
+                this.currentPageIndex++;
+            }
+        }
+
+        private Color TextDisplayColor(int index)
+        {
+            return ((this.Texts[index].TextColor == new Color()) ? this.DefaultColor : this.Texts[index].TextColor);
+        }
+
+        private Rectangle TextDisplayPosition(int index)
+        {
+            return new Rectangle(this.Texts[index].TextPosition.X + this.DisplayOffset.X, this.Texts[index].TextPosition.Y + this.DisplayOffset.Y, this.Texts[index].TextPosition.Width, this.Texts[index].TextPosition.Height);
         }
 
         private int CurrentPageEndIndex
@@ -375,59 +475,33 @@ namespace GameFreeText
             {
                 return ((this.PageIndexs.Count > (this.currentPageIndex + 1)) ? this.PageIndexs[this.currentPageIndex + 1] : this.Texts.Count);
             }
-            set
-            {
-                //this = value;
-            }
         }
 
         public int CurrentPageIndex
         {
-            get
-            {
-                return this.currentPageIndex;
-            }
+            get { return this.currentPageIndex; }
         }
 
         public int PageCount
         {
-            get
-            {
-                return this.PageIndexs.Count;
-            }
+            get { return this.PageIndexs.Count; }
         }
 
         public int RealHeight
         {
             get
             {
-                if (this.PageCount == 1)
+                if (this.Texts.Count > 0)
                 {
-                    return (this.RowHeight * (this.Texts[this.Texts.Count - 1].Row + 1));
+                    int lastRow = 0;
+                    for (int i = 0; i < Texts.Count; i++)
+                    {
+                        if (Texts[i].Row > lastRow) lastRow = Texts[i].Row;
+                    }
+                    return (lastRow + 1) * this.RowHeight;
                 }
                 return this.ClientHeight;
             }
         }
-
-        public int RowHeight
-        {
-            get
-            {
-                if (this.Texts != null && this.Texts.Count > 0)
-                {
-                    return this.Texts[0].Height;
-                }
-                else
-                {
-                    return 0;
-                }
-                //if (this.Texts.Count > 0 && this.Texts[0].TextTexture != null)
-                //{
-                //    return (this.Texts[0].TextTexture.Height + this.RowMargin);
-                //}
-                //return (int) this.Builder.font.Size;
-            }
-        }
     }
 }
-

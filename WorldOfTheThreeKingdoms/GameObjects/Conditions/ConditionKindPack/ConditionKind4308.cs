@@ -1,4 +1,4 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Conditions;
 using System;
 
@@ -11,7 +11,7 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
  
         public override bool CheckConditionKind(Person person)
         {
-            return person.WorkKind == GameGlobal.ArchitectureWorkKind.训练;
+            return person.WorkKind == WorldOfTheThreeKingdoms.GameGlobal.ArchitectureWorkKind.训练;
         }
     }
 }

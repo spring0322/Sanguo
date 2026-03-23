@@ -1,4 +1,5 @@
-﻿using GameManager;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 添加：用于 GenerateUIAccessor 特性
+using GameManager;
 using GameObjects.Influences;
 using Microsoft.Xna.Framework.Graphics;
 using Platforms;
@@ -11,7 +12,8 @@ using WorldOfTheThreeKingdoms;
 namespace GameObjects
 {
     [DataContract]
-    public class Treasure : GameObject
+    [GenerateUIAccessor]  // 🔥 添加源生成器特性，支持宝物列表和右键菜单访问
+    public partial class Treasure : GameObject
     {
         private int appearYear;
         private bool available;
@@ -169,6 +171,30 @@ namespace GameObjects
             set
             {
                 this.worth = value;
+            }
+        }
+
+        /// <summary>
+        /// 出售宝物获得的资金（用于UI显示）
+        /// 🔥 2026-03-03 新增：宝物交易系统
+        /// </summary>
+        public int SellTreasureFund
+        {
+            get
+            {
+                return this.Worth * 1000;
+            }
+        }
+
+        /// <summary>
+        /// 购买宝物需要的资金（用于UI显示）
+        /// 🔥 2026-03-03 新增：宝物交易系统，加价20%
+        /// </summary>
+        public int BuyTreasureFund
+        {
+            get
+            {
+                return (int)(this.Worth * 1.2f * 1000);
             }
         }
     }

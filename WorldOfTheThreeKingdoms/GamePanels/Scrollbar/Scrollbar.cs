@@ -203,6 +203,37 @@ namespace GamePanels.Scrollbar
 
         public void Draw()
         {
+            // 🔥 GPU 设备丢失保护
+            if (Session.Current == null || Session.Current.SpriteBatch == null || 
+                Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
+                return;
+
+            // 🔥 纹理重建逻辑
+            try
+            {
+                if (ButtonTexture == null || ButtonTexture.IsDisposed || ButtonTexture.GraphicsDevice != Platform.GraphicsDevice)
+                {
+                    ButtonTexture = CreateScollbarTexture(ScrollButton.Width, ScrollButton.Height, ButtonColor);
+                }
+
+                if (BarTexture == null || BarTexture.IsDisposed || BarTexture.GraphicsDevice != Platform.GraphicsDevice)
+                {
+                    switch (scrollbarType)
+                    {
+                        case ScrollbarType.Horizontal:
+                            BarTexture = CreateScollbarTexture(baseFrame.VisualFrame.Width, ScrollButton.Height, BarColor);
+                            break;
+                        case ScrollbarType.Vertical:
+                            BarTexture = CreateScollbarTexture(ScrollButton.Width, baseFrame.VisualFrame.Height, BarColor);
+                            break;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 创建纹理失败，可能是设备状态问题，跳过绘制
+                return;
+            }
 
             switch (scrollbarType)//根据滚动条的类型设置滚动条和按钮的位置坐标
             {
@@ -218,8 +249,15 @@ namespace GamePanels.Scrollbar
                     break;
             }
 
-            Session.Current.SpriteBatch.Draw(BarTexture, BarPos, Color.White);//绘制滚动条
-            Session.Current.SpriteBatch.Draw(ButtonTexture, ButtonPos, Color.White);//绘制滚动条按钮
+            try
+            {
+                if (BarTexture != null && !BarTexture.IsDisposed)
+                    Session.Current.SpriteBatch.Draw(BarTexture, BarPos, Color.White);//绘制滚动条
+                
+                if (ButtonTexture != null && !ButtonTexture.IsDisposed)
+                    Session.Current.SpriteBatch.Draw(ButtonTexture, ButtonPos, Color.White);//绘制滚动条按钮
+            }
+            catch { }
         }
         
         /// <summary>

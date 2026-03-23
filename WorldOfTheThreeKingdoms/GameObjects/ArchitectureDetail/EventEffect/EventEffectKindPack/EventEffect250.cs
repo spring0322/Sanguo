@@ -27,7 +27,7 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
         public override void ApplyEffectKind(Person person, Event e)
         {
             FactionList factionlist = Session.Current.Scenario.Factions;
-            Faction targetFaction = factionlist.GetGameObject(targetFactionID) as Faction;
+            Faction targetFaction = (factionlist.GetGameObject(targetFactionID) is Faction ? (Faction)factionlist.GetGameObject(targetFactionID) : null);
             /*
             if (targetFaction != null)
             {
@@ -53,4 +53,5 @@ using System.Runtime.Serialization;namespace GameObjects.ArchitectureDetail.Even
 
     }
 }
+
 

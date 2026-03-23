@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using GameObjects;
@@ -10,6 +11,7 @@ using PluginInterface.BaseInterface;
 using PersonDetailPlugin;
 using GameManager;
 using WorldOfTheThreeKingdoms.GameScreens;
+// using InGameEditorPlugin; // [�����޸�] ע�͵�ȱʧ�������ռ�����
 
 namespace WorldOfTheThreeKingdoms.GameLogic
 
@@ -42,6 +44,7 @@ namespace WorldOfTheThreeKingdoms.GameLogic
 
         public IRoutewayEditor RoutewayEditorPlugin = null;
         public IScreenBlind ScreenBlindPlugin = null;
+        public ITileInfluenceInfo TileInfluenceInfoPlugin = null;  // 🆕 地块势力范围信息插件
         public ISimpleTextDialog SimpleTextDialogPlugin = null;
         public ITabList TabListPlugin = null;
         public Iyoucelan youcelanPlugin = null;
@@ -52,10 +55,86 @@ namespace WorldOfTheThreeKingdoms.GameLogic
         public ITroopDetail TroopDetailPlugin = null;
         public ITroopSurvey TroopSurveyPlugin = null;
         public ITroopTitle TroopTitlePlugin = null;
+        public IInGameEditor InGameEditorPlugin = null;
+
+        /// <summary>
+        /// ?? �����Ż������в����Ҫ������·���嵥
+        /// </summary>
+        private static readonly string[] PluginTexturePaths =
+        [
+            // TabListPlugin (12��)
+            @"Content\Textures\GameComponents\TabList\Data\TabButton.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\TabButtonSelected.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\ColumnHeader.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\ColumnSpliter.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\ScrollButton.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\ScrollTrack.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\LeftArrow.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\RightArrow.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\FocusTrack.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\CheckBox.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\CheckBoxSelected.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\RoundCheckBox.bmp",
+            @"Content\Textures\GameComponents\TabList\Data\RoundCheckBoxSelected.bmp",
+            
+            // youcelan 插件 (22个 - Tool 纹理从 XML 动态加载)
+            @"Content\Textures\GameComponents\youcelan\Data\LeftEdge.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\RightEdge.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\TopEdge.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\BottomEdge.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\Background.bmp",
+            // Tool 纹理从 XML 动态加载 (jiahao.png/jianhao.png)，不需要预加载
+            @"Content\Textures\GameComponents\youcelan\Data\TabButton.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\TabButtonSelected.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\ColumnHeader.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\ColumnSpliter.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\ScrollButton.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\ScrollTrack.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\LeftArrow.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\RightArrow.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\FocusTrack.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\CheckBox.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\CheckBoxSelected.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\RoundCheckBox.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\RoundCheckBoxSelected.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\TopLeft.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\TopRight.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\BottomLeft.bmp",
+            @"Content\Textures\GameComponents\youcelan\Data\BottomRight.bmp",
+            
+            // BianduiLiebiaoChajian (12个)
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\TabButton.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\TabButtonSelected.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\ColumnHeader.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\ColumnSpliter.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\ScrollButton.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\ScrollTrack.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\LeftArrow.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\RightArrow.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\FocusTrack.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\CheckBox.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\CheckBoxSelected.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\RoundCheckBox.bmp",
+            @"Content\Textures\GameComponents\BianduiLiebiao\Data\RoundCheckBoxSelected.bmp",
+            
+            // HelpPlugin (3��)
+            @"Content\Textures\GameComponents\Help\Data\Background.bmp",
+            @"Content\Textures\GameComponents\Help\Data\Button.bmp",
+            @"Content\Textures\GameComponents\Help\Data\ButtonSelected.bmp",
+        ];
 
         public void InitializePlugins(MainGameScreen screen)
         {
-            IBasePlugin plugin = new HelpPlugin.HelpPlugin(); //  Plugin.Plugins.AvailablePlugins.Find("HelpPlugin");
+            var swTotal = Stopwatch.StartNew();
+            var sw = Stopwatch.StartNew();
+            
+            // ?? �����Ż�������Ԥ�������в������
+            sw.Restart();
+            CacheManager.PreloadTextures(PluginTexturePaths, isTemp: true);
+            sw.Stop();
+            Debug.WriteLine($"[�������] ? ����Ԥ�������: {sw.ElapsedMilliseconds} ms");
+            
+            IBasePlugin plugin = new HelpPlugin.HelpPlugin();
             if ((plugin != null) && (plugin.Instance is IHelp))
             {
                 this.HelpPlugin = plugin.Instance as IHelp;
@@ -63,7 +142,9 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.HelpPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.HelpPlugin.Instance as GameObject);
             }
-            plugin = new PersonDetailPlugin.PersonDetailPlugin();  // Plugin.Plugins.AvailablePlugins.Find("PersonDetailPlugin");
+            LogPluginTime("HelpPlugin", sw);
+            
+            plugin = new PersonDetailPlugin.PersonDetailPlugin();
             if ((plugin != null) && (plugin.Instance is IPersonDetail))
             {
                 this.PersonDetailPlugin = plugin.Instance as IPersonDetail;
@@ -71,7 +152,8 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.PersonDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.PersonDetailPlugin.Instance as GameObject);
             }
-            plugin = new TroopDetailPlugin.TroopDetailPlugin();  // Plugin.Plugins.AvailablePlugins.Find("TroopDetailPlugin");
+            LogPluginTime("PersonDetailPlugin", sw);
+            plugin = new TroopDetailPlugin.TroopDetailPlugin();
             if ((plugin != null) && (plugin.Instance is ITroopDetail))
             {
                 this.TroopDetailPlugin = plugin.Instance as ITroopDetail;
@@ -79,15 +161,19 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TroopDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.TroopDetailPlugin.Instance as GameObject);
             }
-            plugin = new ArchitectureDetail.ArchitectureDetailPlugin(); // Plugin.Plugins.AvailablePlugins.Find("ArchitectureDetailPlugin");
+            LogPluginTime("TroopDetailPlugin", sw);
+            
+            plugin = new ArchitectureDetail.ArchitectureDetailPlugin();
             if ((plugin != null) && (plugin.Instance is IArchitectureDetail))
             {
                 this.ArchitectureDetailPlugin = plugin.Instance as IArchitectureDetail;
-                this.ArchitectureDetailPlugin. SetGraphicsDevice();
+                this.ArchitectureDetailPlugin.SetGraphicsDevice();
                 this.ArchitectureDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.ArchitectureDetailPlugin.Instance as GameObject);
             }
-            plugin = new FactionTechniquesPlugin.FactionTechniquesPlugin();  // Plugin.Plugins.AvailablePlugins.Find("FactionTechniquesPlugin");
+            LogPluginTime("ArchitectureDetailPlugin", sw);
+            
+            plugin = new FactionTechniquesPlugin.FactionTechniquesPlugin();
             if ((plugin != null) && (plugin.Instance is IFactionTechniques))
             {
                 this.FactionTechniquesPlugin = plugin.Instance as IFactionTechniques;
@@ -95,7 +181,9 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.FactionTechniquesPlugin.SetGraphicsDevice();
                 screen.PluginList.Add(this.FactionTechniquesPlugin.Instance as GameObject);
             }
-            plugin = new TreasureDetailPlugin.TreasureDetailPlugin();  // Plugin.Plugins.AvailablePlugins.Find("TreasureDetailPlugin");
+            LogPluginTime("FactionTechniquesPlugin", sw);
+            
+            plugin = new TreasureDetailPlugin.TreasureDetailPlugin();;
             if ((plugin != null) && (plugin.Instance is ITreasureDetail))
             {
                 this.TreasureDetailPlugin = plugin.Instance as ITreasureDetail;
@@ -103,6 +191,8 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TreasureDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.TreasureDetailPlugin.Instance as GameObject);
             }
+            LogPluginTime("TreasureDetailPlugin", sw);
+            
             plugin = new CommentTextPlugin.CommentTextPlugin();  // Plugin.Plugins.AvailablePlugins.Find("CommentTextPlugin");
             if ((plugin != null) && (plugin.Instance is IConmentText))
             {
@@ -149,6 +239,18 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.ScreenBlindPlugin.SetGraphicsDevice();
                 screen.PluginList.Add(this.ScreenBlindPlugin.Instance as GameObject);
             }
+            
+            // 🆕 初始化地块势力范围信息插件
+            plugin = new TileInfluenceInfoPlugin.TileInfluenceInfoPlugin();
+            if ((plugin != null) && (plugin.Instance is ITileInfluenceInfo))
+            {
+                this.TileInfluenceInfoPlugin = plugin.Instance as ITileInfluenceInfo;
+                this.TileInfluenceInfoPlugin.SetScreen(screen);
+                this.TileInfluenceInfoPlugin.SetGraphicsDevice();
+                screen.PluginList.Add(this.TileInfluenceInfoPlugin.Instance as GameObject);
+            }
+            LogPluginTime("TileInfluenceInfoPlugin", sw);
+            
             plugin = new MapViewSelectorPlugin.MapViewSelectorPlugin();  // Plugin.Plugins.AvailablePlugins.Find("MapViewSelectorPlugin");
             if ((plugin != null) && (plugin.Instance is IMapViewSelector))
             {
@@ -173,6 +275,8 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TabListPlugin.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.TabListPlugin.Instance as GameObject);
             }
+            LogPluginTime("TabListPlugin", sw);
+            
             plugin = new OptionDialogPlugin.OptionDialogPlugin();  // Plugin.Plugins.AvailablePlugins.Find("OptionDialogPlugin");
             if ((plugin != null) && (plugin.Instance is IOptionDialog))
             {
@@ -366,6 +470,7 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.youcelanPlugin.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.youcelanPlugin.Instance as GameObject);
             }
+            LogPluginTime("youcelanPlugin", sw);
 
             plugin = new BianduiLiebiaoChajian.TabListPlugin();  // Plugin.Plugins.AvailablePlugins.Find("BianduiLiebiaoChajian");
             if ((plugin != null) && (plugin.Instance is IBianduiLiebiao))
@@ -382,7 +487,43 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.BianduiLiebiao.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.BianduiLiebiao.Instance as GameObject);
             }
+            LogPluginTime("BianduiLiebiaoChajian", sw);
+
+            // ��ʼ����Ϸ�ڱ༭����� (������ǿ����)
+            plugin = new InGameEditorPlugin.InGameEditorPlugin();
+            if ((plugin != null) && (plugin.Instance is IInGameEditor))
+            {
+                this.InGameEditorPlugin = plugin.Instance as IInGameEditor;
+                this.InGameEditorPlugin.SetGraphicsDevice(); // �ȴ���EditorFrame
+                this.InGameEditorPlugin.SetScreen(screen);   // ������screen (����editorFrame������)
+                this.InGameEditorPlugin.SetNumberInputer(this.NumberInputerPlugin);
+                
+                // ȷ�������Ѽ��أ����༭��ʹ��
+                if (Session.Current.Font == null)
+                {
+                    Session.LoadFont(Setting.Current.Language);
+                }
+                
+                screen.PluginList.Add(this.InGameEditorPlugin.Instance as GameObject);
+            }
+            LogPluginTime("InGameEditorPlugin", sw);
             
+            swTotal.Stop();
+            Debug.WriteLine($"[�������] ? ���в����ʼ����ɣ��ܺ�ʱ: {swTotal.ElapsedMilliseconds} ms");
+        }
+        
+        private static void LogPluginTime(string pluginName, Stopwatch sw)
+        {
+            long elapsed = sw.ElapsedMilliseconds;
+            if (elapsed > 100)
+            {
+                Debug.WriteLine($"[�������] ?? {pluginName}: {elapsed} ms");
+            }
+            else if (elapsed > 10)
+            {
+                Debug.WriteLine($"[�������] {pluginName}: {elapsed} ms");
+            }
+            sw.Restart();
         }
 
     } 

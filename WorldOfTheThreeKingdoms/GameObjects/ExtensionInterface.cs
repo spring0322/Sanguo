@@ -1,11 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.IO;
 using Microsoft.CSharp;
 using System.CodeDom.Compiler;
 using GameObjects;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 
 
@@ -76,7 +76,7 @@ public class ExtensionInterface
                     var csc = new CSharpCodeProvider(new Dictionary<string, string>() { { "CompilerVersion", "v3.5" } });
                     var parameters = new CompilerParameters(new[] { "mscorlib.dll", "System.Core.dll", 
                         ProgramFilesx86() + @"/Microsoft XNA/XNA Game Studio/v3.0/References/Windows/x86/Microsoft.Xna.Framework.dll", 
-                        "GameObjects.dll", "GameGlobal.dll" });
+                        "GameObjects.dll", "WorldOfTheThreeKingdoms.GameGlobal.dll" });
                     Session.Parameters.GenerateExecutable = false;
                     CompilerResults results = csc.CompileAssemblyFromSource(parameters, file.Value);
                     if (results.Errors.Count <= 0)
@@ -114,6 +114,7 @@ public class ExtensionInterface
 
     public static void call(String methodName, Object[] param)
     {
+        /*
         if (!Session.GlobalVariables.EnableExtensions)
         {
             // extensions not enabled
@@ -163,6 +164,7 @@ public class ExtensionInterface
                 //}
             }
         }
+        */
     }
 
 }

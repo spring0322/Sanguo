@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using GameObjects;
 
-namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     public class AIDifficultySettings
     {

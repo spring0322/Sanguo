@@ -62,30 +62,79 @@ namespace GameManager
         {
             get
             {
+                if (string.IsNullOrEmpty(PlayTime)) return "";
                 int playTime;
                 if (int.TryParse(PlayTime, out playTime))
                 {
                     return (playTime / 60 / 60) + ":" + (playTime / 60 % 60);
                 }
-                return "";
+                // If it's already a TimeSpan string, like "00:05:30", just use it
+                return PlayTime.Trim();
             }
         }
 
+        private string _summary;
         public string Summary
         {
             get
             {
-                //string id =int.Parse( ID) >= 10 ? ID.ToString() : "0" + ID.ToString();
-                string str ="存档"+ID+":    " +"空 白 存 档";
-
-                string exp = ID == "0" ? "(自动保存) " : "";
-
-                if (!String.IsNullOrEmpty(Title))
+                // 🔥 修复：严格按照文档格式实现存档显示，并添加文本截断防止超出UI
+                // 格式："存档" + ID + ":    " + Info + "   |   " + Title + "   |   " + Time + "   |   " + Create + "   |   (" + GameTime + ")"
+                // 日期：2026-02-25
+                
+                if (string.IsNullOrEmpty(Title))
                 {
-                    str = String.Join("  ", new string[] { "存档"+ ID + ":    ", Info, Title, Time.ToSeasonDate(), Create.ToSeasonShortTime(), "(" + GameTime + ")" });
+                    return $"存档{ID}: 空白存档";
                 }
-                return exp + str;
+
+                // Info: 玩家势力名称，如果为空则显示"电脑"（限制长度）
+                string infoDisplay = string.IsNullOrEmpty(Info) ? "电脑" : Info.Trim();
+                
+                // 🔥 向后兼容老存档：如果由于旧Bug存入了"电脑"，但实际包含玩家ID，则显示"玩家"
+                if (infoDisplay == "电脑" && !string.IsNullOrWhiteSpace(Players))
+                {
+                    infoDisplay = "玩家";
+                }
+
+                if (infoDisplay.Length > 8) infoDisplay = infoDisplay.Substring(0, 7) + "…";
+                
+                // Title: 剧本标题（限制长度）
+                string titleDisplay = Title.Trim();
+                if (titleDisplay.Length > 10) titleDisplay = titleDisplay.Substring(0, 9) + "…";
+                
+                // Time: 游戏内日期（限制长度）
+                string timeDisplay = string.IsNullOrEmpty(Time) ? "----" : Time.Trim();
+                if (timeDisplay.Length > 12) timeDisplay = timeDisplay.Substring(0, 11) + "…";
+                
+                // Create: 存档创建时间（简化格式）
+                string createDisplay = "";
+                if (!string.IsNullOrEmpty(Create))
+                {
+                    if (DateTime.TryParse(Create, out DateTime dt))
+                    {
+                        createDisplay = dt.ToString("MM-dd HH:mm");  // 简化为月-日 时:分
+                    }
+                    else
+                    {
+                        createDisplay = Create.Trim();
+                        if (createDisplay.Length > 11) createDisplay = createDisplay.Substring(0, 10) + "…";
+                    }
+                }
+                
+                // GameTime: 累计游戏时间 (HH:MM)
+                string gameTimeDisplay = string.IsNullOrWhiteSpace(GameTime) ? "00:00" : GameTime.Trim();
+                
+                // 按照文档格式拼接（使用紧凑分隔符去空格）
+                if (string.IsNullOrEmpty(createDisplay))
+                {
+                    return $"存档{ID}:{infoDisplay}|{titleDisplay}|{timeDisplay}|({gameTimeDisplay})";
+                }
+                else
+                {
+                    return $"存档{ID}:{infoDisplay}|{titleDisplay}|{timeDisplay}|{createDisplay}|({gameTimeDisplay})";
+                }
             }
+            set { _summary = value; }
         }
     }
 }

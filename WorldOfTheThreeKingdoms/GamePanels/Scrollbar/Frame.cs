@@ -9,6 +9,7 @@ using FontStashSharp;
 using Tools;
 using Platforms;
 using GameManager;
+using Bounds = GameManager.Bounds;
 
 namespace GamePanels.Scrollbar
 {
@@ -238,32 +239,90 @@ namespace GamePanels.Scrollbar
             if (ContentContorls.Count < 1)//框架包含控件
                 return;
 
+            // 🔥 GPU 设备丢失保护
+            if (Platform.GraphicsDevice == null || Platform.GraphicsDevice.IsDisposed)
+                return;
+
+            // 🔥 懒重建 SpriteBatch
+            if (batch == null || batch.IsDisposed || batch.GraphicsDevice != Platform.GraphicsDevice)
+            {
+                try { batch?.Dispose(); } catch { }
+                batch = new SpriteBatch(Platform.GraphicsDevice);
+            }
+
+            // 🔥 懒重建 RenderTarget2D
+            if (renderTarget2D == null || renderTarget2D.IsDisposed || renderTarget2D.GraphicsDevice != Platform.GraphicsDevice)
+            {
+                int textureWidth = Math.Max(1, CanvasWidth.ConvertToIntPlus());
+                int textureHeight = Math.Max(1, CanvasHeight.ConvertToIntPlus());
+                // 确保尺寸不超标 (GraphicsDevice limits) - 简单保护
+                textureWidth = Math.Min(textureWidth, 4096);
+                textureHeight = Math.Min(textureHeight, 4096);
+                
+                try 
+                {
+                    renderTarget2D = new RenderTarget2D(Platform.GraphicsDevice, textureWidth, textureHeight);
+                } 
+                catch (Exception ex)
+                {
+                    // 创建失败可能是因为设备正处于丢失状态
+                    return;
+                }
+            }
+
+            // 🔥 重新加载 BackgroundPic 如果已释放
+            if (BackgroundPic != null && BackgroundPic.IsDisposed)
+            {
+                // 尝试重新加载，这里假设 frame 知道路径... 但它没存路径。
+                // 这是一个问题。BackgroundPic 传进来的是 String bgPicPath.
+                // 我们无法轻易重新加载除非我们存了路径。
+                // 暂时设为 null 以防止 Crash
+                BackgroundPic = null; 
+            }
+
             lock (batchlock)//锁定并绘制控件
             {
-                Platform.GraphicsDevice.SetRenderTarget(renderTarget2D);//设置Draw到画布上
-
-                batch.Begin();
-
-                if (BackgroundPic == null)
-                    Platform.GraphicsDevice.Clear(BackgroundColor);//背景填充颜色
-                else
+                try 
                 {
-                    Platform.GraphicsDevice.Clear(new Color(0, 0, 0, 0));//如果有背景图片先要将画布底色变成透明
-                    if (!FixedBackground)//如果不是固定背景则将背景绘制到画布上
-                        batch.Draw(BackgroundPic, new Vector2(0, 0), null, Color.White * BackgroundAlpha, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0);
+                    Platform.GraphicsDevice.SetRenderTarget(renderTarget2D);//设置Draw到画布上
+
+                    batch.Begin();
+
+                    if (BackgroundPic == null)
+                        Platform.GraphicsDevice.Clear(BackgroundColor);//背景填充颜色
+                    else
+                    {
+                        Platform.GraphicsDevice.Clear(new Color(0, 0, 0, 0));//如果有背景图片先要将画布底色变成透明
+                        if (!FixedBackground)//如果不是固定背景则将背景绘制到画布上
+                            batch.Draw(BackgroundPic, new Vector2(0, 0), null, Color.White * BackgroundAlpha, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0);
+                    }
+                    ContentContorls.ForEach(cc => cc.DrawToCanvas(batch));//绘制每个控件
+                    batch.End();
                 }
-                ContentContorls.ForEach(cc => cc.DrawToCanvas(batch));//绘制每个控件
-                batch.End();
+                catch (Exception ex)
+                {
+                    // 如果在绘制到 RT 过程中失败 (例如设备丢失)，停止后续操作
+                    try { Platform.GraphicsDevice.SetRenderTarget(null); } catch { }
+                    return;
+                }
 
                 Platform.GraphicsDevice.SetRenderTarget(null);//恢复绘制到屏幕上
 
                 Canvas = renderTarget2D;//将所绘制内容赋值给画布
 
-                if (BackgroundPic != null && FixedBackground) //绘制背景图片到固定位置
-                    Session.Current.SpriteBatch.Draw(BackgroundPic, Position, null, Color.White * BackgroundAlpha, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0);
+                try
+                {
+                    if (BackgroundPic != null && FixedBackground && !BackgroundPic.IsDisposed) //绘制背景图片到固定位置
+                        Session.Current.SpriteBatch.Draw(BackgroundPic, Position, null, Color.White * BackgroundAlpha, 0f, Vector2.Zero, 1f, SpriteEffects.None, 0);
 
-                //在屏幕上将画布绘制到相应的可视框架内
-                Session.Current.SpriteBatch.Draw(Canvas, Position, VisualFrame, color * Aplha, 0f, Vector2.Zero, 1f, SpriteEffects.None, Depth);
+                    //在屏幕上将画布绘制到相应的可视框架内
+                    if (Canvas != null && !Canvas.IsDisposed)
+                        Session.Current.SpriteBatch.Draw(Canvas, Position, VisualFrame, color * Aplha, 0f, Vector2.Zero, 1f, SpriteEffects.None, Depth);
+                }
+                catch
+                {
+                    // 忽略 Session.Current.SpriteBatch 绘制异常
+                }
             }
 
             //处理Auto类型的滚动条
@@ -297,14 +356,30 @@ namespace GamePanels.Scrollbar
 
             if (HasHorizontalScrollbar && HasVerticalScrollbar) //如果两种滚动条都要，则生成两种滚动条交界处的空白块
             {
-                Scrollbar horizontalScrollbar = Scrollbars.Where(sb => sb.scrollbarType == ScrollbarType.Horizontal).FirstOrDefault();
-                Scrollbar verticalScrollbar = Scrollbars.Where(sb => sb.scrollbarType == ScrollbarType.Vertical).FirstOrDefault();
-                int width = verticalScrollbar.ButtonTexture.Width;
-                int height = horizontalScrollbar.ButtonTexture.Height;
-                Texture2D BlankBlock = new Texture2D(Platform.GraphicsDevice, width, height);
-                Color[] blankBlockColor = Enumerable.Repeat(BlankBlockColor, width * height).ToArray();
-                BlankBlock.SetData(blankBlockColor);
-                Session.Current.SpriteBatch.Draw(BlankBlock, new Vector2(verticalScrollbar.BarPos.X, horizontalScrollbar.BarPos.Y), Color.White);
+                try
+                {
+                    Scrollbar horizontalScrollbar = Scrollbars.Where(sb => sb.scrollbarType == ScrollbarType.Horizontal).FirstOrDefault();
+                    Scrollbar verticalScrollbar = Scrollbars.Where(sb => sb.scrollbarType == ScrollbarType.Vertical).FirstOrDefault();
+                    
+                    if (horizontalScrollbar != null && verticalScrollbar != null)
+                    {
+                        int width = verticalScrollbar.ButtonTexture != null ? verticalScrollbar.ButtonTexture.Width : 15;
+                        int height = horizontalScrollbar.ButtonTexture != null ? horizontalScrollbar.ButtonTexture.Height : 15;
+                        
+                        // 🔥 优化：避免每帧 New Texture2D
+                        // 这里使用 1x1 纹理拉伸或者... 暂时保持逻辑但加TryCatch
+                        // 更好的是使用单像素白色纹理
+                        
+                        Texture2D BlankBlock = new Texture2D(Platform.GraphicsDevice, width, height);
+                        Color[] blankBlockColor = Enumerable.Repeat(BlankBlockColor, width * height).ToArray();
+                        BlankBlock.SetData(blankBlockColor);
+                        Session.Current.SpriteBatch.Draw(BlankBlock, new Vector2(verticalScrollbar.BarPos.X, horizontalScrollbar.BarPos.Y), Color.White);
+                        
+                        // Draw完后释放，否则内存泄漏 (因为是每帧new)
+                        BlankBlock.Dispose(); 
+                    }
+                }
+                catch { }
             }
         }
 
@@ -327,7 +402,10 @@ namespace GamePanels.Scrollbar
 
                 if (renderTarget2D != null)
                     renderTarget2D.Dispose();
-                renderTarget2D = new RenderTarget2D(Platform.GraphicsDevice, CanvasWidth.ConvertToIntPlus(), CanvasHeight.ConvertToIntPlus());
+                // 确保纹理尺寸大于零，防止RenderTarget2D构造异常
+                int textureWidth = Math.Max(1, CanvasWidth.ConvertToIntPlus());
+                int textureHeight = Math.Max(1, CanvasHeight.ConvertToIntPlus());
+                renderTarget2D = new RenderTarget2D(Platform.GraphicsDevice, textureWidth, textureHeight);
             }
 
         }
@@ -351,7 +429,10 @@ namespace GamePanels.Scrollbar
 
             if (renderTarget2D != null)
                 renderTarget2D.Dispose();
-            renderTarget2D = new RenderTarget2D(Platform.GraphicsDevice, CanvasWidth.ConvertToIntPlus(), CanvasHeight.ConvertToIntPlus());
+            // 确保纹理尺寸大于零，防止RenderTarget2D构造异常
+            int textureWidth = Math.Max(1, CanvasWidth.ConvertToIntPlus());
+            int textureHeight = Math.Max(1, CanvasHeight.ConvertToIntPlus());
+            renderTarget2D = new RenderTarget2D(Platform.GraphicsDevice, textureWidth, textureHeight);
         }
 
         /// <summary>

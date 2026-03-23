@@ -12,7 +12,7 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
 
         public override bool CheckConditionKind(Person person)
         {
-            Person p1 = Session.Current.Scenario.Persons.GetGameObject(personID) as Person;
+            Person p1 = (Session.Current.Scenario.Persons.GetGameObject(personID) is Person ? (Person)Session.Current.Scenario.Persons.GetGameObject(personID) : null);
             return !(person.BelongedFactionWithPrincess != null && p1.BelongedFactionWithPrincess != null && person.BelongedFactionWithPrincess == p1.BelongedFactionWithPrincess);
         }
 
@@ -28,3 +28,4 @@ using System.Runtime.Serialization;namespace GameObjects.Conditions.ConditionKin
         }
     }
 }
+

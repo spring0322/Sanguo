@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -20,6 +20,7 @@ namespace DateRunnerPlugin
         private string author = "clip_on";
         private const string DataPath = @"Content\Textures\GameComponents\DateRunner\Data\";
         private DateRunner dateRunner = new DateRunner();
+        public DateRunner DateRunner => dateRunner;
         private string description = "日期进行工具";
         private const string Path = @"Content\Textures\GameComponents\DateRunner\";
         private string pluginName = "DateRunnerPlugin";
@@ -61,7 +62,7 @@ namespace DateRunnerPlugin
             XmlNode nextSibling = document.FirstChild.NextSibling;
             XmlNode node = nextSibling.ChildNodes.Item(0);
             this.dateRunner.BackgroundTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\DateRunner\Data\" + node.Attributes.GetNamedItem("FileName").Value);
-            this.dateRunner.Align = (ToolAlign) Enum.Parse(typeof(ToolAlign), node.Attributes.GetNamedItem("Align").Value);
+            this.dateRunner.Align = Enum.Parse<ToolAlign>(node.Attributes.GetNamedItem("Align").Value);
             this.dateRunner.Width = int.Parse(node.Attributes.GetNamedItem("Width").Value);
             node = nextSibling.ChildNodes.Item(1);
             this.dateRunner.UpperArrowTexture = CacheManager.GetTempTexture(@"Content\Textures\GameComponents\DateRunner\Data\" + node.Attributes.GetNamedItem("FileName").Value);
@@ -204,6 +205,36 @@ namespace DateRunnerPlugin
             get
             {
                 return this.version;
+            }
+        }
+
+        /// <summary>
+        /// 获取日期运行器是否正在运行
+        /// 技术性修复：实现IsRunning属性以支持AI系统的线程安全检查
+        /// </summary>
+        public bool IsRunning
+        {
+            get
+            {
+                // 安全访问内部DateRunner的IsRunning状态
+                try
+                {
+                    return this.dateRunner?.Date?.IsRunning ?? false;
+                }
+                catch
+                {
+                    // 技术性修复：如果访问失败，默认返回false（安全状态）
+                    return false;
+                }
+                }
+            }
+        
+        public bool IsPlaying
+        {
+            get
+            {
+                if (this.dateRunner == null) return false;
+                return this.dateRunner.playing;
             }
         }
     }

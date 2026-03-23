@@ -41,7 +41,7 @@ namespace GamePanels
         /// <summary>
         /// 包含控件所有范围矩阵的列表
         /// </summary>
-        public List<Bounds> bounds { get; set; }
+        public List<GameManager.Bounds> bounds { get; set; }
         //public float Width { get; set; }
         //public float Height { get; set; }
         public Frame baseFrame { get; set; }
@@ -157,7 +157,19 @@ namespace GamePanels
             Text = text;
             Name = name;
             Key = Text + "#" + Name;
-            TextureRecs = Session.TextureRecs[Key];
+            
+            if (Session.TextureRecs != null && Session.TextureRecs.ContainsKey(Key))
+            {
+                TextureRecs = Session.TextureRecs[Key];
+            }
+            else
+            {
+                // 🔥 技术性修复：防止 KeyNotFoundException 导致程序崩溃
+                System.Diagnostics.Debug.WriteLine($"[ButtonTexture] 警告: 找不到纹理配置 Key: {Key}");
+                // 创建一个虚拟的 TextureRecs 避免后续空引用
+                TextureRecs = new TextureRecs { Recs = new Rectangle[] { new Rectangle(0, 0, 1, 1) } };
+            }
+
             if (pos != null) Position = (Vector2)pos;
             Alpha = 1f;
             Scale = 1f;
@@ -303,13 +315,13 @@ namespace GamePanels
         {
             if (Visible)
             {
-                bounds = new List<Bounds>();
+                bounds = new List<GameManager.Bounds>();
                 batch.Draw(CacheManager.LoadTexture(Text), Position * DrawScale, Rectangle, color * Alpha, 0f, Vector2.Zero, Scale, SpriteEffects.None, Depth);
-                bounds.Add(new Bounds() { X = Position.X, Y = Position.Y, X2 = Position.X + ((Rectangle)Rectangle).Width, Y2 = Position.Y + ((Rectangle)Rectangle).Height });
+                bounds.Add(new GameManager.Bounds() { X = Position.X, Y = Position.Y, X2 = Position.X + ((Rectangle)Rectangle).Width, Y2 = Position.Y + ((Rectangle)Rectangle).Height });
                 if (!String.IsNullOrEmpty(ViewText))
                 {
 
-                    List<Bounds> textBounds = CacheManager.DrawStringReturnBounds(batch, Session.Current.Font, Text, Position * DrawScale, (MouseOver || Selected) ? ViewTextColor2 * Alpha : ViewTextColor1 * Alpha, 0f, Vector2.Zero, Scale * ViewTextScale, SpriteEffects.None, Depth);
+                    List<GameManager.Bounds> textBounds = CacheManager.DrawStringReturnBounds(batch, Session.Current.Font, Text, Position * DrawScale, (MouseOver || Selected) ? ViewTextColor2 * Alpha : ViewTextColor1 * Alpha, 0f, Vector2.Zero, Scale * ViewTextScale, SpriteEffects.None, Depth);
                     //处理文字边界范围
                     textBounds.Add(bounds[0]);
                     bounds = textBounds;
@@ -323,9 +335,9 @@ namespace GamePanels
             if (!String.IsNullOrEmpty(ViewText))
                 bounds = CacheManager.CalculateTextBounds(Session.Current.Font, Text, OffsetPos, Scale);
             else
-                bounds = new List<Bounds>();
+                bounds = new List<GameManager.Bounds>();
 
-            bounds.Add(new Bounds() { X = OffsetPos.X, Y = OffsetPos.Y, X2 = OffsetPos.X + ((Rectangle)Rectangle).Width, Y2 = OffsetPos.Y + ((Rectangle)Rectangle).Height });//加上复选框的范围
+            bounds.Add(new GameManager.Bounds() { X = OffsetPos.X, Y = OffsetPos.Y, X2 = OffsetPos.X + ((Rectangle)Rectangle).Width, Y2 = OffsetPos.Y + ((Rectangle)Rectangle).Height });//加上复选框的范围
             Width = 0;
             Height = 0;
             bounds.ForEach(b =>
@@ -371,11 +383,11 @@ namespace GamePanels
 
                 PreMouseOver = MouseOver;
 
-                foreach (Bounds relativeBound in bounds)
+                foreach (GameManager.Bounds relativeBound in bounds)
                     //通过三个条件相与判定鼠标是否经过控件
                     if (IsInFrame(relativeBound))//控件某一范围在可视框架之内
                     {
-                        Bounds bound = new Bounds()//将画布内控件范围的相对坐标变成屏幕上当前的绝对坐标
+                        GameManager.Bounds bound = new GameManager.Bounds()//将画布内控件范围的相对坐标变成屏幕上当前的绝对坐标
                         {
                             X = baseFrame.Position.X + relativeBound.X - baseFrame.VisualFrame.X,
                             Y = baseFrame.Position.Y + relativeBound.Y - baseFrame.VisualFrame.Y,
@@ -405,7 +417,7 @@ namespace GamePanels
         /// </summary>
         /// <param name="bound">控件的范围</param>
         /// <returns>返回是否在框架内的布尔值</returns>
-        protected bool IsInFrame(Bounds bound)
+        protected bool IsInFrame(GameManager.Bounds bound)
         {
             return (bound.X > baseFrame.VisualFrame.X && bound.X < baseFrame.VisualFrame.X + baseFrame.VisualFrame.Width) ||
                 (bound.X2 > baseFrame.VisualFrame.X && bound.X2 < baseFrame.VisualFrame.X + baseFrame.VisualFrame.Width) ||

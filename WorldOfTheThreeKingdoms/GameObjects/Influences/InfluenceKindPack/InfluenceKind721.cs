@@ -1,5 +1,6 @@
-﻿using GameObjects;
+using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -8,6 +9,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind721 : InfluenceKind
     {
+        [DataMember]
         private int maxDays;
 
         public override void ApplyInfluenceKind(Troop troop)
@@ -29,7 +31,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             int num = 0;
             int pureFightingForce = source.PureFightingForce;
@@ -40,7 +42,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
                     return -100;
                 }
 
-                int num3 = source.GetStratagemSuccessChanceCredit(troop,
+                int num3 = source.GetStratagemSuccessChanceCredit(stratagem, troop,
                     source.InevitableAttractOnLowerIntelligence || source.InevitableStratagemOnLowerIntelligence, 
                     troop.InvincibleAttract, troop.InvincibleStratagemFromLowerIntelligence);
                 if (num3 > 0)

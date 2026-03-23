@@ -1,4 +1,5 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
+using GameManager;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -27,6 +28,15 @@ namespace GameFreeText
         {
             get
             {
+                if (Session.Current != null && Session.Current.Font != null)
+                {
+                    try
+                    {
+                        return (int)(Session.Current.Font.MeasureString(Text).Y * Builder.Scale);
+                    }
+                    catch { }
+                }
+
                 return Convert.ToInt32(OneWidthHeight.Y * Builder.Scale);  // ((this.TextTexture != null) ? this.TextTexture.Height : 0);
             }
         }
@@ -35,6 +45,14 @@ namespace GameFreeText
         {
             get
             {
+                if (Session.Current != null && Session.Current.Font != null)
+                {
+                    try
+                    {
+                        return (int)(Session.Current.Font.MeasureString(Text).X * Builder.Scale);
+                    }
+                    catch { }
+                }
                 return Convert.ToInt32(OneWidthHeight.X * Text.Length * Builder.Scale);  // ((this.TextTexture != null) ? this.TextTexture.Width : 0);
             }
         }

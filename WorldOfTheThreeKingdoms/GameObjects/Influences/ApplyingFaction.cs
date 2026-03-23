@@ -14,6 +14,7 @@ namespace GameObjects.Influences
         [DataMember]
         public int applierID;
 
+        private ApplyingFaction() { }
         public ApplyingFaction(Faction a, Applier p, int i)
         {
             this.faction = a;

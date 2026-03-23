@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Influences;
 using Microsoft.Xna.Framework;
@@ -11,6 +11,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind392 : InfluenceKind
     {
+        [DataMember]
         private int days = 1;
 
         public override void ApplyInfluenceKind(Troop troop)

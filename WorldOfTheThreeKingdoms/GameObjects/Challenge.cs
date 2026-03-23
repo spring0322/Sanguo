@@ -1,4 +1,4 @@
-﻿using GameGlobal;
+﻿using WorldOfTheThreeKingdoms.GameGlobal;
 using GameObjects.Animations;
 using GameObjects.Influences;
 using GameObjects.MapDetail;
@@ -55,28 +55,21 @@ namespace GameObjects
                 
                 try
                 {
+                    System.Diagnostics.Debug.WriteLine("[单挑] 准备显示单挑界面");
                     Session.MainGame.mainGameScreen.EnableUpdate = false;
 
                     challengeShow(damage, maxStrengthPerson, destination);
-
-                    //int returnValue;
-                    //returnValue = this.challengeShow(maxStrengthPerson, destination);
-                    //returnValue = 10;
-
-                    //if (returnValue >= -4 && returnValue <= 10 && returnValue != 0)
-                    //{
-                    //    flag = returnValue;
-                    //}
-                    //else   //返回值出错时避免跳出
-                    //{
-                    //    flag = (GameObject.Chance(chance) ? 1 : 2);
-                    //}
-
                 }
-                catch
+                catch (Exception ex)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[单挑错误] 单挑界面显示失败: {ex.Message}");
+                    
+                    // 降级处理：直接计算结果
                     flag = (GameObject.Chance(chance) ? 1 : 2);
-                    damage.ChallengeHappened = true;  //单挑发生
+                    damage.ChallengeHappened = true;
+                    
+                    // 确保游戏更新恢复
+                    Session.MainGame.mainGameScreen.EnableUpdate = true;
                 }
             }
             else
@@ -129,43 +122,91 @@ namespace GameObjects
 
         private void challengeShow(TroopDamage damage, Person maxStrengthPerson, Person destination)
         {
-            DantiaoLayer.Persons = new List<Person>()
+            try
             {
-                maxStrengthPerson,
-                destination
-            };
+                System.Diagnostics.Debug.WriteLine($"[单挑] 开始显示单挑: {maxStrengthPerson.Name} vs {destination.Name}");
+                
+                // 验证必要的资源和状态
+                if (Session.MainGame?.mainGameScreen == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[单挑错误] MainGameScreen为空");
+                    throw new InvalidOperationException("游戏屏幕未初始化");
+                }
+                
+                if (Session.TextureRecs == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[单挑错误] TextureRecs未加载");
+                    throw new InvalidOperationException("纹理配置未加载");
+                }
+                
+                DantiaoLayer.Persons = new List<Person>()
+                {
+                    maxStrengthPerson,
+                    destination
+                };
 
-            damage.ChallengeStarted = true;
+                damage.ChallengeStarted = true;
 
-            Session.MainGame.mainGameScreen.cloudLayer.Reverse = true;
+                // 安全启动云层效果
+                try
+                {
+                    Session.MainGame.mainGameScreen.cloudLayer.Reverse = true;
+                    Session.MainGame.mainGameScreen.cloudLayer.Start();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[单挑警告] 云层效果启动失败: {ex.Message}");
+                    // 云层效果失败不影响单挑继续
+                }
 
-            Session.MainGame.mainGameScreen.cloudLayer.Start();
+                // 创建单挑层
+                Session.MainGame.mainGameScreen.dantiaoLayer = new DantiaoLayer(
+                    DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 2], 
+                    DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 1]
+                );
 
-            Session.MainGame.mainGameScreen.dantiaoLayer = new DantiaoLayer(DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 2], DantiaoLayer.Persons[DantiaoLayer.Persons.Count - 1]);
-
-            Session.MainGame.mainGameScreen.dantiaoLayer.damage = damage;
-
-            //throw new NotImplementedException("跨平台單挑程序尚未實現！");
-
-            /////////////////////////////////////////////////调用单挑程序
-            //string fileName = @"Dantiao\start.exe";
-
-            //string para = "";
-            //para += this.challengePersonString(maxStrengthPerson);
-            //para += this.challengePersonString(destination);
-
-            //Process myProcess = new Process();
-            //ProcessStartInfo myProcessStartInfo = new ProcessStartInfo(fileName, para);
-            //myProcess.StartInfo = myProcessStartInfo;
-            //myProcess.Start();
-            //while (!myProcess.HasExited)
-            //{
-
-            //    myProcess.WaitForExit();
-
-            //}
-
-            //return myProcess.ExitCode;
+                Session.MainGame.mainGameScreen.dantiaoLayer.damage = damage;
+                
+                System.Diagnostics.Debug.WriteLine("[单挑] 单挑界面创建成功");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[单挑错误] challengeShow失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[单挑错误] 堆栈跟踪: {ex.StackTrace}");
+                
+                // 使用简化的单挑结果计算
+                System.Diagnostics.Debug.WriteLine("[单挑] 启用降级模式");
+                
+                int leftPower = maxStrengthPerson.ChallengeStrength + maxStrengthPerson.Braveness;
+                int rightPower = destination.ChallengeStrength + destination.Braveness;
+                
+                Random random = new Random();
+                leftPower += random.Next(-10, 11);
+                rightPower += random.Next(-10, 11);
+                
+                int result;
+                if (leftPower > rightPower + 20)
+                {
+                    result = 1; // 左方胜利
+                }
+                else if (rightPower > leftPower + 20)
+                {
+                    result = 2; // 右方胜利
+                }
+                else
+                {
+                    result = random.Next(2) + 1; // 随机决定
+                }
+                
+                damage.ChallengeResult = result;
+                damage.ChallengeHappened = true;
+                
+                string message = result == 1 ? $"{maxStrengthPerson.Name} 在单挑中获胜！" : $"{destination.Name} 在单挑中获胜！";
+                System.Diagnostics.Debug.WriteLine($"[单挑降级] {message}");
+                
+                // 确保游戏可以继续
+                Session.MainGame.mainGameScreen.EnableUpdate = true;
+            }
         }
 
         public void HandleChallengeResult(TroopDamage damage, int result, Troop sourceTroop, Person sourcePerson, Troop destinationTroop, Person destinationPerson)

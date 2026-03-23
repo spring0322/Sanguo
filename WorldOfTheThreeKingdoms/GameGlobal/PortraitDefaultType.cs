@@ -1,4 +1,4 @@
-﻿namespace GameGlobal
+namespace WorldOfTheThreeKingdoms.GameGlobal
 {
     /// <summary>
     /// 人物肖像默认类型

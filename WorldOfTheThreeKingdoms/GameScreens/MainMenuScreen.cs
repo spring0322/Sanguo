@@ -1,4 +1,4 @@
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using GamePanels;
@@ -8,9 +8,11 @@ using Microsoft.Xna.Framework.Graphics;
 using Platforms;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Tools;
+using WorldOfTheThreeKingdoms.Tools;
 
 namespace WorldOfTheThreeKingdoms.GameScreens
 {
@@ -135,7 +137,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         string[] hards1 = new string[] { "beginner", "easy", "normal", "hard", "veryhard", "custom" };
         string[] hards2 = new string[] { "入门", "初级", "上级", "超级", "修罗", "自订" };
 
-        string[] AvaliableResolutions = new string[] { "1024*768", "1280*720", "1368*768", "1440*900", "1920*1080" };
+        string[] AvaliableResolutions = new string[] { "1280*720", "1368*768", "1600*900", "1920*1080", "2560*1440" };
 
         //private bool doNotSetDifficultyToCustom = false;
 
@@ -195,7 +197,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             var startReadFile = "startRead.txt";
 
-            if (Platform.Current.UserFileExist(new string[] { startReadFile })[0])
+            // 🔥 技术性修复：安全检查文件存在性，避免ArgumentOutOfRangeException
+            bool startReadFileExists = false;
+            try
+            {
+                var existResults = Platform.Current.UserFileExist(new string[] { startReadFile });
+                startReadFileExists = existResults != null && existResults.Length > 0 && existResults[0];
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 检查startRead.txt存在性失败: {ex.Message}");
+                startReadFileExists = false;
+            }
+
+            if (startReadFileExists)
             {
                 string content = Platform.Current.GetUserText(startReadFile);
                 int version;
@@ -412,13 +427,37 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                             pageIndex1 = 1;
 
-                            Session.StartScenario(CurrentScenario, false);
+                            // 🔥 修复：单挑模式也需要设置势力ID
+                            if (CurrentScenario != null)
+                            {
+                                try
+                                {
+                                    var selectedFactionIDs = ScreenLayers.DantiaoLayer.Persons.NullToEmptyList()
+                                        .Select(pe => ((Person)pe).BelongedFaction.ID)
+                                        .Distinct()
+                                        .ToList();
+                                    
+                                    Session.MainGame.InitializationFactionIDs = selectedFactionIDs;
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 单挑模式设置势力IDs: [{string.Join(", ", selectedFactionIDs)}]");
+                                }
+                                catch (Exception ex)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 单挑模式解析势力ID失败: {ex.Message}");
+                                    Session.MainGame.InitializationFactionIDs = new List<int>();
+                                }
+                            }
+                            else
+                            {
+                                Session.MainGame.InitializationFactionIDs = new List<int>();
+                            }
 
-                            CurrentScenario = null;
+                            Session.StartScenario(CurrentScenario.Name, true, @"Content\Data\Scenario\" + CurrentScenario.Name + ".json");
 
-                            scenario = null;
+                            //CurrentScenario = null;
 
-                            faction = null;
+                            //scenario = null;
+
+                            //faction = null;
                         }
                     }
                     else
@@ -433,7 +472,35 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         else
                         {
                             MenuType = MenuType.New;
-                            Session.StartScenario(CurrentScenario, false);
+                            
+                            // 🔥 修复：将选择的势力转换为 InitializationFactionIDs
+                            if (CurrentScenario != null && !string.IsNullOrEmpty(CurrentScenario.Players))
+                            {
+                                try
+                                {
+                                    var selectedFactionIDs = CurrentScenario.Players
+                                        .Split(',')
+                                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                                        .Select(id => int.Parse(id.Trim()))
+                                        .ToList();
+                                    
+                                    Session.MainGame.InitializationFactionIDs = selectedFactionIDs;
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 设置玩家势力IDs: [{string.Join(", ", selectedFactionIDs)}]");
+                                }
+                                catch (Exception ex)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 解析势力ID失败: {ex.Message}");
+                                    // 如果解析失败，设置为空列表，进入观察者模式
+                                    Session.MainGame.InitializationFactionIDs = new List<int>();
+                                }
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("[MainMenuScreen] 没有选择势力，进入观察者模式");
+                                Session.MainGame.InitializationFactionIDs = new List<int>();
+                            }
+                            
+                            Session.StartScenario(CurrentScenario.Name, true, @"Content\Data\Scenario\" + CurrentScenario.Name + ".json");
                         }
                     }
                 }
@@ -472,7 +539,27 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
                 else
                 {
-                    Session.StartScenario(CurrentScenario, true);
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 读取存档:");
+                    System.Diagnostics.Debug.WriteLine($"  - CurrentScenario.ID: '{CurrentScenario.ID}'");
+                    System.Diagnostics.Debug.WriteLine($"  - CurrentScenario.Name: '{CurrentScenario.Name}'");
+                    #endif
+                    
+                    // 🔥 修复：使用存档在列表中的索引来构造文件名
+                    int saveIndex = ScenarioList.IndexOf(CurrentScenario);
+                    string saveId = saveIndex < 10 ? "0" + saveIndex.ToString() : saveIndex.ToString();
+                    
+                    // 🔥 修复：优先使用 .sav.gz 格式，如果不存在则回退到 .bin
+                    string savGzPath = $@"Save\Save{saveId}.sav.gz";
+                    string binPath = $@"Save\Save{saveId}.bin";
+                    string savePath = File.Exists(savGzPath) ? savGzPath : binPath;
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"  - 存档索引: {saveIndex}");
+                    System.Diagnostics.Debug.WriteLine($"  - 构造的路径: {savePath}");
+                    #endif
+                    
+                    Session.StartScenario(CurrentScenario.Name, false, savePath);
                 }
             };
             btSaveList.Add(btOne);
@@ -829,26 +916,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left1, heightBase + height * 5.5f))
             {
-                ID = "KaiQiZuoBi"
-            };
-            btOne.OnButtonPress += (sender, e) =>
-            {
-                var bt = (ButtonTexture)sender;
-                if (bt.Selected)
-                {
-                    bt.Selected = false;
-                    Session.globalVariablesTemp.EnableCheat = false;
-                }
-                else
-                {
-                    bt.Selected = true;
-                    Session.globalVariablesTemp.EnableCheat = true;
-                }
-            };
-            btConfigList1.Add(btOne);
-
-            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left1, heightBase + height * 6f))
-            {
                 ID = "YingHeMoshi"
             };
             btOne.OnButtonPress += (sender, e) =>
@@ -867,7 +934,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             };
             btConfigList1.Add(btOne);
 
-            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left1, heightBase + height * 6.5f))
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left1, heightBase + height * 6f))
             {
                 ID = "ShengChengZiSi"
             };
@@ -887,6 +954,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             };
             btConfigList1.Add(btOne);
 
+            // 🔧 FIX: 快速战斗系统已移除，注释掉菜单开关
+            /*
             btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left2, heightBase + height * 0f))
             {
                 ID = "JianYiAI"
@@ -906,6 +975,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
             };
             btConfigList1.Add(btOne);
+            */
 
             nstViewDetail = new NumericSetTextureF(0, 9, 9, null, new Vector2(left2 + 250, heightBase + height * 0.5f), true)
             {
@@ -1928,7 +1998,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             int left = 50 + 620;
             height = 84;
-            heightBase = 188;
+            heightBase = 118;
             btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase))
             {
                 ID = "CommonSound"
@@ -2116,7 +2186,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             };
             btSettingList.Add(btOne);
 
-            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 4f))
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 4.0f))
             {
                 ID = "NoticePopulationMove"
             };
@@ -2156,7 +2226,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             };
             btSettingList.Add(btOne);
 
-            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 5f))
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 5.0f))
             {
                 ID = "OutFocus"
             };
@@ -2173,6 +2243,31 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     bt.Selected = true;
                     Setting.Current.GlobalVariables.RunWhileNotFocused = true;
                 }
+            };
+            btSettingList.Add(btOne);
+
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 5.5f))
+            {
+                ID = "EnableLoyaltyAbilityFactor"
+            };
+            btOne.OnButtonPress += (sender, e) =>
+            {
+                var bt = (ButtonTexture)sender;
+                bt.Selected = !bt.Selected;
+                Setting.Current.GlobalVariables.EnableLoyaltyAbilityFactor = bt.Selected;
+            };
+            btSettingList.Add(btOne);
+
+            // 🌧️ 2026-03-11 新增：粒子系统开关
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(left, heightBase + height * 6.0f))
+            {
+                ID = "EnableWeatherParticles"
+            };
+            btOne.OnButtonPress += (sender, e) =>
+            {
+                var bt = (ButtonTexture)sender;
+                bt.Selected = !bt.Selected;
+                Setting.Current.GlobalVariables.EnableWeatherParticles = bt.Selected;
             };
             btSettingList.Add(btOne);
 
@@ -2222,19 +2317,28 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                 btOne.OnButtonPress += (sender, e) =>
                 {
-                    btSettingList.Where(x => !String.IsNullOrEmpty(x.ID) && x.ID.StartsWith(portraitTextureType)).ForEach(x => { x.Selected = false; });
-
                     var bt = (ButtonTexture)sender;
-
-                    bt.Selected = true;
-
                     string id = bt.ID.Replace(portraitTextureType, string.Empty);
 
-                    if (!Setting.Current.PortraitPack.Equals(id))
+                    // 🔧 修复：允许取消选择（点击已选中的头像包会回到原版）
+                    if (bt.Selected && Setting.Current.PortraitPack.Equals(id))
                     {
-                        Setting.Current.PortraitPack = id;
-
+                        // 取消当前选择，回到原版（空字符串）
+                        bt.Selected = false;
+                        Setting.Current.PortraitPack = string.Empty;
                         CacheManager.Clear(CacheType.Live);
+                    }
+                    else
+                    {
+                        // 切换到新的头像包
+                        btSettingList.Where(x => !String.IsNullOrEmpty(x.ID) && x.ID.StartsWith(portraitTextureType)).ForEach(x => { x.Selected = false; });
+                        bt.Selected = true;
+
+                        if (!Setting.Current.PortraitPack.Equals(id))
+                        {
+                            Setting.Current.PortraitPack = id;
+                            CacheManager.Clear(CacheType.Live);
+                        }
                     }
                 };
 
@@ -2297,7 +2401,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 Unit = 1
             };
 
-            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(165, heightBase + height * 4.5f))
+            btOne = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", new Vector2(165, 188 + height * 4.5f))
             {
                 ID = "AutoSave"
             };
@@ -2598,17 +2702,29 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             btScenarioPlayersList = new List<CheckBox>();
             CurrentScenario = null;
-            ScenarioList = Tools.SimpleSerializer.DeserializeJsonFile<List<Scenario>>(file, false, false, false);
+            ScenarioList = SimpleSerializer.DeserializeJsonFile<List<Scenario>>(file, false, false, false);
+
+            if (ScenarioList == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] Error: Failed to load scenarios from {file}.");
+                ScenarioList = new List<Scenario>(); // Initialize to empty list to avoid NRE
+                return; // Optionally return if the list is critical
+            }
+
             //var str = SimpleSerializer.SerializeJson(ScenarioList, false, true, true);
             #region 预处理剧本列表信息
 
             frame_PlayersList = new Frame(new Vector2(0, 151), new Rectangle(0, 0, 1030, 410), null, 1f, FrameScrollbarType.Vertical);
             foreach (var sce in ScenarioList)
             {
-                var btOne = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", string.Format("{0}{1}", sce.Title.WordsSubString(15), sce.Time), null)
+                if (sce == null) continue;
+                string title = sce.Title ?? "Unknown Scenario";
+                string time = sce.Time ?? "";
+                
+                var btOne = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", string.Format("{0}{1}", title.WordsSubString(15), time), null)
                 {
-                    ID = sce.Name,
-                    bounds = new List<FontStashSharp.Bounds>()
+                    ID = sce.Name ?? Guid.NewGuid().ToString(),
+                    bounds = new List<global::GameManager.Bounds>()
                 };
                 btOne.OnButtonPress += (sender, e) =>
                 {
@@ -2630,17 +2746,29 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                         new Task(() =>
                         {
-
-                            while (CommonData.CurrentReady == false)
+                            try
                             {
-                                Platform.Sleep(100);
-                            }
+                                while (CommonData.CurrentReady == false)
+                                {
+                                    Platform.Sleep(100);
+                                }
 
-                            var scenarioName = String.Format(@"Content\Data\Scenario\{0}.json", CurrentScenario.Name);
+                                // 🔥 C# 12：使用字符串插值代替 String.Format
+                                string scenarioName = $@"Content\Data\Scenario\{CurrentScenario.Name}.json";
 
-                            scenario = MainGameScreen.LoadScenarioData(scenarioName, true, null);
+                                System.Diagnostics.Debug.WriteLine($"╔════════════════════════════════════════════════════════════╗");
+                                System.Diagnostics.Debug.WriteLine($"║  [MainMenuScreen] 开始加载剧本: {CurrentScenario.Name}");
+                                System.Diagnostics.Debug.WriteLine($"╚════════════════════════════════════════════════════════════╝");
 
-                            var factions = scenario.Factions;
+                                scenario = MainGameScreen.LoadScenarioData(scenarioName, true, null);
+                                
+                                if (scenario == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] ❌ LoadScenarioData 返回 null");
+                                    return;
+                                }
+
+                                var factions = scenario.Factions;
 
                             btScenarioPlayersList = new List<CheckBox>();
 
@@ -2650,7 +2778,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                 var btPlayer = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", "", null)
                                 {
                                     ID = id0.Name,
-                                    bounds = new List<FontStashSharp.Bounds>()
+                                    bounds = new List<global::GameManager.Bounds>()
                                 };
                                 btPlayer.OnButtonPress += (sender0, e0) =>
                                 {
@@ -2702,6 +2830,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             }
 
                             pageIndex1 = 1;
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"╔════════════════════════════════════════════════════════════╗");
+                                System.Diagnostics.Debug.WriteLine($"║  [MainMenuScreen] ❌ Task 异常");
+                                System.Diagnostics.Debug.WriteLine($"╚════════════════════════════════════════════════════════════╝");
+                                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 异常类型: {ex.GetType().FullName}");
+                                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 异常消息: {ex.Message}");
+                                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 堆栈:\n{ex.StackTrace}");
+                                
+                                if (ex.InnerException != null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 内部异常: {ex.InnerException.Message}");
+                                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 内部堆栈:\n{ex.InnerException.StackTrace}");
+                                }
+                            }
 
                         }).Start();
                     }
@@ -3125,11 +3269,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             foreach (var sce in ScenarioList)
             {
-                var btOne = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", "", null)
+                // 使用 CheckBox 的文本显示 Summary，并设置 Scale 为 0.8f 以防止重叠
+                var btOne = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", sce.Summary, null)
                 {
                     ID = sce.Name,
-                    bounds = new List<FontStashSharp.Bounds>()
+                    bounds = new List<global::GameManager.Bounds>(),
+                    Scale = 0.73f,  // 🔥进一步缩小，防止超长字符溢出
+                    offsetText = new Microsoft.Xna.Framework.Vector2(-30, 0)
                 };
+                
+                // 移除旧的 AlignText 拼接逻辑，直接使用 Summary
+                /*
                 if (ScenarioList.IndexOf(sce) == 0)
                 {
                     btOne.AlignTexts.Add(new AlignText(new Vector2(-120, 0), "自动"));
@@ -3151,6 +3301,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                     btOne.AlignTexts.Add(new AlignText(new Vector2(45 + 100, 2), "暂无进度"));
                 }
+                */
+
+                // 如果是空存档，禁用按钮
+                if (sce == null || String.IsNullOrEmpty(sce.Title))
+                {
+                    btOne.Enable = false;
+                }
+
                 btOne.OnButtonPress += (sender, e) =>
                 {
                     string id = ((CheckBox)sender).ID;
@@ -3197,9 +3355,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         //    var faction = GameScenario.GetGameScenarioFactions(dbConnection);
 
-        //    sce.IDs = String.Join(",", faction.GameObjects.Select(go => (go as Faction).ID.ToString()));
+        //    sce.IDs = String.Join(",", faction.GameObjects.Select(go => ((go is Faction ? (Faction)go : null)).ID.ToString()));
 
-        //    sce.Names = String.Join(",", faction.GameObjects.Select(go => (go as Faction).Name.ToString()).ToArray());
+        //    sce.Names = String.Join(",", faction.GameObjects.Select(go => ((go is Faction ? (Faction)go : null)).Name.ToString()).ToArray());
 
         //    //string gameScenarioSurveyText = GameScenario.GetGameScenarioSurveyText(dbConnection);
         //    return sce;
@@ -3229,13 +3387,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             btConfigList1.FirstOrDefault(bt => bt.ID == "KaiQiTianYan").Selected = (bool)Session.globalVariablesTemp.SkyEye;
 
-            btConfigList1.FirstOrDefault(bt => bt.ID == "KaiQiZuoBi").Selected = (bool)Session.globalVariablesTemp.EnableCheat;
 
             btConfigList1.FirstOrDefault(bt => bt.ID == "YingHeMoshi").Selected = (bool)Session.globalVariablesTemp.HardcoreMode;
 
             btConfigList1.FirstOrDefault(bt => bt.ID == "ShengChengZiSi").Selected = (bool)Session.globalVariablesTemp.createChildren;
 
-            btConfigList1.FirstOrDefault(bt => bt.ID == "JianYiAI").Selected = (bool)Session.globalVariablesTemp.AIQuickBattle;
+            // 🔧 FIX: 快速战斗系统已移除
+            // btConfigList1.FirstOrDefault(bt => bt.ID == "JianYiAI").Selected = (bool)Session.globalVariablesTemp.AIQuickBattle;
 
             btConfigList1.FirstOrDefault(bt => bt.ID == "hougongAlienOnly").Selected = (bool)Session.globalVariablesTemp.hougongAlienOnly;
 
@@ -3533,6 +3691,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             nstShowNumberAddTime.NowNumber = Setting.Current.GlobalVariables.ShowNumberAddTime;
 
             nstSpeedUp.NowNumber = Setting.Current.SpeedUp;
+            
+            btOne = btSettingList.FirstOrDefault(bt => bt.ID == "EnableLoyaltyAbilityFactor");
+            btOne.Selected = Setting.Current.GlobalVariables.EnableLoyaltyAbilityFactor;
+
+            // 🌧️ 2026-03-11 新增：初始化粒子系统开关状态
+            btOne = btSettingList.FirstOrDefault(bt => bt.ID == "EnableWeatherParticles");
+            btOne.Selected = Setting.Current.GlobalVariables.EnableWeatherParticles;
+            
             //cbAIHardList.ForEach(cb => cb.Selected = false);
             //var cbAIHard = cbAIHardList.FirstOrDefault(cb => cb.ID == Setting.Current.Difficulty);
             //if (cbAIHard != null)
@@ -3703,7 +3869,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     for (int i = 0; i < btScenarioSelectListPaged.Count; i++)
                     {
                         var btOne = btScenarioSelectListPaged[i];
-                        btOne.Position = new Vector2(50, 75 + 27 * i);
+                        btOne.Position = new Vector2(50, 75 + 24 * i); // 🔥缩小行间距
                         btOne.Visible = true;
                         btOne.Update();
                     }
@@ -4297,7 +4463,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 for (int i = 0; i < btScenarioSelectListPaged.Count; i++)
                 {
                     var btOne = btScenarioSelectListPaged[i];
-                    btOne.Position = new Vector2(180, 40 + 23 * i);
+                    btOne.Position = new Vector2(180, 40 + 21 * i); // 🔥缩小行间距
                     btOne.Visible = true;
                     btOne.Update();
                 }
@@ -4340,14 +4506,18 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     btnSmallResolution.Enable = btnLargeResolution.Enable = true;
 
-                    if (AvaliableResolutions.First() == Setting.Current.Resolution)
+                    // 🔥 安全修复：避免InvalidOperationException
+                    if (AvaliableResolutions != null && AvaliableResolutions.Length > 0)
                     {
-                        btnSmallResolution.Enable = false;
-                    }
+                        if (AvaliableResolutions.First() == Setting.Current.Resolution)
+                        {
+                            btnSmallResolution.Enable = false;
+                        }
 
-                    if (AvaliableResolutions.Last() == Setting.Current.Resolution)
-                    {
-                        btnLargeResolution.Enable = false;
+                        if (AvaliableResolutions.Last() == Setting.Current.Resolution)
+                        {
+                            btnLargeResolution.Enable = false;
+                        }
                     }
 
                     btnSmallResolution.Update();
@@ -4503,7 +4673,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 CacheManager.DrawAvatar(@"Content\Textures\Resources\Start\bg.png", Vector2.Zero, Color.White * alpha, 1f);
 
-                CheckBoxSetting cbs = new CheckBoxSetting() { Offset = new Vector2(5, 2), Scale = 0.8f };
+                CheckBoxSetting cbs = new CheckBoxSetting() { Offset = new Vector2(5, 2), Scale = 0.73f };
                 //CacheManager.DrawString(Session.Current.Font, "剧本选择", new Vector2(38, 27), PlatformColor.DarkRed * alpha);
                 if (!selectfaction)
                 {
@@ -4725,13 +4895,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                     CacheManager.DrawString(Session.Current.Font, "只有异族能納妃", new Vector2(left1, heightBase + height * 5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                    CacheManager.DrawString(Session.Current.Font, "开启作弊功能", new Vector2(left1, heightBase + height * 5.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                    CacheManager.DrawString(Session.Current.Font, "硬核模式(禁止S/L)", new Vector2(left1, heightBase + height * 5.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                    CacheManager.DrawString(Session.Current.Font, "硬核模式(禁止S/L)", new Vector2(left1, heightBase + height * 6f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                    CacheManager.DrawString(Session.Current.Font, "生成虚拟子嗣", new Vector2(left1, heightBase + height * 6f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                    CacheManager.DrawString(Session.Current.Font, "生成虚拟子嗣", new Vector2(left1, heightBase + height * 6.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
-
-                    CacheManager.DrawString(Session.Current.Font, "使用简易AI战斗算法", new Vector2(left2, heightBase + height * 0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                    // CacheManager.DrawString(Session.Current.Font, "使用简易AI战斗算法", new Vector2(left2, heightBase + height * 0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
                     CacheManager.DrawString(Session.Current.Font, "资料显示详细度", new Vector2(left2 - 60, heightBase + height * 0.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
@@ -5008,7 +5176,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 CacheManager.DrawAvatar(@"Content\Textures\Resources\Start\bg.png", Vector2.Zero, Color.White * alpha, 1f);
                 CacheManager.DrawAvatar(@"Content\Textures\Resources\Start\reloadmenu-alpha.png", new Rectangle(240, 20, 800, 660), Color.White * alpha, false, true, TextureShape.None, null);
                 btSaveList.ForEach(bt => bt.Draw(null, Color.White * alpha));
-                CheckBoxSetting cbs = new CheckBoxSetting() { Offset = new Vector2(5, 2), Scale = 0.8f };
+                CheckBoxSetting cbs = new CheckBoxSetting() { Offset = new Vector2(5, 2), Scale = 0.73f };
                 btScenarioSelectListPaged.ForEach(bt =>
                 {
                     int index = btScenarioSelectList.IndexOf(bt);
@@ -5153,29 +5321,33 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 CacheManager.DrawString(Session.Current.Font, "自动存档,密度(天數)", new Vector2(195, 570), Color.White * alpha, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 1f);
 
 
-                CacheManager.DrawString(Session.Current.Font, "播放一般音效", new Vector2(left, 190), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "播放一般音效", new Vector2(left, 120), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "演示单挑", new Vector2(left + 300, 190), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "演示单挑", new Vector2(left + 300, 120), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "播放战斗音效", new Vector2(left, 190 + height * 0.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "播放战斗音效", new Vector2(left, 120 + height * 0.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "播放战斗語音", new Vector2(left, 190 + height * 1.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "播放战斗語音", new Vector2(left, 120 + height * 1.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "显示地图烟幕", new Vector2(left, 190 + height * 1.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "显示地图烟幕", new Vector2(left, 120 + height * 1.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "显示部队动画", new Vector2(left, 190 + height * 2.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "显示部队动画", new Vector2(left, 120 + height * 2.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "被攻击时暂停游戏", new Vector2(left, 190 + height * 2.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "被攻击时暂停游戏", new Vector2(left, 120 + height * 2.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "从某列表中选择单一项时单击即确定", new Vector2(left, 190 + height * 3.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "从某列表中选择单一项时单击即确定", new Vector2(left, 120 + height * 3.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "不提示小型设施的建设完成", new Vector2(left, 190 + height * 3.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "不提示小型设施的建设完成", new Vector2(left, 120 + height * 3.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "提示人口的迁移", new Vector2(left, 190 + height * 4f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "提示人口的迁移", new Vector2(left, 120 + height * 4.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "提示1000人以下的人口迁移", new Vector2(left, 190 + height * 4.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "提示1000人以下的人口迁移", new Vector2(left, 120 + height * 4.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
-                CacheManager.DrawString(Session.Current.Font, "游戏窗体失去焦点时继续运行", new Vector2(left, 190 + height * 5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+                CacheManager.DrawString(Session.Current.Font, "游戏窗体失去焦点时继续运行", new Vector2(left, 120 + height * 5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+
+                CacheManager.DrawString(Session.Current.Font, "忠诚度影响能力发挥", new Vector2(left, 120 + height * 5.5f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
+
+                CacheManager.DrawString(Session.Current.Font, "天气渲染开关", new Vector2(left, 120 + height * 6.0f), Color.White * alpha, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 1f);
 
 
                 //btnTextureAlpha.Alpha = alpha;
@@ -5319,3 +5491,4 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         }
     }
 }
+

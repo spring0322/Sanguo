@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -108,12 +108,12 @@ namespace FactionTechniquesPlugin
 
         public void SetArchitecture(object architecture)
         {
-            this.factionTechniques.SetArchitecture(architecture as Architecture);
+            this.factionTechniques.SetArchitecture((architecture is Architecture ? (Architecture)architecture : null));
         }
 
         public void SetFaction(object faction, bool control)
         {
-            this.factionTechniques.SetFaction(faction as Faction, control);
+            this.factionTechniques.SetFaction((faction is Faction ? (Faction)faction : null), control);
         }
 
         public void SetGraphicsDevice()
@@ -188,4 +188,5 @@ namespace FactionTechniquesPlugin
         }
     }
 }
+
 

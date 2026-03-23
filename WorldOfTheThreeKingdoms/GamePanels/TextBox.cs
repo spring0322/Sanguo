@@ -311,7 +311,11 @@ namespace GamePanels
                                 return;
                             }
                             afterLastTextTime = 0f;
-                            Text = Text.Remove(Text.Length - 1, 1);
+                            // 🔥 技术性修复：避免ArgumentOutOfRangeException
+                            if (Text.Length > 0)
+                            {
+                                Text = Text.Remove(Text.Length - 1, 1);
+                            }
                         }
                         else if (InputManager.KeyBoardState.IsKeyDown(Microsoft.Xna.Framework.Input.Keys.Space))
                         {

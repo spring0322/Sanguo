@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -102,7 +102,7 @@ namespace TabListPlugin
                         
                         if (this.tabList.FocusedObject is Person)
                         {
-                            person = this.tabList.FocusedObject as Person;
+                            person = this.tabList.FocusedObject is Person ? (Person)this.tabList.FocusedObject : null;
                         }
                         else if (this.tabList.FocusedObject is Captive)
                         {
@@ -110,19 +110,19 @@ namespace TabListPlugin
                         }
                         else if (this.tabList.FocusedObject is Faction)
                         {
-                            person = (this.tabList.FocusedObject as Faction).Leader;
+                            person = (this.tabList.FocusedObject is Faction ? (Faction)this.tabList.FocusedObject : null).Leader;
                         }
                         else if (this.tabList.FocusedObject is Troop)
                         {
-                            person = (this.tabList.FocusedObject as Troop).Leader;
+                            person = (this.tabList.FocusedObject is Troop ? (Troop)this.tabList.FocusedObject : null).Leader;
                         }
                         else if (!(this.tabList.FocusedObject is Architecture))
                         {
                             if (this.tabList.FocusedObject is Military)
                             {
-                                if ((this.tabList.FocusedObject as Military).Leader != null)
+                                if ((this.tabList.FocusedObject is Military ? (Military)this.tabList.FocusedObject : null).Leader != null)
                                 {
-                                    person = (this.tabList.FocusedObject as Military).Leader;
+                                    person = (this.tabList.FocusedObject is Military ? (Military)this.tabList.FocusedObject : null).Leader;
                                 }
                             }
                             else if (this.tabList.FocusedObject is Treasure)
@@ -149,7 +149,7 @@ namespace TabListPlugin
                 nullable = null;
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.RightScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, depth);
                 nullable = null;
-                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.VerticalScrollBar, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, depth);
+                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.VerticalScrollBar, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, Math.Max(0f, depth - 0.0001f));
             }
             if (this.tabList.ShowHorizontalScrollBar)
             {
@@ -157,7 +157,7 @@ namespace TabListPlugin
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.UpperScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, depth);
                 nullable = null;
                 CacheManager.Draw(this.tabList.scrolltrackTexture, this.LowerScrollTrack, nullable, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, depth);
-                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.HorizontalScrollBar, null, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, depth);
+                CacheManager.Draw(this.tabList.scrollbuttonTexture, this.HorizontalScrollBar, null, Microsoft.Xna.Framework.Color.White, 0f, Vector2.Zero, SpriteEffects.None, Math.Max(0f, depth - 0.0001f));
             }
         }
 
@@ -230,7 +230,7 @@ namespace TabListPlugin
                 StaticMethods.LoadFontAndColorFromXMLNode(node2, out font, out color);
                 item.ColumnTextList = new FreeTextList(font);
                 item.ColumnTextList.TextColor = color;
-                item.ColumnTextList.Align = (TextAlign) Enum.Parse(typeof(TextAlign), node2.Attributes.GetNamedItem("Align").Value);
+                item.ColumnTextList.Align = Enum.Parse<TextAlign>(node2.Attributes.GetNamedItem("Align").Value);
                 item.Text.Text = item.DisplayName;
                 this.AllColumns.Add(item);
             }
@@ -408,36 +408,42 @@ namespace TabListPlugin
                 this.tabList.ShowHorizontalScrollBar = false;
                 this.tabList.EnlargeRectanglesHeight();
             }
-            if (this.tabList.FullLowerClient.Height > realLowerVisibleClient.Height)
+            this.tabList.ShowVerticalScrollBar = this.tabList.FullLowerClient.Height > realLowerVisibleClient.Height;
+
+            if (this.tabList.FullLowerClient.Width > realLowerVisibleClient.Width)
             {
-                this.tabList.ShowVerticalScrollBar = true;
-                if (this.tabList.FullLowerClient.Width > realLowerVisibleClient.Width)
-                {
-                    this.VerticalScrollTrackLength = ((realLowerVisibleClient.Height - (2 * this.tabList.scrolltrackWidth)) - this.tabList.scrollbuttonWidth) - this.tabList.columnheaderHeight;
-                }
-                else
-                {
-                    this.VerticalScrollTrackLength = realLowerVisibleClient.Height - this.tabList.columnheaderHeight;
-                }
-                this.LeftScrollTrack = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - (2 * this.tabList.scrolltrackWidth)) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
-                this.RightScrollTrack = new Microsoft.Xna.Framework.Rectangle(realLowerVisibleClient.Right - this.tabList.scrolltrackWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
-                this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - this.tabList.scrolltrackWidth) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrollbuttonWidth, (this.VerticalScrollTrackLength * realLowerVisibleClient.Height) / this.tabList.FullLowerClient.Height);
-                this.tabList.ShrinkRectanglesWidth();
+                this.VerticalScrollTrackLength = ((realLowerVisibleClient.Height - (2 * this.tabList.scrolltrackWidth)) - this.tabList.scrollbuttonWidth) - this.tabList.columnheaderHeight;
             }
             else
             {
-                this.tabList.ShowVerticalScrollBar = false;
-                this.tabList.EnlargeRectanglesWidth();
+                this.VerticalScrollTrackLength = realLowerVisibleClient.Height - this.tabList.columnheaderHeight;
             }
+            this.LeftScrollTrack = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - (2 * this.tabList.scrolltrackWidth)) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
+            this.RightScrollTrack = new Microsoft.Xna.Framework.Rectangle(realLowerVisibleClient.Right - this.tabList.scrolltrackWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrolltrackWidth, this.VerticalScrollTrackLength);
+            
+            if (this.tabList.ShowVerticalScrollBar)
+            {
+                int calculatedHeight = (this.VerticalScrollTrackLength * realLowerVisibleClient.Height) / this.tabList.FullLowerClient.Height;
+                int finalHeight = Math.Max(20, calculatedHeight);
+                this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - this.tabList.scrolltrackWidth) - this.tabList.scrollbuttonWidth, realLowerVisibleClient.Top + this.tabList.columnheaderHeight, this.tabList.scrollbuttonWidth, finalHeight);
+            }
+            else
+            {
+                int minHeight = Math.Min(40, this.VerticalScrollTrackLength);
+                int bottomY = (realLowerVisibleClient.Top + this.tabList.columnheaderHeight + this.VerticalScrollTrackLength) - minHeight;
+                this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle((realLowerVisibleClient.Right - this.tabList.scrolltrackWidth) - this.tabList.scrollbuttonWidth, Math.Max(realLowerVisibleClient.Top + this.tabList.columnheaderHeight, bottomY), this.tabList.scrollbuttonWidth, minHeight);
+            }
+            
+            this.tabList.ShrinkRectanglesWidth();
             if (this.SelectedTab != null)
             {
                 Microsoft.Xna.Framework.Rectangle visibleLowerClient = this.tabList.VisibleLowerClient;
                 if (this.VerticalScrollBar.Bottom < visibleLowerClient.Bottom)
                 {
-                    int num = (int) ((Math.Abs(this.SelectedTab.CurrentYOffset) * visibleLowerClient.Height) / ((double) this.tabList.FullLowerClient.Height));
-                    if ((num + this.VerticalScrollBar.Bottom) > visibleLowerClient.Bottom)
+                    int num = (int) ((Math.Abs(this.SelectedTab.CurrentYOffset) * this.VerticalScrollTrackLength) / ((double) this.tabList.FullLowerClient.Height));
+                    if (num > (this.VerticalScrollTrackLength - this.VerticalScrollBar.Height))
                     {
-                        num = visibleLowerClient.Bottom - this.VerticalScrollBar.Bottom;
+                        num = this.VerticalScrollTrackLength - this.VerticalScrollBar.Height;
                     }
                     this.VerticalScrollBar = new Microsoft.Xna.Framework.Rectangle(this.VerticalScrollBar.X, this.VerticalScrollBar.Y + num, this.VerticalScrollBar.Width, this.VerticalScrollBar.Height);
                 }
@@ -495,4 +501,5 @@ namespace TabListPlugin
         }
     }
 }
+
 

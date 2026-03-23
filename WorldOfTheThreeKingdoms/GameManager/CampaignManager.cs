@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework;
 using GameObjects;
 using GameObjects.TroopDetail;
 using GameObjects.PersonDetail;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace GameManager
 {
@@ -67,17 +67,23 @@ namespace GameManager
                 if (siegeUnit != null && siegeUnit.Type == MilitaryType.器械)
                 {
                     Troop t = new Troop();
+                    t.ID = Session.Current.Scenario.Troops.GetFreeGameObjectID();
                     // Initialize basics
                     t.Leader = master;
                     t.Init();
+                    t.StartingArchitecture = sourceCity;  // 🔥 根本修复：设置出发城市
                     t.Position = sourceCity.Position;
                     t.BelongedFaction = sourceCity.BelongedFaction;
                     
-                    if (t.Army != null)
-                    {
-                        t.Army.Kind = siegeUnit;
-                        t.Army.BelongedTroop = t;
-                    }
+                    // 🔥 修复：创建正确的 Military 对象并分配
+                    Military military = new Military();
+                    military.ID = Session.Current.Scenario.Militaries.GetFreeGameObjectID();
+                    military.Kind = siegeUnit;
+                    military.Leader = master;
+                    military.BelongedArchitecture = sourceCity;
+                    military.Name = siegeUnit.Name + "队";
+                    Session.Current.Scenario.Militaries.AddMilitary(military);
+                    t.Army = military;
 
                     t.Quantity = 5000; // 器械部队通常不需要太多人
                     

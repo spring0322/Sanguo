@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -69,7 +69,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             //architecture.jianzhubiaoti.Draw(0.7999f);
 
                             Rectangle jianzhubiaotibeijingweizhi;
-                            jianzhubiaotibeijingweizhi = new Rectangle(jianzhubiaotiPosition.X + Session.MainGame.mainGameScreen.mainMapLayer.TileWidth / 2 - architecture.CaptionTexture.Width / 2, jianzhubiaotiPosition.Y + Session.MainGame.mainGameScreen.mainMapLayer.TileHeight / 2 - architecture.CaptionTexture.Height / 2, architecture.CaptionTexture.Width, architecture.CaptionTexture.Height);
+                            jianzhubiaotibeijingweizhi = new Rectangle(
+                                jianzhubiaotiPosition.X + Session.MainGame.mainGameScreen.mainMapLayer.TileWidth / 2 - architecture.CaptionTexture.Width / 2 + architecture.NameDisplayOffset.X, 
+                                jianzhubiaotiPosition.Y + Session.MainGame.mainGameScreen.mainMapLayer.TileHeight / 2 - architecture.CaptionTexture.Height / 2 + architecture.NameDisplayOffset.Y, 
+                                architecture.CaptionTexture.Width, 
+                                architecture.CaptionTexture.Height);
                             //CacheManager.Draw(Session.MainGame.mainGameScreen.Textures.jianzhubiaotibeijing, jianzhubiaotibeijingweizhi, null, Color.White, 0, Vector2.Zero, SpriteEffects.None, 0.79996f);
                             CacheManager.Draw(architecture.CaptionTexture, jianzhubiaotibeijingweizhi, null, Color.White, 0, Vector2.Zero, SpriteEffects.None, 0.79996f);
 
@@ -111,7 +115,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                                 //"方正北魏楷书繁体", 30f
                                 //depth:  0.7999f
-                                CacheManager.DrawString(Session.Current.Font, architecture.BelongedFaction.ToString().Substring(0, 1), new Vector2(pos.X, pos.Y), color, 0f, Vector2.Zero, 0.5f * scale, SpriteEffects.None, 0.7999f);
+                                CacheManager.DrawString(Session.Current.Font, architecture.BelongedFaction.ToString().Substring(0, 1), new Vector2(pos.X + 3 * scale, pos.Y - 2 * scale), color, 0f, Vector2.Zero, 0.35f * scale, SpriteEffects.None, 0.7999f);
+
+
 
                                 if (architecture.huangdisuozai)
                                 {
@@ -253,6 +259,28 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         private PlatformTexture huoqujianzhutupian(Architecture architecture)
         {
+            // 🔥 AOT 修复：防护性检查 ArchitectureArea 是否正确加载
+            if (architecture.ArchitectureArea?.Area?.Count == 0 && 
+                !string.IsNullOrEmpty(architecture.ArchitectureAreaString))
+            {
+                try
+                {
+                    if (architecture.ArchitectureArea == null)
+                    {
+                        architecture.ArchitectureArea = new global::GameObjects.GameArea();
+                    }
+                    architecture.LoadFromString(architecture.ArchitectureArea, architecture.ArchitectureAreaString);
+                    //System.Diagnostics.Debug.WriteLine($"[ArchLayer] {architecture.Name} 区域重新加载: {architecture.ArchitectureArea.Area.Count} 坐标");
+                }
+                catch (Exception ex)
+                {
+                    //System.Diagnostics.Debug.WriteLine($"[ArchLayer] {architecture.Name} 区域加载失败: {ex.Message}");
+                }
+            }
+            
+            // 🔥 诊断日志：记录建筑规模信息
+            //System.Diagnostics.Debug.WriteLine($"[ArchLayer] {architecture.Name} 规模={architecture.JianzhuGuimo}, 类型={architecture.Kind?.ID}, 区域数={architecture.ArchitectureArea?.Area?.Count ?? 0}");
+            
             PlatformTexture tupian = architecture.Texture;
             if (Session.Current.Scenario.ScenarioMap.UseSimpleArchImages)
             {

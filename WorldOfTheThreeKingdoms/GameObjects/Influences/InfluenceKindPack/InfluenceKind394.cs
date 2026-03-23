@@ -1,6 +1,7 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Influences;
+using GameObjects.TroopDetail;
 using System;
 
 
@@ -9,6 +10,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind394 : InfluenceKind
     {
+        [DataMember]
         private float scale;
 
         public override void ApplyInfluenceKind(Troop troop)
@@ -26,7 +28,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             }
         }
 
-        public override int GetCredit(Troop source, Troop destination)
+        public override int GetCredit(Troop source, Troop destination, Stratagem stratagem)
         {
             if (!this.IsVaild(destination))
             {
@@ -36,7 +38,7 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
             int pureFightingForce = source.PureFightingForce;
             foreach (Troop troop in source.GetAreaStratagemTroops(destination, false))
             {
-                int num3 = source.GetStratagemSuccessChanceCredit(troop, source.InevitableHuogongOnLowerIntelligence || source.InevitableStratagemOnLowerIntelligence, troop.InvincibleHuogong, troop.InvincibleStratagemFromLowerIntelligence);
+                int num3 = source.GetStratagemSuccessChanceCredit(stratagem, troop, source.InevitableHuogongOnLowerIntelligence || source.InevitableStratagemOnLowerIntelligence, troop.InvincibleHuogong, troop.InvincibleStratagemFromLowerIntelligence);
                 if (num3 > 0)
                 {
                     num3 = (int)(((num3 + (((5 - troop.Army.Scales) * 5))) * (troop.FireDamageRate - 1)) * troop.PureFightingForce) / pureFightingForce;

@@ -1,5 +1,5 @@
 ﻿using GameFreeText;
-using GameGlobal;
+using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
 using Microsoft.Xna.Framework;
@@ -26,6 +26,10 @@ namespace HelpPlugin
         private string pluginName = "HelpPlugin";
         private string version = "1.0.0";
         private const string XMLFilename = "HelpData.xml";
+        
+        // 🔥 新增：延迟初始化支持
+        private bool _scenarioInitialized = false;
+        private readonly object _initLock = new();
 
         public void Dispose()
         {
@@ -99,7 +103,33 @@ namespace HelpPlugin
             this.LoadDataFromXMLDocument(@"Content\Data\Plugins\HelpData.xml");
         }
 
+        // 🔥 实现延迟初始化接口
+        public bool SupportLazyInit => true;
+        
         public void SetScenario()
+        {
+            // 空实现，延迟到真正使用时
+        }
+        
+        public void SetScenarioLazy()
+        {
+            lock (_initLock)
+            {
+                if (_scenarioInitialized) return;
+                
+                System.Diagnostics.Debug.WriteLine("[HelpPlugin] 开始延迟初始化场景数据...");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
+                // 原有的初始化逻辑
+                InitializeScenarioData();
+                
+                _scenarioInitialized = true;
+                sw.Stop();
+                System.Diagnostics.Debug.WriteLine($"[HelpPlugin] 延迟初始化完成: {sw.ElapsedMilliseconds} ms");
+            }
+        }
+        
+        private void InitializeScenarioData()
         {
             foreach (GameObjects.TroopDetail.CombatMethod m in Session.Current.Scenario.GameCommonData.AllCombatMethods.CombatMethods.Values)
             {
@@ -221,6 +251,11 @@ namespace HelpPlugin
             }
             set
             {
+                // 🔥 在显示帮助前确保场景数据已初始化
+                if (value && !_scenarioInitialized)
+                {
+                    SetScenarioLazy();
+                }
                 this.help.IsShowing = value;
             }
         }

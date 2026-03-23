@@ -195,8 +195,11 @@ namespace GameManager
         {
             if (!_pools.ContainsKey(assetName))
             {
-                // 使用工厂方法创建池子
-                _pools[assetName] = new ObjectPool<VFXObject>(count, count * 2);
+                // 使用工厂方法创建池子（AOT 安全）
+                _pools[assetName] = new ObjectPool<VFXObject>(
+                    () => new VFXObject(assetName),
+                    count, 
+                    count * 2);
                 
                 // 预热池子
                 for (int i = 0; i < count; i++)
@@ -242,7 +245,10 @@ namespace GameManager
             {
                 // 如果没预加载，这里会有点卡，建议Warning
                 System.Diagnostics.Debug.WriteLine($"[VFXManager] 警告: 特效 '{assetName}' 未预热，正在创建池子");
-                pool = new ObjectPool<VFXObject>(10, 50);
+                pool = new ObjectPool<VFXObject>(
+                    () => new VFXObject(assetName),
+                    10, 
+                    50);
                 _pools[assetName] = pool;
             }
             

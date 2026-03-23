@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Influences;
 using System;
@@ -9,7 +9,9 @@ using System.Runtime.Serialization;namespace GameObjects.Influences.InfluenceKin
 
     [DataContract]public class InfluenceKind7000 : InfluenceKind
     {
+        [DataMember]
         private float rate;
+        [DataMember]
         private int militaryKindID;
 
         public override void ApplyInfluenceKind(Troop troop)

@@ -6,7 +6,7 @@ using System.Runtime.Serialization;
 namespace GameObjects.ArchitectureDetail
 {
     [DataContract]
-    public class Region : GameObject
+    public partial class Region : GameObject
     {
         public ArchitectureList Architectures = new ArchitectureList();
         public Architecture RegionCore;
@@ -66,6 +66,10 @@ namespace GameObjects.ArchitectureDetail
         public List<string> LoadStatesFromString(StateList states, string dataString)
         {
             List<string> errorMsg = new List<string>();
+            if (string.IsNullOrEmpty(dataString))
+            {
+                return errorMsg;
+            }
             char[] separator = new char[] { ' ', '\n', '\r', '\t' };
             string[] strArray = dataString.Split(separator, StringSplitOptions.RemoveEmptyEntries);
             this.States.Clear();
