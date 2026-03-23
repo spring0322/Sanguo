@@ -310,3 +310,9 @@ Output/
 References/Win/steam_appid.txt
 Record
 MODs
+.kiro
+.agent
+.codex
+.config
+.vscode
+*.md
