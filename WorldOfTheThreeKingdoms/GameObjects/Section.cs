@@ -192,24 +192,12 @@ namespace GameObjects
                     // 玩家势力的军区：只有在玩家点击"结束回合"时才执行
                     if (!this.BelongedFaction.Passed)
                     {
-                        // 🔥 修复：即使玩家未结束回合，也要递减冷却计数器
-                        // 日期：2026-03-21
-                        // 问题：如果在这里直接返回，ShouldExecuteAI() 不会被调用，冷却计数器不会递减
-                        //       结果：每次玩家点击"进行"时，_aiCooldownCounter 都是初始值，导致每回合都执行AI
-                        // 解决：在返回前递减冷却计数器，确保冷却机制正常工作
-                        if (_isInitialized && _aiCooldownCounter > 0)
-                        {
-                            _aiCooldownCounter--;
-                            if (_urgentCooldown > 0)
-                            {
-                                _urgentCooldown--;
-                            }
-                            
-                            #if DEBUG
-                            System.Diagnostics.Debug.WriteLine($"[Section.AI] {this.Name} - 玩家未结束回合，递减冷却: Counter={_aiCooldownCounter}, Urgent={_urgentCooldown}");
-                            #endif
-                        }
-                        
+                        // 🔥 修复：玩家未结束回合时，不要递减冷却计数器
+                        // 日期：2026-03-23
+                        // 原因：冷却计数器应该只在 ShouldExecuteAI() 中递减
+                        //       如果在这里递减，会导致每次玩家点击"进行"时计数器都被递减
+                        //       结果：玩家结束回合时，计数器已经是0，导致每回合都执行AI
+                        // 解决：直接返回，不递减计数器
                         return;
                     }
                 }

@@ -164,6 +164,7 @@ public class GlobalVariables
     [DataMember] public bool EnableLoyaltyAbilityFactor = true;  // 忠诚度影响能力开关，默认打开
     [DataMember] public bool EnableWeatherParticles = true;  // 🌧️ 2026-03-10 新增：天气粒子系统开关，默认打开
     [DataMember] public bool EnableWegoEngine = false;  // 🔥 2026-03-16 新增：WEGO 引擎开关，默认关闭（测试阶段）
+    [DataMember] public bool EnableCommandBufferScheduler = false;  // 🔥 2026-03-23 新增：CommandBuffer 调度器开关，默认关闭（灰度测试）
 
     public const string cryptKey = "A3g0c3%2";
 

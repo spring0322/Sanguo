@@ -71,6 +71,10 @@ namespace GameManager
         // ====== WEGO 引擎：Command Buffer 并发系统 ======
         // 日期：2026-03-16
         public WorldOfTheThreeKingdoms.GameManager.WegoEngine WegoEngine { get; internal set; }
+        
+        // ====== CommandBuffer 调度器：接管执行阶段调度层 ======
+        // 日期：2026-03-23
+        public WorldOfTheThreeKingdoms.GameManager.CommandBufferScheduler CommandBufferScheduler { get; internal set; }
 
         public void OnTurnStart()
         {
@@ -377,6 +381,17 @@ namespace GameManager
         public bool TryGetTroop(Guid troopId, out GameObjects.Troop troop)
         {
             return _troopRegistry.TryGetValue(troopId, out troop);
+        }
+        
+        /// <summary>
+        /// 通过 Guid 获取部队（仅新系统）
+        /// </summary>
+        /// <param name="troopId">部队 Guid</param>
+        /// <returns>找到的部队，如果不存在则返回 null</returns>
+        public GameObjects.Troop GetTroopByGuid(Guid troopId)
+        {
+            _troopRegistry.TryGetValue(troopId, out var troop);
+            return troop;
         }
 
         public static void Init()
@@ -892,6 +907,19 @@ namespace GameManager
                         catch (Exception ex)
                         {
                             System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ⚠️ WegoEngine 初始化失败: {ex.Message}\n");
+                        }
+                        
+                        // 🔥 初始化 CommandBufferScheduler（2026-03-23）
+                        // 日期：2026-03-23
+                        // 位置：部队注册后，确保所有部队已在注册表中
+                        try
+                        {
+                            Session.Current.CommandBufferScheduler = new WorldOfTheThreeKingdoms.GameManager.CommandBufferScheduler();
+                            System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ✅ CommandBufferScheduler 初始化完成\n");
+                        }
+                        catch (Exception ex)
+                        {
+                            System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ⚠️ CommandBufferScheduler 初始化失败: {ex.Message}\n");
                         }
 
                         System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ✅ 所有初始化完成\n");

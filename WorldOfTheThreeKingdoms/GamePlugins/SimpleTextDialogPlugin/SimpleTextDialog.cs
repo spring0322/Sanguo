@@ -1,4 +1,4 @@
-﻿using GameFreeText;
+using GameFreeText;
 using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;

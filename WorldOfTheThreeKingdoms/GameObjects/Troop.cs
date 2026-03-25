@@ -206,6 +206,20 @@ namespace GameObjects
             InitializeNewMovementSystem();
         }
 
+        private static bool IsOffensiveAbilityCategory(ActiveAbilityCategory category)
+        {
+            return category == ActiveAbilityCategory.EnemyTargetedOffense
+                || category == ActiveAbilityCategory.SelfBuffOffense
+                || category == ActiveAbilityCategory.SelfBuffDefense;
+        }
+
+        private static ActiveAbilityCategory GetEffectiveStuntCategory(int stuntID)
+        {
+            return AIRoleConfigManager.TryGetStuntCategory(stuntID, out var category)
+                ? category
+                : ActiveAbilityCategory.Utility;
+        }
+
         /// <summary>
         /// 初始化新移动系统的变量
         /// </summary>
@@ -509,6 +523,7 @@ namespace GameObjects
         private int cutRoutewayDays;
 
         public bool LoyaltyNoChange;
+        internal int _damageNumberDelayCounter;
         public CombatNumberItemList DecrementNumberList = new CombatNumberItemList(CombatNumberDirection.下);
         public int DecrementOfCliffAdaptability;
         public int DecrementOfCombatMethodCombativityConsuming;
@@ -2408,6 +2423,21 @@ namespace GameObjects
         public bool ApplySmartSiegePosition(Point siegePosition)
         {
             if (siegePosition == new Point(-1, -1)) return false;
+
+            if (siegePosition == this.Position)
+            {
+                this.RealDestination = this.Position;
+                this.Destination = this.Position;
+                this.HasPath = false;
+                this.Action = TroopAction.Stop;
+                if (this._cachedPath.Count > 0) this._cachedPath.Clear();
+                if (this._firstTierPath != null && this._firstTierPath.Count > 0)
+                {
+                    this.ClearFirstTierPath();
+                    this.FirstIndex = 0;
+                }
+                return true;
+            }
 
             // ★★★ 修复：如果移动力已耗尽，直接跳过，不设置目标 ★★★
             // 日期：2026-03-04
@@ -11485,6 +11515,52 @@ namespace GameObjects
             this.ApplyStuntInfluences();
         }
 
+        /// <summary>
+        /// 清理瞬时执行态（动作/动画忙态）
+        /// 日期：2026-03-24
+        /// 用途：在执行阶段结束时统一清理临时动作状态，防止泄漏到战略阶段
+        /// 
+        /// 清理范围：
+        /// - Action 中的瞬时动作（Move/Attack/Cast/BeAttacked/BeCasted）
+        /// - ShowNumber（伤害数字显示）
+        /// - PreAction（前置动作）
+        /// - WaitForDeepChaosFrameCount（深度混乱等待帧）
+        /// 
+        /// 不清理的内容（这些属于结果态/命令态/业务态）：
+        /// - OperationDone
+        /// - Command
+        /// - Quantity
+        /// - Destroyed
+        /// - TargetTroop/TargetArchitecture
+        /// - CurrentStratagem/CurrentCombatMethod
+        /// - MovabilityLeft
+        /// </summary>
+        public void ClearTransientExecutionState()
+        {
+            // 只清理瞬时执行态动作，不清理 Stop（Stop 是正常状态）
+            if (this.Action == TroopAction.Move ||
+                this.Action == TroopAction.Attack ||
+                this.Action == TroopAction.Cast ||
+                this.Action == TroopAction.BeAttacked ||
+                this.Action == TroopAction.BeCasted)
+            {
+                this.Action = TroopAction.Stop;
+            }
+
+            // 清理显示相关的瞬时状态
+            this.ShowNumber = false;
+            this.PreAction = TroopPreAction.无;
+            this.WaitForDeepChaosFrameCount = 0;
+
+            #if DEBUG
+            // 仅在清理了非 Stop 动作时输出日志
+            if (this.Action != TroopAction.Stop)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ClearTransientExecutionState] {this.DisplayName} 清理瞬时执行态");
+            }
+            #endif
+        }
+
         public void InitializeInQueue()
         {
             this.Moved = false;
@@ -11505,6 +11581,13 @@ namespace GameObjects
             // 解决：在回合开始时重置冷却，确保新回合可以立即寻路
             this._pathfindingCooldown = 0;
             this._moveStepCooldown = 0;
+            
+            // 🔥 根本修复：重置 Action 状态，避免战略阶段显示"被攻"等执行阶段状态
+            // 日期：2026-03-24
+            // 原因：上一回合执行阶段设置的 Action（如 BeAttacked）没有被清理
+            //       导致新回合战略阶段仍然显示"被攻"状态
+            // 解决：在回合开始时调用统一清理方法
+            this.ClearTransientExecutionState();
             
             #if DEBUG
             if (this.ManualControl)
@@ -14062,20 +14145,18 @@ namespace GameObjects
         }
 
         /// <summary>
-        /// 优化的伤害计算公式 - 简化复杂的Math.Pow运算以提高性能
+        /// 优化的伤害计算公式 - 恢复旧版幂次公式并保留安全防护
         /// </summary>
         private int CalculateOptimizedDamage(float offence, float defence)
         {
             try
             {
-                // 1. 确保分母永远安全 (防止破甲 Debuff 导致除以零)
-                float effectiveDefence = Math.Max(0, defence);
-                float denominator = effectiveDefence + 100f;
+                // 1. 确保分母永远安全 (防止 debuff 或异常值导致除零)
+                float safeDefence = MathF.Max(defence, 1f);
 
-                // 2. 计算原始伤害 - 简化的线性公式替代复杂的Math.Pow
-                // 原公式: Math.Pow(offence/defence, 0.62) * 1.16 * 500 * TroopDamageRate
-                // 简化为: (offence * 500 * TroopDamageRate) / (defence + 100)
-                float damage = (offence * 500 * Session.Parameters.TroopDamageRate) / denominator;
+                // 2. 回退旧版幂次公式，使用 .NET 8 原生 MathF.Pow（单精度、AOT 友好）
+                // 公式: (offence/defence)^0.62 * 1.16 * 500 * TroopDamageRate
+                float damage = MathF.Pow(offence / safeDefence, 0.62f) * 1.16f * 500f * Session.Parameters.TroopDamageRate;
 
                 // 3. 应用伤害补偿机制 - 因为战斗冷却跳过了一些帧，需要补偿伤害
                 damage *= _accumulatedDamageMultiplier;
@@ -15133,6 +15214,13 @@ namespace GameObjects
             damage.AntiAttack = GameObject.Chance(troop.ChanceOfBlockAttack);
             damage.AntiArrowAttack = this.ArrowOffence && (troop.IsAntiArrowAttack || GameObject.Chance(troop.ChanceOfBlockArrowAttack));
             damage.AntiCounterAttack = !counter && this.IsAntiCounterAttack;
+            
+            // 🔥 暴击诊断日志
+            #if DEBUG
+            int criticalChance = this.CriticalStrikeChance - troop.AntiCriticalStrikeChance;
+            System.Diagnostics.Debug.WriteLine($"[暴击判定] 攻击方:{this.Leader?.Name}(统率:{this.TroopStrength},勇猛:{this.Leader?.Braveness}) 暴击率:{this.CriticalStrikeChance} | 防守方:{troop.Leader?.Name}(统率:{troop.TroopCommand},冷静:{troop.Leader?.Calmness}) 抗暴率:{troop.AntiCriticalStrikeChance} | 最终暴击率:{criticalChance} | 反击:{counter} | 爆发免暴:{troop.OutburstPreventCriticalStrike}");
+            #endif
+            
             damage.Critical = (!counter && !troop.OutburstPreventCriticalStrike) && (GameObject.Chance(this.ChanceOfMustCriticalStrike) || GameObject.Chance(this.CriticalStrikeChance - troop.AntiCriticalStrikeChance));
             damage.OnFire = GameObject.Chance((this.ChanceOfOnFire > this.BaseChanceOfOnFire) ? this.ChanceOfOnFire : this.BaseChanceOfOnFire);
             damage.Chaos = GameObject.Chance(this.ChanceOfChaosAttack);
@@ -15207,9 +15295,8 @@ namespace GameObjects
                     damage.Chaos = GameObject.Chance(this.ChaosAfterSurroundAttackChance + num3);
                 }
             }
-            // 优化后的简化伤害计算公式
+            // 优化后的伤害计算公式（恢复旧版幂次公式，内部包含安全防护）
             // 原始复杂公式: Math.Pow(damage.SourceOffence / (float)defence, 0.62) * 1.16 * 500 * Session.Parameters.TroopDamageRate
-            // 简化为线性公式以提高性能
             int num4 = CalculateOptimizedDamage(damage.SourceOffence, defence);
             switch (troop.Army.Kind.Type)
             {
@@ -15978,6 +16065,7 @@ namespace GameObjects
         {
             // [Safety] Skip visual/sound effects if running in background thread
             bool isVisible = !Session.Current.IsWorking;
+            bool combatMethodAttackEventRaised = false;
 
 #if DEBUG
             // 🔍 调试日志：区分普通攻击和技能（仅 Debug 模式）
@@ -16031,6 +16119,7 @@ namespace GameObjects
                             this.AddzhanfaAnimation(troop, true);
                         }
                         this.OnCombatMethodAttack(this, troop, this.CurrentCombatMethod);
+                        combatMethodAttackEventRaised = true;
                     }
                     else
                     {
@@ -16055,7 +16144,7 @@ namespace GameObjects
                         //if ((this.CombatMethodApplied && !damage.Surround) && (!damage.Critical || (this.Leader.PersonTextMessage.CriticalStrike.Count == 0)))
                         if ((this.CombatMethodApplied && !damage.Surround) && (!damage.Critical || meiyouyouPersonTextMessage))
                         {
-                            if (this.OnCombatMethodAttack != null && isVisible)
+                            if (this.OnCombatMethodAttack != null && isVisible && !combatMethodAttackEventRaised)
                             {
                                 /*if (this.CurrentCombatMethodID == 0)   // 如果是大盾
                                 {
@@ -16066,6 +16155,7 @@ namespace GameObjects
                                     this.AddzhanfaAnimation(troop, true);
                                 }*/
                                 this.OnCombatMethodAttack(this, troop, this.CurrentCombatMethod);
+                                combatMethodAttackEventRaised = true;
                             }
                         }
                         else if (damage.Waylay && isVisible)
@@ -17936,8 +18026,17 @@ namespace GameObjects
                     // 6. 士气问题
                     if (this.Morale < 50) return "低迷";
 
-                    // 7. 正常状态
-                    return GetActionDisplayName(this.Action);
+                    // 🔥 7. 阶段门卫：只在执行阶段显示瞬时动作状态
+                    // 日期：2026-03-24
+                    // 原因：防止执行阶段临时动作（被攻/被施/攻击/施法/移动）泄漏到战略阶段
+                    bool isRunningPhase = Session.Current?.Scenario?.Date?.IsRunning ?? false;
+                    if (isRunningPhase)
+                    {
+                        return GetActionDisplayName(this.Action);
+                    }
+
+                    // 8. 战略阶段：忽略瞬时执行态动作，显示正常状态
+                    return "待命";
                 }
                 catch
                 {
@@ -20291,16 +20390,22 @@ namespace GameObjects
                     // 日期：2026-03-06
                     // 原因：玩家设置移动目标后，如果 WillArchitecture 被清空再重新设置，
                     //       旧逻辑会检查 RealDestination == Point.Zero，然后覆盖玩家设置
-                    // 解决：只有在 mingling 不是玩家手动指令（Move/Stratagem）且 RealDestination 是 (-1,-1) 时才自动设置
+                    // 解决：只有在建筑目标上下文中，且 RealDestination 是 (-1,-1) 时才自动设置
                     // 🔥 修复：攻击城池指令由 HandleSelectingResult 在设置 WillArchitecture 前清空 RealDestination
                     // 日期：2026-03-09
                     // 原因：攻击城池时，HandleSelectingResult 会先清空 RealDestination 为 (-1,-1)
                     //       然后设置 WillArchitecture，触发 setter 自动调用 GetClosestPoint
-                    // 解决：只检查 Move/Stratagem 指令，攻击城池指令通过清空 RealDestination 来触发自动计算
+                    // 解决：保留 Move/Stratagem 的保护，并排除攻击部队/城破后转打守军的上下文，避免读档链接阶段误触发建筑寻点
                     bool isPlayerManualCommand = this.mingling is "Move" or "Stratagem";
+                    bool isTroopTargetCommand =
+                        this.Command is GameObjects.TroopCommand.AttackTroop or GameObjects.TroopCommand.Attack ||
+                        this.mingling is "攻击军队" or "Attack";
+                    bool hasBrokenArchitectureTroopFallback =
+                        value.Endurance <= 0 &&
+                        (this.targetTroopID >= 0 || this.willTroopID >= 0 || this.targetTroop != null || this.willTroop != null);
                     bool isInvalidDestination = (this.RealDestination.X == -1 && this.RealDestination.Y == -1);
                     
-                    if (!isPlayerManualCommand && isInvalidDestination)
+                    if (!isPlayerManualCommand && !isTroopTargetCommand && !hasBrokenArchitectureTroopFallback && isInvalidDestination)
                     {
                         Point closestPoint = Session.Current.Scenario.GetClosestPoint(value.ArchitectureArea, this.Position);
                         System.Diagnostics.Debug.WriteLine($"[WillArch设置] {this.DisplayName} GetClosestPoint返回: {closestPoint}");
@@ -20476,6 +20581,12 @@ namespace GameObjects
         public void SetCommand(GameObjects.TroopCommand cmd)
         {
             Command = cmd;
+            if (cmd == GameObjects.TroopCommand.None)
+            {
+                // Keep command state and UI selection state consistent.
+                SelectedMove = false;
+                SelectedAttack = false;
+            }
             mingling = cmd switch
             {
                 GameObjects.TroopCommand.Stratagem => "Stratagem",
@@ -21664,20 +21775,13 @@ namespace GameObjects
             if (this.CurrentAIState != TroopAIState.Marching && this.CurrentAIState != TroopAIState.Retreating &&
                 this.CurrentAIState != TroopAIState.EnterCity)
             {
+                
                 // 🔥 关键修复：清理所有动画状态，防止 IsAnimationPlaying 死锁
-                // 日期：2026-02-28
+                // 日期：2026-02-28 / 2026-03-24（统一清理方法）
                 // 原因：如果 ShowNumber/PreAction/WaitForDeepChaosFrameCount/_isPathfinding 有残留，
                 //       IsAnimationPlaying 会返回 true，导致 CurrentQueueTroopMove 死锁
-                // 解决：在非移动状态下，强制清理所有动画相关状态
-                if (this.Action is TroopAction.Move or TroopAction.Cast or TroopAction.Attack or TroopAction.BeAttacked or TroopAction.BeCasted)
-                {
-                    this.Action = TroopAction.Stop;
-                }
-                // 只重置动画阻塞标记，不通过属性触发数字列表清空
-                // 否则会在受击帧把刚加入的伤害数字提前清掉
-                this.showNumber = false;
-                this.PreAction = TroopPreAction.无;
-                this.WaitForDeepChaosFrameCount = 0;
+                // 解决：在非移动状态下，调用统一清理方法
+                this.ClearTransientExecutionState();
                 
                 // 非移动状态下清理路径，防止切回状态后瞬移
                 if (_cachedPath.Count > 0) _cachedPath.Clear();
@@ -21713,9 +21817,6 @@ namespace GameObjects
             // 解决：在 UpdateMovementLogic 中检测 stuckedFor，触发熔断机制
             if (this.stuckedFor >= 10 && !_isPathfinding)
             {
-                #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[UpdateMovementLogic] {this.DisplayName} 检测到卡死（stuckedFor={this.stuckedFor}），触发熔断");
-                #endif
                 
                 // 🔥 2026-03-20 修复：不要轻易撤退，多次卡死后才触发
                 // 原因：一次寻路失败可能是暂时的（友军阻挡、地形变化）
@@ -21724,9 +21825,6 @@ namespace GameObjects
                 if (this.stuckedFor >= 30)
                 {
                     // 严重卡死（3次寻路失败）：触发撤退
-                    #if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[UpdateMovementLogic] {this.DisplayName} 严重卡死（stuckedFor={this.stuckedFor}），触发撤退");
-                    #endif
                     
                     this.GoBack();
                     this.stuckedFor = 0;
@@ -21742,9 +21840,6 @@ namespace GameObjects
                 else
                 {
                     // 一般卡死（1-2次失败）：原地等待，清空路径让下一帧重新寻路
-                    #if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[UpdateMovementLogic] {this.DisplayName} 一般卡死（stuckedFor={this.stuckedFor}），原地等待，下一帧重新寻路");
-                    #endif
                     
                     // 清空路径，让下一帧重新寻路
                     if (_cachedPath.Count > 0) _cachedPath.Clear();
@@ -21767,21 +21862,36 @@ namespace GameObjects
             // 参考：复用现有功能规范.md, 远程部队位置调整失败与计略判定日志不完整问题诊断_2026-03-22.md
             if (!this.Operated && this.CurrentAIState == TroopAIState.Marching && this.TargetTroop != null)
             {
+                Troop targetTroop = this.TargetTroop;
+                if (targetTroop == null || targetTroop.Destroyed)
+                {
+                    if (this.Command is GameObjects.TroopCommand.AttackTroop or GameObjects.TroopCommand.Attack)
+                    {
+                        this.SetCommand(GameObjects.TroopCommand.None);
+                        this.SelectedAttack = false;
+                    }
+                    if (_cachedPath.Count > 0)
+                    {
+                        _cachedPath.Clear();
+                    }
+                    return;
+                }
+
                 // 计算最优攻击位置
-                Point optimalPos = this.GetOptimalAttackPosition(this.TargetTroop);
+                Point optimalPos = this.GetOptimalAttackPosition(targetTroop);
                 
                 // 🔥 关键修复：使用战术评分系统决定是否需要调整位置
                 // 不要简单地检查 CanAttack，而是评估当前位置和最优位置的战术价值
-                bool canAttack = this.CanAttack(this.TargetTroop);
+                bool canAttack = this.CanAttack(targetTroop);
                 
                 if (canAttack)
                 {
                     // 已经在射程内，但需要评估是否需要调整到更好的位置
                     // 使用现有的战术评分系统（EvaluateRangedPosition）
                     float currentPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                        this, this.Position, this.TargetTroop);
+                        this, this.Position, targetTroop);
                     float optimalPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                        this, optimalPos, this.TargetTroop);
+                        this, optimalPos, targetTroop);
                     
                     // 如果最优位置的评分显著高于当前位置，继续移动
                     // 阈值：50分（避免为了微小的改进而频繁移动）
@@ -21809,21 +21919,16 @@ namespace GameObjects
                     }
                     else
                     {
-                        // 当前位置已经足够好，停止移动
+                        // 🔥 2026-03-24 修复：当前位置已足够好，但不要清空 RealDestination
+                        // 问题：清空 RealDestination 导致 HasValidDestination 返回 false
+                        //       部队不寻路，不移动，也不攻击（因为没有进入攻击检查）
+                        // 解决：保持 RealDestination，让 ToDoCombatAction 检查是否能攻击
+                        //       只清空路径，停止移动
                         if (_cachedPath.Count > 0)
                         {
                             _cachedPath.Clear();
-                            this.RealDestination = this.Position;
                         }
                         
-                        #if DEBUG
-                        if (this.ManualControl)
-                        {
-                            System.Diagnostics.Debug.WriteLine(
-                                $"[RequestPathAsync] {this.DisplayName} 当前位置已足够好，停止移动: " +
-                                $"当前评分={currentPosScore:F1}, 最优评分={optimalPosScore:F1}");
-                        }
-                        #endif
                     }
                 }
                 else
@@ -21842,24 +21947,10 @@ namespace GameObjects
             }
 
             // 4. 执行移动逻辑
-            #if DEBUG
-            if (this.ManualControl || this.DisplayName.Contains("皇甫嵩"))
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[UpdateMovementLogic] {this.DisplayName} 检查路径: _cachedPath.Count={_cachedPath.Count}");
-            }
-            #endif
             
             if (_cachedPath.Count > 0)
             {
                 // 4a. 有路 -> 走一步
-                #if DEBUG
-                if (this.ManualControl || this.DisplayName.Contains("皇甫嵩"))
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[UpdateMovementLogic] {this.DisplayName} 调用 ExecutePathMove");
-                }
-                #endif
                 
                 ExecutePathMove(gameTime);
             }
@@ -21929,7 +22020,7 @@ namespace GameObjects
             // 原因：攻击城池时，RealDestination 被设置为 Position（避免寻路到不可通行的城池位置）
             //       但这导致 HasValidDestination 返回 false，部队不移动
             // 解决：如果有 TargetArchitecture 且不在射程内，返回 true，让部队移动
-            if (this.ManualControl && this.SelectedAttack && 
+            if (this.ManualControl && 
                 this.Command is GameObjects.TroopCommand.Attack or GameObjects.TroopCommand.AttackTroop or GameObjects.TroopCommand.AttackArch)
             {
                 // 玩家攻击指令：检查是否有目标
@@ -21938,15 +22029,9 @@ namespace GameObjects
                 // 🔥 关键修复：如果有城池目标且不在射程内，需要移动
                 if (this.TargetArchitecture != null && !this.CanAttack(this.TargetArchitecture))
                 {
-                    #if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[HasValidDestination] {this.DisplayName} 攻击城池指令，目标={this.TargetArchitecture.Name}，不在射程内，需要移动");
-                    #endif
                     return true;  // 需要移动
                 }
                 
-                #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[HasValidDestination] {this.DisplayName} 玩家攻击指令，TargetTroop={this.TargetTroop?.DisplayName ?? "null"}, TargetArch={this.TargetArchitecture?.Name ?? "null"}, hasTarget={hasTarget}");
-                #endif
                 
                 return hasTarget;
             }
@@ -21957,12 +22042,6 @@ namespace GameObjects
                            !(this.RealDestination.X == -1 && this.RealDestination.Y == -1) && 
                            this.RealDestination != this.Position;
             
-            #if DEBUG
-            if (this.ManualControl)
-            {
-                System.Diagnostics.Debug.WriteLine($"[HasValidDestination] {this.DisplayName} RealDestination={this.RealDestination}, Position={this.Position}, hasValid={hasValid}");
-            }
-            #endif
             
             return hasValid;
         }
@@ -21999,12 +22078,6 @@ namespace GameObjects
             // 直接使用已设置的 RealDestination
             endPos = this.RealDestination;
             
-            #if DEBUG
-            if (this.ManualControl && this.TargetTroop != null)
-            {
-                System.Diagnostics.Debug.WriteLine($"[RequestPathAsync] {this.DisplayName} 追踪目标: {this.TargetTroop.DisplayName}, 可攻击={this.CanAttack(this.TargetTroop)}");
-            }
-            #endif
             
             // ANTI-BAND-AID：如果 Army 为 null，说明部队初始化有问题，让它崩溃
             // 日期：2026-03-12
@@ -22012,12 +22085,6 @@ namespace GameObjects
             // 解决：不使用 ?. 操作符，让它在 Army 为 null 时抛出 NullReferenceException
             MilitaryKind kind = this.Army.Kind;
 
-            #if DEBUG
-            if (this.ManualControl)
-            {
-                System.Diagnostics.Debug.WriteLine($"[RequestPathAsync] {this.DisplayName} 寻路: {startPos} → {endPos}");
-            }
-            #endif
 
             // 捕获 pathFinder 的引用
             var pathFinderRef = this.pathFinder;
@@ -22037,12 +22104,6 @@ namespace GameObjects
                     // 但我们需要它【只计算，不修改 this._firstTierPath】
                     bool success = GetPathDataOnly(startPos, endPos, kind, out resultPath);
                     
-                    #if DEBUG
-                    if (this.ManualControl && !success)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[RequestPathAsync] {this.DisplayName} 寻路失败");
-                    }
-                    #endif
                     
                     return success ? resultPath : null;
                 }
@@ -22101,29 +22162,34 @@ namespace GameObjects
                 // 检查1：攻击城池指令 - 检查是否已在攻击范围内
                 if (this.Command == GameObjects.TroopCommand.AttackArch)
                 {
-                    // 🔥 Anti-Band-Aid：不检查 TargetArchitecture 是否为 null
-                    // 如果 Command == AttackArch 但 TargetArchitecture == null，说明数据源有问题
-                    // 让它崩溃，暴露问题：指令设置时必须验证目标有效性
-                    
-                    int distToCity = int.MaxValue;
-                    var cityArea = this.TargetArchitecture.ArchitectureArea.Area;
-                    
-                    // 🔥 性能优化：使用 for 循环代替 foreach，避免迭代器分配
-                    for (int i = 0; i < cityArea.Count; i++)
-                    {
-                        Point cityTile = cityArea[i];
-                        int dx = Math.Abs(this.Position.X - cityTile.X);
-                        int dy = Math.Abs(this.Position.Y - cityTile.Y);
-                        int d = Math.Max(dx, dy);
-                        if (d < distToCity) distToCity = d;
-                    }
-                    
-                    if (distToCity <= this.OffenceRadius)
+                    var targetArchitecture = this.TargetArchitecture;
+                    if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
                     {
                         shouldApplyPath = false;
-                        #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[OnPathfindingCompleted] {this.DisplayName} 已在城池攻击范围内（距离={distToCity}），丢弃寻路结果");
-                        #endif
+                        this.SetCommand(GameObjects.TroopCommand.None);
+                        this.SelectedAttack = false;
+                    }
+                    else
+                    {
+                        int distToCity = int.MaxValue;
+                        var cityArea = targetArchitecture.ArchitectureArea.Area;
+                        
+                        // 🔥 性能优化：使用 for 循环代替 foreach，避免迭代器分配
+                        for (int i = 0; i < cityArea.Count; i++)
+                        {
+                            Point cityTile = cityArea[i];
+                            int dx = Math.Abs(this.Position.X - cityTile.X);
+                            int dy = Math.Abs(this.Position.Y - cityTile.Y);
+                            int d = Math.Max(dx, dy);
+                            if (d < distToCity) distToCity = d;
+                        }
+                        
+                        if (distToCity <= this.OffenceRadius)
+                        {
+                            shouldApplyPath = false;
+                            this.RealDestination = this.Position;
+                            this.Destination = this.Position;
+                        }
                     }
                 }
                 // 检查2：攻击部队指令 - 使用战术评分系统判断是否需要移动
@@ -22133,14 +22199,22 @@ namespace GameObjects
                     // 问题：原逻辑只检查"是否在射程内"，导致远程部队无法调整到最佳位置
                     // 场景：远程部队距离=1（在射程内），但需要后退到距离=2（最佳射程）
                     // 解决：使用 AITacticalPositioner.EvaluateRangedPosition 评估位置价值
-                    // 参考：复用现有功能规范.md
-                    
-                    // 🔥 Anti-Band-Aid：不检查 TargetTroop 是否为 null 或 Destroyed
-                    // 如果 Command == AttackTroop 但目标无效，说明数据源有问题
-                    // 让它崩溃，暴露问题：指令设置时必须验证目标有效性，或在目标被摧毁时清空指令
-                    
-                    int dx = Math.Abs(this.Position.X - this.TargetTroop.Position.X);
-                    int dy = Math.Abs(this.Position.Y - this.TargetTroop.Position.Y);
+                // 参考：复用现有功能规范.md
+                
+                // 🔥 Anti-Band-Aid：不检查 TargetTroop 是否为 null 或 Destroyed
+                // 如果 Command == AttackTroop 但目标无效，说明数据源有问题
+                // 让它崩溃，暴露问题：指令设置时必须验证目标有效性，或在目标被摧毁时清空指令
+                Troop targetTroop = this.TargetTroop;
+                if (targetTroop == null || targetTroop.Destroyed)
+                {
+                    this.SetCommand(GameObjects.TroopCommand.None);
+                    this.SelectedAttack = false;
+                    shouldApplyPath = false;
+                }
+                else
+                {
+                    int dx = Math.Abs(this.Position.X - targetTroop.Position.X);
+                    int dy = Math.Abs(this.Position.Y - targetTroop.Position.Y);
                     int distToTroop = Math.Max(dx, dy);
                     
                     if (distToTroop <= this.OffenceRadius)
@@ -22153,9 +22227,9 @@ namespace GameObjects
                         {
                             // 评估当前位置和目标位置的战术价值
                             float currentPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                                this, this.Position, this.TargetTroop);
+                                this, this.Position, targetTroop);
                             float targetPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                                this, this.RealDestination, this.TargetTroop);
+                                this, this.RealDestination, targetTroop);
                             
                             // 如果目标位置的评分显著高于当前位置，应用寻路结果
                             // 阈值：50分（避免为了微小的改进而频繁移动）
@@ -22163,32 +22237,20 @@ namespace GameObjects
                             {
                                 // 继续移动到目标位置
                                 shouldApplyPath = true;
-                                #if DEBUG
-                                System.Diagnostics.Debug.WriteLine(
-                                    $"[OnPathfindingCompleted] {this.DisplayName} 决策：调整位置 " +
-                                    $"(当前评分={currentPosScore:F1}, 目标评分={targetPosScore:F1})");
-                                #endif
                             }
                             else
                             {
                                 // 当前位置已经足够好，丢弃寻路结果
                                 shouldApplyPath = false;
-                                #if DEBUG
-                                System.Diagnostics.Debug.WriteLine(
-                                    $"[OnPathfindingCompleted] {this.DisplayName} 决策：保持当前位置 " +
-                                    $"(当前评分={currentPosScore:F1}, 目标评分={targetPosScore:F1})");
-                                #endif
                             }
                         }
                         else
                         {
                             // 没有目标位置，丢弃寻路结果
                             shouldApplyPath = false;
-                            #if DEBUG
-                            System.Diagnostics.Debug.WriteLine($"[OnPathfindingCompleted] {this.DisplayName} 已在部队攻击范围内（距离={distToTroop}），丢弃寻路结果");
-                            #endif
                         }
                     }
+                }
                 }
                 
                 // 只有在应该应用路径时才更新
@@ -22217,9 +22279,6 @@ namespace GameObjects
                         // 解决：寻路成功后立即设置 Action = Move，确保下一帧能继续驱动
                         this.Action = TroopAction.Move;
                         
-                        #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[OnPathfindingCompleted] {this.DisplayName} 应用寻路结果，路径长度={this._cachedPath.Count}");
-                        #endif
                     }
                 }
                 else
@@ -22245,7 +22304,6 @@ namespace GameObjects
                 
                 // 直接增加卡顿计数，让下一帧的 AIResetDestination 触发"熔断机制"（撤退或随机移动）
                 this.stuckedFor += 10;
-                System.Diagnostics.Debug.WriteLine($"[新系统] 寻路失败，主动触发防卡: {this.DisplayName}");
             }
         }
 
@@ -22257,13 +22315,6 @@ namespace GameObjects
             // 1. 机动力检查
             if (this.MovabilityLeft <= 0)
             {
-                #if DEBUG
-                if (this.ManualControl || this.DisplayName.Contains("皇甫嵩"))
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[ExecutePathMove] {this.DisplayName} 机动力耗尽，停止移动 (MovabilityLeft={this.MovabilityLeft})");
-                }
-                #endif
                 
                 this.Action = TroopAction.Stop;
                 return;
@@ -22773,7 +22824,7 @@ namespace GameObjects
             // 🔥 修复：玩家手动控制的部队不执行军团指令解析
             // 日期：2026-02-26
             // 原因：玩家已经通过 SelectedMove 设置了 RealDestination，不应被军团指令覆盖
-            if (this.ManualControl && this.SelectedMove)
+            if (this.ManualControl && this.Command != GameObjects.TroopCommand.None)
             {
                 System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 玩家手动控制且已下达移动指令，跳过军团指令解析");
                 return;
@@ -23704,19 +23755,21 @@ namespace GameObjects
                 // 🔥 2026-03-11 修复：如果有攻击目标，使用 GetOptimalAttackPosition 计算安全目标点
                 // 问题：RealDestination 可能是敌军位置（不可通行），导致 A* 9500次失败
                 Point pathTarget = this.RealDestination;
-                if (this.TargetTroop != null)
+                Troop pathTargetTroop = this.TargetTroop;
+                if (pathTargetTroop != null && !pathTargetTroop.Destroyed)
                 {
-                    if (this.CanAttack(this.TargetTroop))
+                    bool canAttackTarget = this.CanAttack(pathTargetTroop);
+                    if (canAttackTarget)
                     {
                         // 已在射程内，不需要移动
                         pathTarget = this.Position;
                     }
                     else
                     {
-                        pathTarget = this.GetOptimalAttackPosition(this.TargetTroop);
+                        pathTarget = this.GetOptimalAttackPosition(pathTargetTroop);
                     }
                     this.RealDestination = pathTarget;
-                    System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 修正寻路目标: 原={this.RealDestination}, 修正后={pathTarget}, CanAttack={this.CanAttack(this.TargetTroop)}");
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 修正寻路目标: 原={this.RealDestination}, 修正后={pathTarget}, CanAttack={canAttackTarget}");
                 }
                 bool pathFound = this.pathFinder.GetFirstTierPath(this.Position, pathTarget, this.Army.Kind);
 #if DEBUG
@@ -23786,11 +23839,12 @@ namespace GameObjects
                     {
                         // 🔥 2026-03-11 修复：重新寻路时也要使用安全目标点
                         Point retryTarget = this.RealDestination;
-                        if (this.TargetTroop != null)
+                        Troop retryTargetTroop = this.TargetTroop;
+                        if (retryTargetTroop != null && !retryTargetTroop.Destroyed)
                         {
-                            retryTarget = this.CanAttack(this.TargetTroop) 
+                            retryTarget = this.CanAttack(retryTargetTroop) 
                                 ? this.Position 
-                                : this.GetOptimalAttackPosition(this.TargetTroop);
+                                : this.GetOptimalAttackPosition(retryTargetTroop);
                             this.RealDestination = retryTarget;
                         }
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 路径走完但未到达目标，重新寻路: {this.Position} -> {retryTarget}");
@@ -25611,7 +25665,7 @@ namespace GameObjects
             if (this.MovabilityLeft <= 0)
             {
 #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[GetBestCombatPlan] {this.DisplayName} 移动力({this.MovabilityLeft})<=0，仅评估原地");
+                System.Diagnostics.Debug.WriteLine($"[GetBestCombatPlan] {this.DisplayName} MovabilityLeft={this.MovabilityLeft} <= 0, evaluate current tile only (Moved={this.Moved}, OperationDone={this.OperationDone}, Action={this.Action}, AIState={this.CurrentAIState})");
 #endif
                 movableTiles = [];
             }
@@ -25761,7 +25815,7 @@ namespace GameObjects
                     string targetInfo = bestPlanForTile.Target?.DisplayName ?? 
                                        bestPlanForTile.TargetArchitecture?.Name ?? 
                                        "无目标";
-                    System.Diagnostics.Debug.WriteLine($"[GetBestCombatPlan] {this.DisplayName} 位置{tile}: {bestPlanForTile.ActionType}, 目标={targetInfo}, 分数={bestPlanForTile.Score:F1}");
+                    System.Diagnostics.Debug.WriteLine($"[GetBestCombatPlan] {this.DisplayName} 新候选: {bestPlanForTile.ActionType}, 目标={targetInfo}, 分数={bestPlanForTile.Score:F1}, 位置={tile}");
                 }
             }
 
@@ -26162,20 +26216,28 @@ namespace GameObjects
             foreach (var method in this.CombatMethods.CombatMethods.Values)
             {
                 // 1. 基础门槛：战气/士气不够？CD没好？直接跳过
-                bool isCastable = method.IsCastable(this);
-                System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} 检查战法 {method.Name}(ID:{method.ID}): 可施放={isCastable}");
-
+                bool isCastable = this.HasCombatMethod(method.ID);
                 if (!isCastable) continue;
+                bool hasConfiguredMethodCategory = AIRoleConfigManager.TryGetCombatMethodCategory(method.ID, out ActiveAbilityCategory methodCategory);
+                if (!hasConfiguredMethodCategory)
+                {
+                    methodCategory = method.ViewingHostile
+                        ? ActiveAbilityCategory.EnemyTargetedOffense
+                        : ActiveAbilityCategory.Utility;
+                }
+                string methodCategorySource = hasConfiguredMethodCategory ? "AIRoleConfig" : "Fallback(ViewingHostile)";
 
                 // 2. 攻击类战法
                 // 使用 ViewingHostile 判断是否为针对敌人的战法
-                if (method.ViewingHostile) 
+                if (IsOffensiveAbilityCategory(methodCategory))
                 {
                     // 获取射程内的敌人
                     // 战法可能有独立的射程，这里暂时复用 OffenceRadius，如果战法有 UseDistance 属性请替换
                     var enemies = GetEnemiesInRange(tile, this.OffenceRadius);
 
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} 战法 {method.Name} 找到敌人数量={enemies.Count}");
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} method={method.Name}(ID:{method.ID}) category={methodCategory} source={methodCategorySource} enemies={enemies.Count}");
+#endif
 
                     foreach (var enemy in enemies)
                     {
@@ -26195,8 +26257,9 @@ namespace GameObjects
 
                         // 计算评分 (伤害 x 战术修正)
                         float score = CalculateCombatMethodScore(method, enemy, tile);
-
-                        System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} 战法 {method.Name} 对 {enemy.DisplayName} 评分={score:F1}");
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} method={method.Name}(ID:{method.ID}) target={enemy.DisplayName} score={score:F1}");
+#endif
 
                         candidates.Add(new CombatPlan
                         {
@@ -26210,7 +26273,7 @@ namespace GameObjects
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} 战法 {method.Name} 不是攻击类战法(ViewingHostile=false)");
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateCombatMethods] {this.DisplayName} method={method.Name}(ID:{method.ID}) category={methodCategory} source={methodCategorySource} skip-offense-eval");
                 }
 
                 // 3. 增益/治疗类战法 (Target == Friendly || Self)
@@ -26234,11 +26297,31 @@ namespace GameObjects
             System.Diagnostics.Debug.Assert(this.Stratagems.Stratagems != null, 
                 "[EvaluateStratagems] Stratagems.Stratagems 为 null，检查数据加载逻辑");
 
-            // 如果没有学会任何计略，直接返回（这不是错误，是正常情况）
+            // 如果没有任何计略定义，直接返回
             if (this.Stratagems.Stratagems.Count == 0)
                 return;
 
-            System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 评估计略，可用计略数量={this.Stratagems.Stratagems.Count}");
+            // 仅保留当前部队可用的计略（避免评估非持有计略）
+            List<Stratagem> availableStratagems = [];
+            foreach (var stratagem in this.Stratagems.Stratagems.Values)
+            {
+                if (this.HasStratagem(stratagem.ID))
+                {
+                    availableStratagems.Add(stratagem);
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 跳过计略 {stratagem.Name}(ID:{stratagem.ID})：不可用或未持有");
+                }
+            }
+
+            if (availableStratagems.Count == 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 无可用计略，跳过");
+                return;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 评估计略，可用计略数量={availableStratagems.Count}");
 
             // 🔥 性能优化：提取敌人和友军列表到循环外，避免重复扫描地图
             // 日期：2026-03-09
@@ -26255,7 +26338,7 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 找到敌人数量={enemies.Count}, 友军数量={friends.Count}");
 
             // 🔥 热路径优化：遍历计略
-            foreach (var stratagem in this.Stratagems.Stratagems.Values)
+            foreach (var stratagem in availableStratagems)
             {
                 // 检查可施放条件
                 bool isCastable = stratagem.IsCastable(this);
@@ -26351,6 +26434,8 @@ namespace GameObjects
                             }
                         }
 
+                        if (score <= 0) continue;
+
                         candidates.Add(new CombatPlan
                         {
                             MoveDestination = canMoveToTile ? tile : this.Position,
@@ -26394,11 +26479,53 @@ namespace GameObjects
             // 🔥 从配置读取评分参数
             var config = AITacticalConfigManager.GetCombatMethodScoringConfig();
 
+            string roleKey = this.CurrentRole.ToString();
+            ActiveAbilityCategory methodCategory = AIRoleConfigManager.GetCombatMethodCategory(method.ID, method.ViewingHostile);
+            string methodCategoryKey = methodCategory.ToString();
+
+            System.Diagnostics.Debug.Assert(config.RoleModifiers.ContainsKey(roleKey),
+                $"[CalculateCombatMethodScore] 角色 {roleKey} 未在配置中定义，检查 AITacticalConfig.json");
+            System.Diagnostics.Debug.Assert(config.CategoryModifiers.ContainsKey(methodCategoryKey),
+                $"[CalculateCombatMethodScore] category {methodCategoryKey} not configured in AITacticalConfig");
+
+            float categoryModifier = config.CategoryModifiers[methodCategoryKey];
+            float followUpAttackScore = 0f;
+            float roleCategoryModifier = 1f;
+            if (IsOffensiveAbilityCategory(methodCategory))
+            {
+                followUpAttackScore = CalculateTroopAttackScore(target, tile) * categoryModifier;
+                if (config.RoleCategoryModifiers.TryGetValue(roleKey, out var followUpRoleCategoryModifiers) &&
+                    followUpRoleCategoryModifiers.TryGetValue(methodCategoryKey, out var followUpRoleCategoryModifier))
+                {
+                    roleCategoryModifier = followUpRoleCategoryModifier;
+                    followUpAttackScore *= roleCategoryModifier;
+                }
+            }
+
+            float influenceValueScore = 0f;
+            foreach (Influence influence in method.Influences.Influences.Values)
+            {
+                double influenceValue = influence.AIPersonValue;
+                if (influenceValue > 0d)
+                {
+                    influenceValueScore += (float)influenceValue;
+                }
+            }
+
             // 1. 使用 GetCredit 评估战法收益
             int baseCredit = method.GetCredit(this, target);
 
-            // 如果基础收益为 0，直接返回
-            if (baseCredit <= 0)
+            // 如果底层影响没有提供显式收益，则回退到战法+后续普攻的战斗计划分
+            if (baseCredit == 0)
+            {
+                float fallbackScore = followUpAttackScore + influenceValueScore * config.BaseScoreMultiplier * categoryModifier * roleCategoryModifier;
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[CalculateCombatMethodScore] {this.DisplayName} method={method.Name}(ID:{method.ID}) target={target.DisplayName} baseCredit=0 fallbackScore={fallbackScore:F1} followUp={followUpAttackScore:F1} influenceValue={influenceValueScore:F1}");
+#endif
+                return fallbackScore;
+            }
+
+            if (baseCredit < 0)
                 return 0f;
 
             // 2. 转换为浮点评分（从配置读取乘数）
@@ -26413,13 +26540,15 @@ namespace GameObjects
             baseScore *= config.ConservativeModifier;
 
             // 5. 战术角色修正（从配置读取）
-            // ⚠️ 数据完整性断言：所有角色都应该在配置中定义
-            string roleKey = this.CurrentRole.ToString();
-            System.Diagnostics.Debug.Assert(config.RoleModifiers.ContainsKey(roleKey),
-                $"[CalculateCombatMethodScore] 角色 {roleKey} 未在配置中定义，检查 AITacticalConfig.json");
-
             float roleModifier = config.RoleModifiers[roleKey];
             baseScore *= roleModifier;
+
+            baseScore *= categoryModifier;
+
+            if (roleCategoryModifier != 1f)
+            {
+                baseScore *= roleCategoryModifier;
+            }
 
             // 6. 战意修正（从配置读取阈值和系数）
             if (this.Combativity >= config.CombativityModifiers.HighCombativityThreshold)
@@ -26430,6 +26559,12 @@ namespace GameObjects
             // 7. 斩杀修正（从配置读取阈值乘数和惩罚系数）
             if (target.Army.Quantity < this.Offence * config.ExecutionModifier.ThresholdMultiplier)
                 baseScore *= config.ExecutionModifier.Penalty;
+
+            // 8. 攻击计划内的战法都附加后续普攻收益，具体权重由类别配置控制
+            if (IsOffensiveAbilityCategory(methodCategory))
+            {
+                baseScore += followUpAttackScore;
+            }
 
             return baseScore;
         }
@@ -27041,27 +27176,27 @@ namespace GameObjects
             System.Diagnostics.Debug.Assert(target.Leader != null,
                 $"[GetStratagemSuccessRate] 目标 {target.DisplayName} 的 Leader 为 null，检查部队初始化逻辑");
 
-            // 获取双方智力
-            int casterInt = this.Leader.Intelligence;
-            int targetInt = target.Leader.Intelligence;
-            int intDiff = casterInt - targetInt;
+            // 与实战判定对齐：使用 TroopIntelligence + Calmness + 计略基础Chance 估算
+            int casterInt = this.TroopIntelligence;
+            int targetInt = target.TroopIntelligence;
+            int casterCalmness = this.Leader.Calmness;
+            int targetCalmness = target.Leader.Calmness;
 
-            // 🔥 智商压制（看破）机制：智力低于对方阈值时，判定绝对失败，直接短路
-            if (intDiff <= config.CounterThreshold)
+            int chanceDiff = (((casterInt + this.StratagemChanceIncrement) + casterCalmness)
+                - targetInt) - target.ChanceDecrementOfStratagem - targetCalmness;
+            int rawChance = stratagem.Chance + chanceDiff;
+
+            if (rawChance <= 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[计略看破] {target.DisplayName}(智力{targetInt}) 看破了 {this.DisplayName}(智力{casterInt}) 的 {stratagem.Name}");
+                    $"[计略成功率] {this.DisplayName} 对 {target.DisplayName} 使用 {stratagem.Name} 预判概率<=0%，放弃施法");
                 return 0f;
             }
 
-            // 基础成功率 + 智力差影响
-            float successRate = config.BaseSuccessRate + (intDiff * config.IntelligenceInfluence);
-
-            // 使用 Math.Clamp 限制范围
-            // 保底奇迹概率（除非被看破），最高成功率（留下失误可能）
+            // 百分比转 [0,1]
+            float successRate = rawChance / 100f;
             successRate = Math.Clamp(successRate, config.MinSuccessRate, config.MaxSuccessRate);
 
-            // 调试日志
             if (successRate < 0.5f)
             {
                 System.Diagnostics.Debug.WriteLine(
@@ -27360,7 +27495,111 @@ namespace GameObjects
 
             foreach (var skill in combatSkills)
             {
-                // 检查特技是否可用：检查影响数量（确保特技有实际效果）
+                bool hasConfiguredSkillCategory = AIRoleConfigManager.TryGetSkillCategory(skill.ID, out ActiveAbilityCategory skillCategory);
+                if (!hasConfiguredSkillCategory)
+                {
+                    skillCategory = ActiveAbilityCategory.Passive;
+                }
+                string skillCategorySource = hasConfiguredSkillCategory ? "AIRoleConfig" : "Fallback(Passive)";
+
+                bool hasConfiguredEvaluationMode = AIRoleConfigManager.TryGetSkillEvaluationMode(skill.ID, out ActiveAbilityEvaluationMode evaluationMode);
+                if (!hasConfiguredEvaluationMode)
+                {
+                    evaluationMode = IsOffensiveAbilityCategory(skillCategory)
+                        ? ActiveAbilityEvaluationMode.Direct
+                        : ActiveAbilityEvaluationMode.Disabled;
+                }
+                string evaluationModeSource = hasConfiguredEvaluationMode ? "AIRoleConfig" : "Fallback(CategoryBased)";
+
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) category={skillCategory} source={skillCategorySource} evalMode={evaluationMode} evalSource={evaluationModeSource}");
+#endif
+
+                if (evaluationMode == ActiveAbilityEvaluationMode.Disabled)
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) skip-offense-eval(skills-disabled)");
+#endif
+                    continue;
+                }
+
+                if (evaluationMode == ActiveAbilityEvaluationMode.IndirectCombatMethod)
+                {
+                    if (!AIRoleConfigManager.TryGetSkillLinkedCombatMethodID(skill.ID, out int linkedCombatMethodID))
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) skip-offense-eval(linked-method-missing)");
+#endif
+                        continue;
+                    }
+
+                    GameObjects.TroopDetail.CombatMethod linkedMethod = this.CombatMethods?.GetCombatMethod(linkedCombatMethodID);
+                    if (linkedMethod == null)
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) linkedMethod={linkedCombatMethodID} skip-offense-eval(linked-method-not-owned)");
+#endif
+                        continue;
+                    }
+
+                    if (!this.HasCombatMethod(linkedMethod.ID))
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) linkedMethod={linkedMethod.Name}(ID:{linkedMethod.ID}) skip-offense-eval(linked-method-not-usable)");
+#endif
+                        continue;
+                    }
+
+                    ActiveAbilityCategory linkedMethodCategory = AIRoleConfigManager.GetCombatMethodCategory(linkedMethod.ID, linkedMethod.ViewingHostile);
+                    if (!IsOffensiveAbilityCategory(linkedMethodCategory))
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) linkedMethod={linkedMethod.Name}(ID:{linkedMethod.ID}) category={linkedMethodCategory} skip-offense-eval(linked-method-non-offense)");
+#endif
+                        continue;
+                    }
+
+                    var linkedMethodEnemies = GetEnemiesInRange(tile, this.OffenceRadius);
+
+#if DEBUG
+                    if (linkedMethodEnemies.Count > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) linkedMethod={linkedMethod.Name}(ID:{linkedMethod.ID}) enemies={linkedMethodEnemies.Count}");
+                    }
+#endif
+
+                    foreach (var enemy in linkedMethodEnemies)
+                    {
+                        Architecture enemyArch = Session.Current.Scenario.GetArchitectureByPosition(enemy.Position);
+                        if (enemyArch != null && enemyArch.Endurance > 0 && !this.IsFriendly(enemyArch.BelongedFaction))
+                        {
+                            if (!this.IsRangedUnit) continue;
+                        }
+
+                        float score = CalculateCombatMethodScore(linkedMethod, enemy, tile);
+
+                        candidates.Add(new CombatPlan
+                        {
+                            MoveDestination = canMoveToTile ? tile : this.Position,
+                            Target = enemy,
+                            MethodToCast = linkedMethod,
+                            Score = score,
+                            ActionType = CombatActionType.CastCombatMethod
+                        });
+                    }
+
+                    continue;
+                }
+
+                if (!IsOffensiveAbilityCategory(skillCategory))
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) category={skillCategory} source={skillCategorySource} skip-offense-eval(non-offensive-category)");
+#endif
+                    continue;
+                }
+
+                // 检查技能是否可用：检查影响数量（确保技能有实际效果）
                 if (skill.InfluenceCount <= 0)
                 {
 #if DEBUG
@@ -27369,7 +27608,6 @@ namespace GameObjects
                     continue;
                 }
                 
-                // 攻击类特技需要有目标
                 var enemies = GetEnemiesInRange(tile, this.OffenceRadius);
                 
 #if DEBUG
@@ -27381,7 +27619,6 @@ namespace GameObjects
                 
                 foreach (var enemy in enemies)
                 {
-                    // 隔墙判定
                     Architecture enemyArch = Session.Current.Scenario.GetArchitectureByPosition(enemy.Position);
                     if (enemyArch != null && enemyArch.Endurance > 0 && !this.IsFriendly(enemyArch.BelongedFaction))
                     {
@@ -27412,43 +27649,33 @@ namespace GameObjects
         private List<PersonDetail.Skill> GetCombatSkillsFromTroop()
         {
             List<PersonDetail.Skill> result = [];
-            
-            // 从主将获取
-            if (this.Leader?.Skills?.GetSkillList() != null)
+
+            System.Diagnostics.Debug.Assert(this.Leader != null, "[GetCombatSkills] Leader should not be null.");
+            System.Diagnostics.Debug.Assert(this.Army != null && this.Army.Kind != null, "[GetCombatSkills] Army kind should not be null.");
+
+            if (this.Leader == null || this.Leader.Skills == null || this.Army == null || this.Army.Kind == null)
             {
-                var skillList = this.Leader.Skills.GetSkillList();
-                for (int i = 0; i < skillList.Count; i++)
-                {
-                    if (skillList[i] is PersonDetail.Skill skill && skill.Combat)
-                    {
-                        result.Add(skill);
-#if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[GetCombatSkills] {this.DisplayName} 主将 {this.Leader.Name} 有战斗技能: {skill.Name}");
-#endif
-                    }
-                }
+                return result;
             }
-            
-            // 从副将获取
-            if (this.Persons != null)
+
+            MilitaryType currentMilitaryType = this.Army.Kind.Type;
+            var skillList = this.Leader.Skills.GetSkillList();
+            for (int i = 0; i < skillList.Count; i++)
             {
-                for (int i = 0; i < this.Persons.Count; i++)
+                if (skillList[i] is not PersonDetail.Skill skill || !skill.Combat)
                 {
-                    if (this.Persons[i] is Person p && p.Skills != null)
-                    {
-                        var skillList = p.Skills.GetSkillList();
-                        for (int j = 0; j < skillList.Count; j++)
-                        {
-                            if (skillList[j] is PersonDetail.Skill skill && skill.Combat && !result.Contains(skill))
-                            {
-                                result.Add(skill);
-#if DEBUG
-                                System.Diagnostics.Debug.WriteLine($"[GetCombatSkills] {this.DisplayName} 副将 {p.Name} 有战斗技能: {skill.Name}");
-#endif
-                            }
-                        }
-                    }
+                    continue;
                 }
+
+                if (skill.MilitaryTypeOnly != currentMilitaryType && skill.MilitaryTypeOnly != MilitaryType.其他)
+                {
+                    continue;
+                }
+
+                result.Add(skill);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[GetCombatSkills] {this.DisplayName} leader={this.Leader.Name} skill={skill.Name}(ID:{skill.ID})");
+#endif
             }
             
             return result;
@@ -27459,20 +27686,34 @@ namespace GameObjects
         /// </summary>
         private float CalculateSkillScore(PersonDetail.Skill skill, Troop target, Point tile)
         {
-            // 基础分：普攻分 × 特技等级系数
-            float baseScore = CalculateTroopAttackScore(target, tile) * (1.0f + skill.Level * 0.2f);
+            var config = WorldOfTheThreeKingdoms.GameGlobal.AITacticalConfigManager.GetSkillScoringConfig();
 
-            // 战术角色修正
-            if (this.CurrentRole == WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Mage) baseScore *= 1.5f;
-            if (this.CurrentRole == WorldOfTheThreeKingdoms.GameGlobal.TroopRole.Support) baseScore *= 1.3f;
+            float baseScore = CalculateTroopAttackScore(target, tile) * (1.0f + skill.Level * config.LevelMultiplier);
 
-            // 影响数量修正（影响越多威力越大）
-            baseScore *= (1.0f + skill.InfluenceCount * 0.1f);
+            string roleKey = this.CurrentRole.ToString();
+            System.Diagnostics.Debug.Assert(config.RoleModifiers.ContainsKey(roleKey),
+                $"[CalculateSkillScore] role {roleKey} not configured in AITacticalConfig");
+            baseScore *= config.RoleModifiers[roleKey];
 
-            // 斩杀修正：敌人快死了就普攻，别浪费特技
-            if (target.Army.Quantity < this.Offence && baseScore > 0)
+            ActiveAbilityCategory skillCategory = AIRoleConfigManager.GetSkillCategory(skill.ID);
+            string skillCategoryKey = skillCategory.ToString();
+            System.Diagnostics.Debug.Assert(config.CategoryModifiers.ContainsKey(skillCategoryKey),
+                $"[CalculateSkillScore] category {skillCategoryKey} not configured in AITacticalConfig");
+            float categoryModifier = config.CategoryModifiers[skillCategoryKey];
+            baseScore *= categoryModifier;
+
+            if (config.RoleCategoryModifiers.TryGetValue(roleKey, out var roleCategoryModifiers) &&
+                roleCategoryModifiers.TryGetValue(skillCategoryKey, out var roleCategoryModifier))
             {
-                baseScore *= 0.5f;
+                baseScore *= roleCategoryModifier;
+            }
+
+            baseScore *= (1.0f + skill.InfluenceCount * config.InfluenceCountModifier);
+
+            float executionThreshold = this.Offence * config.ExecutionModifier.ThresholdMultiplier;
+            if (target.Army.Quantity < executionThreshold && baseScore > 0)
+            {
+                baseScore *= config.ExecutionModifier.Penalty;
             }
             
             // 🔥 新增：地块危险度惩罚（火焰等异常状态）
@@ -27525,12 +27766,27 @@ namespace GameObjects
                 }
                 
                 // 攻击类特技需要有目标
+                bool hasConfiguredCategory = AIRoleConfigManager.TryGetStuntCategory(stunt.ID, out var stuntCategory);
+                if (!hasConfiguredCategory)
+                {
+                    stuntCategory = ActiveAbilityCategory.Utility;
+                }
+                string stuntCategorySource = hasConfiguredCategory ? "AIRoleConfig" : "Fallback(Utility)";
+
+                if (!IsOffensiveAbilityCategory(stuntCategory))
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateStunts] {this.DisplayName} stunt={stunt.Name}(ID:{stunt.ID}) category={stuntCategory} source={stuntCategorySource} skip-offense-eval");
+#endif
+                    continue;
+                }
+
                 var enemies = GetEnemiesInRange(tile, this.OffenceRadius);
                 
 #if DEBUG
                 if (enemies.Count > 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateStunts] 特技 {stunt.Name} 找到 {enemies.Count} 个敌人");
+                    System.Diagnostics.Debug.WriteLine($"[EvaluateStunts] {this.DisplayName} stunt={stunt.Name}(ID:{stunt.ID}) category={stuntCategory} source={stuntCategorySource} enemies={enemies.Count}");
                 }
 #endif
                 
@@ -27546,10 +27802,6 @@ namespace GameObjects
                     }
 
                     float score = CalculateStuntScore(stunt, enemy, tile);
-                    
-#if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateStunts] {this.DisplayName} 使用特技 {stunt.Name} 攻击 {enemy.DisplayName}，评分: {score:F2}");
-#endif
                     
                     candidates.Add(new CombatPlan
                     {
@@ -27570,43 +27822,36 @@ namespace GameObjects
         private List<PersonDetail.Stunt> GetCombatStuntsFromTroop()
         {
             List<PersonDetail.Stunt> result = [];
-            
-            // 从主将获取
-            if (this.Leader?.Stunts?.GetStuntList() != null)
+
+            System.Diagnostics.Debug.Assert(this.Army != null && this.Army.Kind != null, "[GetCombatStunts] Army kind should not be null.");
+
+            if (this.Stunts == null || this.Stunts.Stunts == null || this.Army == null || this.Army.Kind == null)
             {
-                var stuntList = this.Leader.Stunts.GetStuntList();
-                for (int i = 0; i < stuntList.Count; i++)
-                {
-                    if (stuntList[i] is PersonDetail.Stunt stunt && stunt.Influences.Count > 0)
-                    {
-                        result.Add(stunt);
-#if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[GetCombatStunts] {this.DisplayName} 主将 {this.Leader.Name} 有战斗特技: {stunt.Name}");
-#endif
-                    }
-                }
+                return result;
             }
-            
-            // 从副将获取
-            if (this.Persons != null)
+
+            MilitaryType currentMilitaryType = this.Army.Kind.Type;
+            foreach (var stunt in this.Stunts.Stunts.Values)
             {
-                for (int i = 0; i < this.Persons.Count; i++)
+                if (stunt == null || stunt.Influences.Count <= 0)
                 {
-                    if (this.Persons[i] is Person p && p.Stunts != null)
-                    {
-                        var stuntList = p.Stunts.GetStuntList();
-                        for (int j = 0; j < stuntList.Count; j++)
-                        {
-                            if (stuntList[j] is PersonDetail.Stunt stunt && stunt.Influences.Count > 0 && !result.Contains(stunt))
-                            {
-                                result.Add(stunt);
-#if DEBUG
-                                System.Diagnostics.Debug.WriteLine($"[GetCombatStunts] {this.DisplayName} 副将 {p.Name} 有战斗特技: {stunt.Name}");
-#endif
-                            }
-                        }
-                    }
+                    continue;
                 }
+
+                if (stunt.MilitaryTypeOnly != currentMilitaryType && stunt.MilitaryTypeOnly != MilitaryType.其他)
+                {
+                    continue;
+                }
+
+                if (!this.HasStunt(stunt.ID))
+                {
+                    continue;
+                }
+
+                result.Add(stunt);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[GetCombatStunts] {this.DisplayName} stunt={stunt.Name}(ID:{stunt.ID})");
+#endif
             }
             
             return result;
@@ -27652,6 +27897,20 @@ namespace GameObjects
                 _ => 1.0f
             };
             baseScore *= roleModifier;
+
+            ActiveAbilityCategory stuntCategory = GetEffectiveStuntCategory(stunt.ID);
+            string stuntCategoryKey = stuntCategory.ToString();
+            System.Diagnostics.Debug.Assert(config.CategoryModifiers.ContainsKey(stuntCategoryKey),
+                $"[CalculateStuntScore] category {stuntCategoryKey} not configured in AITacticalConfig");
+            float categoryModifier = config.CategoryModifiers[stuntCategoryKey];
+            baseScore *= categoryModifier;
+
+            string roleKey = this.CurrentRole.ToString();
+            if (config.RoleCategoryModifiers.TryGetValue(roleKey, out var roleCategoryModifiers) &&
+                roleCategoryModifiers.TryGetValue(stuntCategoryKey, out var roleCategoryModifier))
+            {
+                baseScore *= roleCategoryModifier;
+            }
 
             // 影响数量修正（影响越多威力越大）
             baseScore *= (1.0f + influenceCount * config.InfluenceCountModifier);

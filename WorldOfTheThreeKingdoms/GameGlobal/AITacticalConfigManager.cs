@@ -5,36 +5,36 @@ using WorldOfTheThreeKingdoms.GameLogic.Config;
 namespace WorldOfTheThreeKingdoms.GameGlobal;
 
 /// <summary>
-/// AI战术配置管理器
-/// 负责加载和管理战术定位、军团编制等配置
-/// 日期：2026-03-10 重构：使用 ConfigManagerBase 统一热重载机制
+/// AI鎴樻湳閰嶇疆绠＄悊鍣?
+/// 璐熻矗鍔犺浇鍜岀鐞嗘垬鏈畾浣嶃€佸啗鍥㈢紪鍒剁瓑閰嶇疆
+/// 鏃ユ湡锛?026-03-10 閲嶆瀯锛氫娇鐢?ConfigManagerBase 缁熶竴鐑噸杞芥満鍒?
 /// </summary>
 public static class AITacticalConfigManager
 {
-    // 内部管理器实例（继承 ConfigManagerBase）
+    // 鍐呴儴绠＄悊鍣ㄥ疄渚嬶紙缁ф壙 ConfigManagerBase锛?
     private static readonly TacticalConfigManager _manager = new();
 
     /// <summary>
-    /// 获取配置实例（线程安全）
+    /// 鑾峰彇閰嶇疆瀹炰緥锛堢嚎绋嬪畨鍏級
     /// </summary>
     public static AITacticalConfig Config => _manager.Config;
     
     /// <summary>
-    /// 初始化配置管理器（游戏启动时调用）
+    /// 鍒濆鍖栭厤缃鐞嗗櫒锛堟父鎴忓惎鍔ㄦ椂璋冪敤锛?
     /// </summary>
     public static void Initialize() => _manager.Initialize();
     
     /// <summary>
-    /// 热重载更新（主线程 Update 中调用）
+    /// 鐑噸杞芥洿鏂帮紙涓荤嚎绋?Update 涓皟鐢級
     /// </summary>
     public static void Update() => _manager.Update();
     
     /// <summary>
-    /// 手动重新加载配置
+    /// 鎵嬪姩閲嶆柊鍔犺浇閰嶇疆
     /// </summary>
     public static void ReloadConfig() => _manager.ReloadConfig();
 
-    // ==================== 内部管理器类 ====================
+    // ==================== 鍐呴儴绠＄悊鍣ㄧ被 ====================
     
     private class TacticalConfigManager : ConfigManagerBase<AITacticalConfig>
     {
@@ -43,57 +43,57 @@ public static class AITacticalConfigManager
         protected override AITacticalConfig CreateDefaultConfig() => CreateDefaultTacticalConfig();
 
         /// <summary>
-        /// 初始化配置管理器（游戏启动时调用）
-        /// 重写以添加配置验证（ANTI-BAND-AID：Fail Fast）
+        /// 鍒濆鍖栭厤缃鐞嗗櫒锛堟父鎴忓惎鍔ㄦ椂璋冪敤锛?
+        /// 閲嶅啓浠ユ坊鍔犻厤缃獙璇侊紙ANTI-BAND-AID锛欶ail Fast锛?
         /// </summary>
         public new void Initialize()
         {
             base.Initialize();
             
-            // 🔥 关键：初始化后立即验证配置完整性
+            // 馃敟 鍏抽敭锛氬垵濮嬪寲鍚庣珛鍗抽獙璇侀厤缃畬鏁存€?
             ValidateConfig(Config);
         }
 
         /// <summary>
-        /// 验证配置完整性（ANTI-BAND-AID：Fail Fast）
-        /// 🧊 COLD PATH：初始化阶段，可读性优先
+        /// 楠岃瘉閰嶇疆瀹屾暣鎬э紙ANTI-BAND-AID锛欶ail Fast锛?
+        /// 馃 COLD PATH锛氬垵濮嬪寲闃舵锛屽彲璇绘€т紭鍏?
         /// </summary>
         private static void ValidateConfig(AITacticalConfig config)
         {
-            // 🔥 关键：配置必须完整，缺失任何关键字段都应该抛出异常
+            // 馃敟 鍏抽敭锛氶厤缃繀椤诲畬鏁达紝缂哄け浠讳綍鍏抽敭瀛楁閮藉簲璇ユ姏鍑哄紓甯?
             if (config.TacticalPositioning == null)
                 throw new InvalidOperationException(
-                    "配置损坏：AITacticalConfig.TacticalPositioning 为 null，检查 AITacticalConfig.json");
+                    "閰嶇疆鎹熷潖锛欰ITacticalConfig.TacticalPositioning 涓?null锛屾鏌?AITacticalConfig.json");
 
             if (config.TacticalPositioning.TerrainScores == null)
                 throw new InvalidOperationException(
-                    "配置损坏：TacticalPositioning.TerrainScores 为 null，检查 AITacticalConfig.json");
+                    "閰嶇疆鎹熷潖锛歍acticalPositioning.TerrainScores 涓?null锛屾鏌?AITacticalConfig.json");
 
             if (config.TacticalPositioning.StrategicPosture == null)
                 throw new InvalidOperationException(
-                    "配置损坏：TacticalPositioning.StrategicPosture 为 null，检查 AITacticalConfig.json");
+                    "閰嶇疆鎹熷潖锛歍acticalPositioning.StrategicPosture 涓?null锛屾鏌?AITacticalConfig.json");
 
             if (config.TacticalPositioning.Scores == null)
                 throw new InvalidOperationException(
-                    "配置损坏：TacticalPositioning.Scores 为 null，检查 AITacticalConfig.json");
+                    "閰嶇疆鎹熷潖锛歍acticalPositioning.Scores 涓?null锛屾鏌?AITacticalConfig.json");
 
-            // 验证战略态势配置的完整性
+            // 楠岃瘉鎴樼暐鎬佸娍閰嶇疆鐨勫畬鏁存€?
             string[] postures = ["Attack", "Defense", "Garrison"];
             foreach (var posture in postures)
             {
                 if (!config.TacticalPositioning.StrategicPosture.ContainsKey(posture))
                     throw new InvalidOperationException(
-                        $"配置损坏：TacticalPositioning.StrategicPosture 缺少 '{posture}' 配置");
+                        $"閰嶇疆鎹熷潖锛歍acticalPositioning.StrategicPosture 缂哄皯 '{posture}' 閰嶇疆");
 
                 var postureConfig = config.TacticalPositioning.StrategicPosture[posture];
                 if (postureConfig.ChokePointBonus == null)
                     throw new InvalidOperationException(
-                        $"配置损坏：TacticalPositioning.StrategicPosture.{posture}.ChokePointBonus 为 null");
+                        $"閰嶇疆鎹熷潖锛歍acticalPositioning.StrategicPosture.{posture}.ChokePointBonus 涓?null");
             }
         }
     }
 
-    // ==================== 默认配置创建 ====================
+    // ==================== 榛樿閰嶇疆鍒涘缓 ====================
 
     private static AITacticalConfig CreateDefaultTacticalConfig()
     {
@@ -125,28 +125,28 @@ public static class AITacticalConfigManager
                 {
                     ["Tank"] = new()
                     {
-                        ["森林"] = 150f,
-                        ["山地"] = 200f,
-                        ["峻岭"] = 180f,
-                        ["水域"] = -5000f
+                        ["妫灄"] = 150f,
+                        ["灞卞湴"] = 200f,
+                        ["宄诲箔"] = 180f,
+                        ["姘村煙"] = -5000f
                     },
                     ["DPS"] = new()
                     {
-                        ["平原"] = 80f,
-                        ["草原"] = 70f,
-                        ["水域"] = -5000f
+                        ["骞冲師"] = 80f,
+                        ["鑽夊師"] = 70f,
+                        ["姘村煙"] = -5000f
                     },
                     ["Mage"] = new()
                     {
-                        ["森林"] = 200f,
-                        ["山地"] = 150f,
-                        ["水域"] = -5000f
+                        ["妫灄"] = 200f,
+                        ["灞卞湴"] = 150f,
+                        ["姘村煙"] = -5000f
                     },
                     ["Support"] = new()
                     {
-                        ["森林"] = 200f,
-                        ["山地"] = 150f,
-                        ["水域"] = -5000f
+                        ["妫灄"] = 200f,
+                        ["灞卞湴"] = 150f,
+                        ["姘村煙"] = -5000f
                     }
                 },
                 StrategicPosture = new()
@@ -210,7 +210,7 @@ public static class AITacticalConfigManager
                 },
                 SpecialTroopKinds = new SpecialTroopKindsConfig
                 {
-                    // 🔥 C# 12 集合表达式：属性类型 List<int> 已明确，直接使用 []
+                    // 馃敟 C# 12 闆嗗悎琛ㄨ揪寮忥細灞炴€х被鍨?List<int> 宸叉槑纭紝鐩存帴浣跨敤 []
                     RequireZocSuppression = [15, 2]
                 }
             },
@@ -301,6 +301,38 @@ public static class AITacticalConfigManager
                     ["Logistics"] = 1.0f,
                     ["Balanced"] = 1.0f
                 },
+                CategoryModifiers = new()
+                {
+                    ["EnemyTargetedOffense"] = 1.0f,
+                    ["SelfBuffOffense"] = 1.0f,
+                    ["SelfBuffDefense"] = 0.75f,
+                    ["FriendlySupport"] = 0.9f,
+                    ["Utility"] = 0.5f,
+                    ["Passive"] = 0.0f,
+                    ["Disabled"] = 0.0f
+                },
+                RoleCategoryModifiers = new()
+                {
+                    ["Tank"] = new Dictionary<string, float>
+                    {
+                        ["SelfBuffDefense"] = 1.4f,
+                        ["SelfBuffOffense"] = 1.1f
+                    },
+                    ["DPS"] = new Dictionary<string, float>
+                    {
+                        ["EnemyTargetedOffense"] = 1.2f,
+                        ["SelfBuffOffense"] = 1.3f
+                    },
+                    ["Mage"] = new Dictionary<string, float>
+                    {
+                        ["EnemyTargetedOffense"] = 1.1f
+                    },
+                    ["Support"] = new Dictionary<string, float>
+                    {
+                        ["FriendlySupport"] = 1.3f,
+                        ["SelfBuffDefense"] = 1.1f
+                    }
+                },
                 CombativityModifiers = new CombativityModifiersConfig
                 {
                     HighCombativityThreshold = 80,
@@ -322,6 +354,90 @@ public static class AITacticalConfigManager
                 MinSuccessRate = 0.1f,
                 MaxSuccessRate = 0.95f,
                 EnableSuccessRatePrediction = true
+            },
+            SkillScoring = new SkillScoringConfig
+            {
+                LevelMultiplier = 0.2f,
+                RoleModifiers = new()
+                {
+                    ["Mage"] = 1.5f,
+                    ["Support"] = 1.3f,
+                    ["Tank"] = 1.0f,
+                    ["DPS"] = 1.0f,
+                    ["Logistics"] = 1.0f,
+                    ["Balanced"] = 1.0f
+                },
+                CategoryModifiers = new()
+                {
+                    ["EnemyTargetedOffense"] = 1.0f,
+                    ["SelfBuffOffense"] = 0.9f,
+                    ["SelfBuffDefense"] = 0.7f,
+                    ["FriendlySupport"] = 0.6f,
+                    ["Utility"] = 0.2f,
+                    ["Passive"] = 0.0f,
+                    ["Disabled"] = 0.0f
+                },
+                RoleCategoryModifiers = new()
+                {
+                    ["DPS"] = new Dictionary<string, float>
+                    {
+                        ["EnemyTargetedOffense"] = 1.2f
+                    },
+                    ["Mage"] = new Dictionary<string, float>
+                    {
+                        ["EnemyTargetedOffense"] = 1.1f
+                    }
+                },
+                InfluenceCountModifier = 0.1f,
+                ExecutionModifier = new ExecutionModifierConfig
+                {
+                    ThresholdMultiplier = 1.0f,
+                    Penalty = 0.5f
+                }
+            },
+            StuntScoring = new StuntScoringConfig
+            {
+                PowerMultiplierBase = 1.0f,
+                PowerMultiplierPerInfluence = 0.5f,
+                PowerMultiplierCombativityPenalty = 0.01f,
+                MinPowerMultiplier = 0.5f,
+                RoleModifiers = new()
+                {
+                    ["Mage"] = 1.6f,
+                    ["DPS"] = 1.4f,
+                    ["Tank"] = 1.0f,
+                    ["Support"] = 1.0f,
+                    ["Logistics"] = 1.0f,
+                    ["Balanced"] = 1.0f
+                },
+                CategoryModifiers = new()
+                {
+                    ["EnemyTargetedOffense"] = 1.0f,
+                    ["SelfBuffOffense"] = 1.0f,
+                    ["SelfBuffDefense"] = 0.8f,
+                    ["FriendlySupport"] = 0.9f,
+                    ["Utility"] = 0.6f,
+                    ["Passive"] = 0.0f,
+                    ["Disabled"] = 0.0f
+                },
+                RoleCategoryModifiers = new()
+                {
+                    ["Tank"] = new Dictionary<string, float>
+                    {
+                        ["SelfBuffDefense"] = 1.3f
+                    },
+                    ["DPS"] = new Dictionary<string, float>
+                    {
+                        ["EnemyTargetedOffense"] = 1.2f,
+                        ["SelfBuffOffense"] = 1.2f
+                    }
+                },
+                InfluenceCountModifier = 0.15f,
+                ExecutionModifier = new ExecutionModifierConfig
+                {
+                    ThresholdMultiplier = 1.0f,
+                    Penalty = 0.4f
+                }
             },
             LegionFormation = new LegionFormationConfig
             {
@@ -345,36 +461,36 @@ public static class AITacticalConfigManager
 
 
     /// <summary>
-    /// 获取角色的战术评分配置
+    /// 鑾峰彇瑙掕壊鐨勬垬鏈瘎鍒嗛厤缃?
     /// </summary>
     public static RoleScoreConfig GetRoleScoreConfig(string roleName)
     {
-        // ANTI-BAND-AID：配置应该在初始化时加载
+        // ANTI-BAND-AID锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[GetRoleScoreConfig] Config 为 null，检查配置加载逻辑");
+            "[GetRoleScoreConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.TacticalPositioning?.Scores != null,
-            "[GetRoleScoreConfig] TacticalPositioning.Scores 配置缺失，检查 AITacticalConfig.json");
+            "[GetRoleScoreConfig] TacticalPositioning.Scores 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         if (Config.TacticalPositioning.Scores.TryGetValue(roleName, out var config))
         {
             return config;
         }
 
-        // ANTI-BAND-AID：找不到角色配置时抛出异常，而非返回空对象
+        // ANTI-BAND-AID锛氭壘涓嶅埌瑙掕壊閰嶇疆鏃舵姏鍑哄紓甯革紝鑰岄潪杩斿洖绌哄璞?
         throw new InvalidOperationException(
-            $"数据损坏：找不到角色 '{roleName}' 的战术评分配置！检查 AITacticalConfig.json 中的 TacticalPositioning.Scores 配置。");
+            $"Data corrupted: missing tactical score config for role '{roleName}'. Check TacticalPositioning.Scores in AITacticalConfig.json.");
     }
 
     /// <summary>
-    /// 获取军团编制配置
+    /// 鑾峰彇鍐涘洟缂栧埗閰嶇疆
     /// </summary>
     public static FormationConfig GetFormationConfig(int legionSize)
     {
-        // ANTI-BAND-AID：配置应该在初始化时加载
+        // ANTI-BAND-AID锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[GetFormationConfig] Config 为 null，检查配置加载逻辑");
+            "[GetFormationConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.LegionFormation?.Formations != null,
-            "[GetFormationConfig] LegionFormation.Formations 配置缺失，检查 AITacticalConfig.json");
+            "[GetFormationConfig] LegionFormation.Formations 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         if (legionSize >= 4 && Config.LegionFormation.Formations.TryGetValue("Large", out var large))
             return large;
@@ -383,115 +499,262 @@ public static class AITacticalConfigManager
         if (Config.LegionFormation.Formations.TryGetValue("Small", out var small))
             return small;
 
-        // ANTI-BAND-AID：找不到编制配置时抛出异常
+        // ANTI-BAND-AID锛氭壘涓嶅埌缂栧埗閰嶇疆鏃舵姏鍑哄紓甯?
         throw new InvalidOperationException(
-            $"数据损坏：找不到军团规模 {legionSize} 的编制配置！检查 AITacticalConfig.json 中的 LegionFormation.Formations 配置。");
+            $"Data corrupted: missing legion formation config for size {legionSize}. Check LegionFormation.Formations in AITacticalConfig.json.");
     }
 
     /// <summary>
-    /// 检查兵种是否需要 ZOC 压制
+    /// 妫€鏌ュ叺绉嶆槸鍚﹂渶瑕?ZOC 鍘嬪埗
     /// </summary>
     public static bool RequiresZocSuppression(int troopKindID)
     {
-        // ANTI-BAND-AID：配置应该在初始化时加载
+        // ANTI-BAND-AID锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[RequiresZocSuppression] Config 为 null，检查配置加载逻辑");
+            "[RequiresZocSuppression] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
 
         return Config.TacticalPositioning?.SpecialTroopKinds?.RequireZocSuppression?.Contains(troopKindID) ?? false;
     }
 
     /// <summary>
-    /// 获取计略评分配置
-    /// 日期：2026-03-09
+    /// 鑾峰彇璁＄暐璇勫垎閰嶇疆
+    /// 鏃ユ湡锛?026-03-09
     /// </summary>
     public static StratagemScoringConfig GetStratagemScoringConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
+        // 鈿狅笍 鏁版嵁瀹屾暣鎬ф柇瑷€锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null, 
-            "[GetStratagemScoringConfig] Config 为 null，检查配置加载逻辑");
+            "[GetStratagemScoringConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.StratagemScoring != null, 
-            "[GetStratagemScoringConfig] StratagemScoring 配置缺失，检查 AITacticalConfig.json");
+            "[GetStratagemScoringConfig] StratagemScoring 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         return Config.StratagemScoring;
     }
 
     /// <summary>
-    /// 获取友方增益计略评分配置
-    /// 日期：2026-03-09
+    /// 鑾峰彇鍙嬫柟澧炵泭璁＄暐璇勫垎閰嶇疆
+    /// 鏃ユ湡锛?026-03-09
     /// </summary>
     public static FriendlyStratagemScoringConfig GetFriendlyStratagemScoringConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
+        // 鈿狅笍 鏁版嵁瀹屾暣鎬ф柇瑷€锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[GetFriendlyStratagemScoringConfig] Config 为 null，检查配置加载逻辑");
+            "[GetFriendlyStratagemScoringConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.FriendlyStratagemScoring != null,
-            "[GetFriendlyStratagemScoringConfig] FriendlyStratagemScoring 配置缺失，检查 AITacticalConfig.json");
+            "[GetFriendlyStratagemScoringConfig] FriendlyStratagemScoring 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         return Config.FriendlyStratagemScoring;
     }
 
     /// <summary>
-    /// 获取计略成功率预判配置
-    /// 日期：2026-03-09
+    /// 鑾峰彇璁＄暐鎴愬姛鐜囬鍒ら厤缃?
+    /// 鏃ユ湡锛?026-03-09
     /// </summary>
     public static StratagemSuccessRateConfig GetStratagemSuccessRateConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
+        // 鈿狅笍 鏁版嵁瀹屾暣鎬ф柇瑷€锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[GetStratagemSuccessRateConfig] Config 为 null，检查配置加载逻辑");
+            "[GetStratagemSuccessRateConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.StratagemSuccessRate != null,
-            "[GetStratagemSuccessRateConfig] StratagemSuccessRate 配置缺失，检查 AITacticalConfig.json");
+            "[GetStratagemSuccessRateConfig] StratagemSuccessRate 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         return Config.StratagemSuccessRate;
     }
 
     /// <summary>
-    /// 获取战法评分配置
-    /// 日期：2026-03-09
+    /// 鑾峰彇鎴樻硶璇勫垎閰嶇疆
+    /// 鏃ユ湡锛?026-03-09
     /// </summary>
     public static CombatMethodScoringConfig GetCombatMethodScoringConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
         System.Diagnostics.Debug.Assert(Config != null,
             "[GetCombatMethodScoringConfig] Config 为 null，检查配置加载逻辑");
         System.Diagnostics.Debug.Assert(Config.CombatMethodScoring != null,
             "[GetCombatMethodScoringConfig] CombatMethodScoring 配置缺失，检查 AITacticalConfig.json");
 
-        return Config.CombatMethodScoring;
+        var scoring = Config.CombatMethodScoring;
+        if (scoring.CategoryModifiers == null)
+        {
+            scoring.CategoryModifiers = new Dictionary<string, float>
+            {
+                ["EnemyTargetedOffense"] = 1.0f,
+                ["SelfBuffOffense"] = 1.0f,
+                ["SelfBuffDefense"] = 0.75f,
+                ["FriendlySupport"] = 0.9f,
+                ["Utility"] = 0.5f,
+                ["Passive"] = 0.0f,
+                ["Disabled"] = 0.0f
+            };
+        }
+
+        if (scoring.RoleCategoryModifiers == null)
+        {
+            scoring.RoleCategoryModifiers = new Dictionary<string, Dictionary<string, float>>
+            {
+                ["Tank"] = new Dictionary<string, float>
+                {
+                    ["SelfBuffDefense"] = 1.4f,
+                    ["SelfBuffOffense"] = 1.1f
+                },
+                ["DPS"] = new Dictionary<string, float>
+                {
+                    ["EnemyTargetedOffense"] = 1.2f,
+                    ["SelfBuffOffense"] = 1.3f
+                },
+                ["Mage"] = new Dictionary<string, float>
+                {
+                    ["EnemyTargetedOffense"] = 1.1f
+                },
+                ["Support"] = new Dictionary<string, float>
+                {
+                    ["FriendlySupport"] = 1.3f,
+                    ["SelfBuffDefense"] = 1.1f
+                }
+            };
+        }
+
+        return scoring;
     }
 
     /// <summary>
-    /// 获取战法成功率预判配置
-    /// 日期：2026-03-09
+    /// 鑾峰彇鎴樻硶鎴愬姛鐜囬鍒ら厤缃?
+    /// 鏃ユ湡锛?026-03-09
     /// </summary>
+    public static SkillScoringConfig GetSkillScoringConfig()
+    {
+        System.Diagnostics.Debug.Assert(Config != null,
+            "[GetSkillScoringConfig] Config 为 null，检查配置加载逻辑");
+
+        if (Config.SkillScoring == null)
+        {
+            Config.SkillScoring = new SkillScoringConfig
+            {
+                LevelMultiplier = 0.2f,
+                RoleModifiers = new Dictionary<string, float>(),
+                CategoryModifiers = new Dictionary<string, float>(),
+                RoleCategoryModifiers = new Dictionary<string, Dictionary<string, float>>(),
+                InfluenceCountModifier = 0.1f,
+                ExecutionModifier = new ExecutionModifierConfig
+                {
+                    ThresholdMultiplier = 1.0f,
+                    Penalty = 0.5f
+                }
+            };
+        }
+
+        var scoring = Config.SkillScoring;
+        if (scoring.RoleModifiers == null)
+        {
+            scoring.RoleModifiers = new Dictionary<string, float>
+            {
+                ["Mage"] = 1.5f,
+                ["Support"] = 1.3f,
+                ["Tank"] = 1.0f,
+                ["DPS"] = 1.0f,
+                ["Logistics"] = 1.0f,
+                ["Balanced"] = 1.0f
+            };
+        }
+
+        if (scoring.CategoryModifiers == null)
+        {
+            scoring.CategoryModifiers = new Dictionary<string, float>
+            {
+                ["EnemyTargetedOffense"] = 1.0f,
+                ["SelfBuffOffense"] = 0.9f,
+                ["SelfBuffDefense"] = 0.7f,
+                ["FriendlySupport"] = 0.6f,
+                ["Utility"] = 0.2f,
+                ["Passive"] = 0.0f,
+                ["Disabled"] = 0.0f
+            };
+        }
+
+        if (scoring.RoleCategoryModifiers == null)
+        {
+            scoring.RoleCategoryModifiers = new Dictionary<string, Dictionary<string, float>>
+            {
+                ["DPS"] = new Dictionary<string, float>
+                {
+                    ["EnemyTargetedOffense"] = 1.2f
+                },
+                ["Mage"] = new Dictionary<string, float>
+                {
+                    ["EnemyTargetedOffense"] = 1.1f
+                }
+            };
+        }
+
+        if (scoring.ExecutionModifier == null)
+        {
+            scoring.ExecutionModifier = new ExecutionModifierConfig
+            {
+                ThresholdMultiplier = 1.0f,
+                Penalty = 0.5f
+            };
+        }
+
+        return scoring;
+    }
+
     public static CombatMethodSuccessRateConfig GetCombatMethodSuccessRateConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
+        // 鈿狅笍 鏁版嵁瀹屾暣鎬ф柇瑷€锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
         System.Diagnostics.Debug.Assert(Config != null,
-            "[GetCombatMethodSuccessRateConfig] Config 为 null，检查配置加载逻辑");
+            "[GetCombatMethodSuccessRateConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
         System.Diagnostics.Debug.Assert(Config.CombatMethodSuccessRate != null,
-            "[GetCombatMethodSuccessRateConfig] CombatMethodSuccessRate 配置缺失，检查 AITacticalConfig.json");
+            "[GetCombatMethodSuccessRateConfig] CombatMethodSuccessRate 閰嶇疆缂哄け锛屾鏌?AITacticalConfig.json");
 
         return Config.CombatMethodSuccessRate;
     }
 
     /// <summary>
-    /// 获取特技评分配置
-    /// 日期：2026-03-10
+    /// 鑾峰彇鐗规妧璇勫垎閰嶇疆
+    /// 鏃ユ湡锛?026-03-10
     /// </summary>
     public static StuntScoringConfig GetStuntScoringConfig()
     {
-        // ⚠️ 数据完整性断言：配置应该在初始化时加载
         System.Diagnostics.Debug.Assert(Config != null,
             "[GetStuntScoringConfig] Config 为 null，检查配置加载逻辑");
         System.Diagnostics.Debug.Assert(Config.StuntScoring != null,
             "[GetStuntScoringConfig] StuntScoring 配置缺失，检查 AITacticalConfig.json");
 
-        return Config.StuntScoring;
+        var scoring = Config.StuntScoring;
+        if (scoring.CategoryModifiers == null)
+        {
+            scoring.CategoryModifiers = new Dictionary<string, float>
+            {
+                ["EnemyTargetedOffense"] = 1.0f,
+                ["SelfBuffOffense"] = 1.0f,
+                ["SelfBuffDefense"] = 0.8f,
+                ["FriendlySupport"] = 0.9f,
+                ["Utility"] = 0.6f,
+                ["Passive"] = 0.0f,
+                ["Disabled"] = 0.0f
+            };
+        }
+
+        if (scoring.RoleCategoryModifiers == null)
+        {
+            scoring.RoleCategoryModifiers = new Dictionary<string, Dictionary<string, float>>
+            {
+                ["Tank"] = new Dictionary<string, float>
+                {
+                    ["SelfBuffDefense"] = 1.3f
+                },
+                ["DPS"] = new Dictionary<string, float>
+                {
+                    ["EnemyTargetedOffense"] = 1.2f,
+                    ["SelfBuffOffense"] = 1.2f
+                }
+            };
+        }
+
+        return scoring;
     }
 }
 
-// ==================== 配置数据结构 ====================
+// ==================== 閰嶇疆鏁版嵁缁撴瀯 ====================
 
 public class AITacticalConfig
 {
@@ -501,6 +764,7 @@ public class AITacticalConfig
     public StratagemSuccessRateConfig StratagemSuccessRate { get; set; }
     public CombatMethodScoringConfig CombatMethodScoring { get; set; }
     public CombatMethodSuccessRateConfig CombatMethodSuccessRate { get; set; }
+    public SkillScoringConfig SkillScoring { get; set; }
     public StuntScoringConfig StuntScoring { get; set; }
     public LegionFormationConfig LegionFormation { get; set; }
 }
@@ -596,8 +860,8 @@ public class RoleThresholdConfig
 }
 
 /// <summary>
-/// 计略评分配置
-/// 日期：2026-03-09
+/// 璁＄暐璇勫垎閰嶇疆
+/// 鏃ユ湡锛?026-03-09
 /// </summary>
 public class StratagemScoringConfig
 {
@@ -635,8 +899,8 @@ public class AOEScoringConfig
 }
 
 /// <summary>
-/// 友方增益计略评分配置
-/// 日期：2026-03-09
+/// 鍙嬫柟澧炵泭璁＄暐璇勫垎閰嶇疆
+/// 鏃ユ湡锛?026-03-09
 /// </summary>
 public class FriendlyStratagemScoringConfig
 {
@@ -674,47 +938,47 @@ public class FriendlyAOEScoringConfig
 }
 
 /// <summary>
-/// 计略成功率预判配置（智力对抗系统）
-/// 日期：2026-03-09
+/// 璁＄暐鎴愬姛鐜囬鍒ら厤缃紙鏅哄姏瀵规姉绯荤粺锛?
+/// 鏃ユ湡锛?026-03-09
 /// </summary>
 public class StratagemSuccessRateConfig
 {
     public string Description { get; set; }
     
     /// <summary>
-    /// 基础成功率（智力相等时）
+    /// 鍩虹鎴愬姛鐜囷紙鏅哄姏鐩哥瓑鏃讹級
     /// </summary>
     public float BaseSuccessRate { get; set; }
     
     /// <summary>
-    /// 智力影响系数（每点智力差的影响）
+    /// 鏅哄姏褰卞搷绯绘暟锛堟瘡鐐规櫤鍔涘樊鐨勫奖鍝嶏級
     /// </summary>
     public float IntelligenceInfluence { get; set; }
     
     /// <summary>
-    /// 看破阈值（智力差低于此值时绝对失败）
+    /// 鐪嬬牬闃堝€硷紙鏅哄姏宸綆浜庢鍊兼椂缁濆澶辫触锛?
     /// </summary>
     public int CounterThreshold { get; set; }
     
     /// <summary>
-    /// 最低成功率（保底奇迹概率）
+    /// 鏈€浣庢垚鍔熺巼锛堜繚搴曞杩规鐜囷級
     /// </summary>
     public float MinSuccessRate { get; set; }
     
     /// <summary>
-    /// 最高成功率（留下失误可能）
+    /// 鏈€楂樻垚鍔熺巼锛堢暀涓嬪け璇彲鑳斤級
     /// </summary>
     public float MaxSuccessRate { get; set; }
     
     /// <summary>
-    /// 是否启用成功率预判
+    /// 鏄惁鍚敤鎴愬姛鐜囬鍒?
     /// </summary>
     public bool EnableSuccessRatePrediction { get; set; }
 }
 
 /// <summary>
-/// 战法评分配置
-/// 日期：2026-03-09
+/// 鎴樻硶璇勫垎閰嶇疆
+/// 鏃ユ湡锛?026-03-09
 /// </summary>
 public class CombatMethodScoringConfig
 {
@@ -722,7 +986,20 @@ public class CombatMethodScoringConfig
     public float BaseScoreMultiplier { get; set; }
     public float ConservativeModifier { get; set; }
     public Dictionary<string, float> RoleModifiers { get; set; }
+    public Dictionary<string, float> CategoryModifiers { get; set; }
+    public Dictionary<string, Dictionary<string, float>> RoleCategoryModifiers { get; set; }
     public CombativityModifiersConfig CombativityModifiers { get; set; }
+    public ExecutionModifierConfig ExecutionModifier { get; set; }
+}
+
+public class SkillScoringConfig
+{
+    public string Description { get; set; }
+    public float LevelMultiplier { get; set; }
+    public Dictionary<string, float> RoleModifiers { get; set; }
+    public Dictionary<string, float> CategoryModifiers { get; set; }
+    public Dictionary<string, Dictionary<string, float>> RoleCategoryModifiers { get; set; }
+    public float InfluenceCountModifier { get; set; }
     public ExecutionModifierConfig ExecutionModifier { get; set; }
 }
 
@@ -735,84 +1012,89 @@ public class CombativityModifiersConfig
 }
 
 /// <summary>
-/// 战法成功率预判配置（统率对抗系统）
-/// 日期：2026-03-09
+/// 鎴樻硶鎴愬姛鐜囬鍒ら厤缃紙缁熺巼瀵规姉绯荤粺锛?
+/// 鏃ユ湡锛?026-03-09
 /// </summary>
 public class CombatMethodSuccessRateConfig
 {
     public string Description { get; set; }
     
     /// <summary>
-    /// 基础成功率（统率相等时）
+    /// 鍩虹鎴愬姛鐜囷紙缁熺巼鐩哥瓑鏃讹級
     /// </summary>
     public float BaseSuccessRate { get; set; }
     
     /// <summary>
-    /// 统率影响系数（每点统率差的影响）
+    /// 缁熺巼褰卞搷绯绘暟锛堟瘡鐐圭粺鐜囧樊鐨勫奖鍝嶏級
     /// </summary>
     public float CommandInfluence { get; set; }
     
     /// <summary>
-    /// 看破阈值（统率差低于此值时绝对失败）
+    /// 鐪嬬牬闃堝€硷紙缁熺巼宸綆浜庢鍊兼椂缁濆澶辫触锛?
     /// </summary>
     public int CounterThreshold { get; set; }
     
     /// <summary>
-    /// 最低成功率（保底奇迹概率）
+    /// 鏈€浣庢垚鍔熺巼锛堜繚搴曞杩规鐜囷級
     /// </summary>
     public float MinSuccessRate { get; set; }
     
     /// <summary>
-    /// 最高成功率（留下失误可能）
+    /// 鏈€楂樻垚鍔熺巼锛堢暀涓嬪け璇彲鑳斤級
     /// </summary>
     public float MaxSuccessRate { get; set; }
     
     /// <summary>
-    /// 是否启用成功率预判
+    /// 鏄惁鍚敤鎴愬姛鐜囬鍒?
     /// </summary>
     public bool EnableSuccessRatePrediction { get; set; }
 }
 
 /// <summary>
-/// 特技评分配置
-/// 日期：2026-03-10
+/// 鐗规妧璇勫垎閰嶇疆
+/// 鏃ユ湡锛?026-03-10
 /// </summary>
 public class StuntScoringConfig
 {
     public string Description { get; set; }
     
     /// <summary>
-    /// 威力系数基础值
+    /// 濞佸姏绯绘暟鍩虹鍊?
     /// </summary>
     public float PowerMultiplierBase { get; set; }
     
     /// <summary>
-    /// 每个影响效果的威力加成
+    /// 姣忎釜褰卞搷鏁堟灉鐨勫▉鍔涘姞鎴?
     /// </summary>
     public float PowerMultiplierPerInfluence { get; set; }
     
     /// <summary>
-    /// 战意消耗惩罚系数
+    /// 鎴樻剰娑堣€楁儵缃氱郴鏁?
     /// </summary>
     public float PowerMultiplierCombativityPenalty { get; set; }
     
     /// <summary>
-    /// 最小威力系数
+    /// 鏈€灏忓▉鍔涚郴鏁?
     /// </summary>
     public float MinPowerMultiplier { get; set; }
     
     /// <summary>
-    /// 战术角色修正系数
+    /// 鎴樻湳瑙掕壊淇绯绘暟
     /// </summary>
     public Dictionary<string, float> RoleModifiers { get; set; }
+
+    public Dictionary<string, float> CategoryModifiers { get; set; }
+    public Dictionary<string, Dictionary<string, float>> RoleCategoryModifiers { get; set; }
     
     /// <summary>
-    /// 影响数量修正系数
+    /// 褰卞搷鏁伴噺淇绯绘暟
     /// </summary>
     public float InfluenceCountModifier { get; set; }
     
     /// <summary>
-    /// 斩杀修正配置
+    /// 鏂╂潃淇閰嶇疆
     /// </summary>
     public ExecutionModifierConfig ExecutionModifier { get; set; }
 }
+
+

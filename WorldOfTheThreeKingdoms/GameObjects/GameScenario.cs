@@ -1956,6 +1956,7 @@ namespace GameObjects
                     }
                     foreach (Person p in candidates)
                     {
+                        
                         if ((!this.IsPlayer(p.BelongedFaction) || Session.GlobalVariables.PermitManualAwardTitleAutoLearn) && !p.HasHigherLevelTitle(t) && !t.ManualAward && t.CanLearn(p, true))
                         {
                             p.AwardTitle(t);
@@ -2165,6 +2166,26 @@ namespace GameObjects
                 }
             }
             this.Troops.BuildQueue();
+            
+            // 🔥 2026-03-23 新增：构建 CommandBuffer（在 BuildQueue 之后）
+            // 原因：BuildQueue 包含回合初始化副作用（InitializeInQueue、标志复位等）
+            // 顺序：必须先执行 BuildQueue 的副作用，再生成 CommandBuffer
+            if (Session.GlobalVariables.EnableCommandBufferScheduler && Session.Current?.CommandBufferScheduler != null)
+            {
+                try
+                {
+                    bool buildSucceeded = Session.Current.CommandBufferScheduler.BuildCommandBuffer(this);
+                    if (!buildSucceeded)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[DayStartingEvent] ⚠️ CommandBuffer 构建失败，本回合回退旧调度器");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DayStartingEvent] ❌ CommandBuffer 构建失败: {ex.Message}");
+                }
+            }
+            
             // 🔥 AOT修复：安全的类型转换
             foreach (GameObject obj in this.Architectures.GetList())
             {
@@ -7154,6 +7175,59 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine($"║  - 人物条件: {eventPersonCondCount}                         ║");
             System.Diagnostics.Debug.WriteLine($"║  - 建筑条件: {eventArchCondCount}                           ║");
             System.Diagnostics.Debug.WriteLine($"║  - 势力条件: {eventFactionCondCount}                        ║");
+            System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
+
+            // 🔥 关键修复：重建TroopEvent订阅（读档后部队事件影响不施加问题）
+            // 日期：2026-03-23
+            // 原因：TroopEvent的OnApplyTroopEvent事件没有被序列化，读档后需要重新订阅
+            //       新开剧本时会在LoadDataPhase中调用AddTroopEventWithEvent，但读档时没有调用
+            // 参考：GameScenario.cs 第5903行使用 AddTroopEventWithEvent(te, false)
+            System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════╗");
+            System.Diagnostics.Debug.WriteLine("║  [AfterLoadSaveFile] 开始重建TroopEvent订阅                ║");
+            System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
+            
+            System.Diagnostics.Debug.WriteLine($"[TroopEvent订阅] TroopEvents: {(this.TroopEvents != null ? "存在" : "null")}");
+            System.Diagnostics.Debug.WriteLine($"[TroopEvent订阅] TroopEvents.Count: {this.TroopEvents?.Count ?? 0}");
+            
+            int troopEventSubscribedCount = 0;
+            
+            foreach (GameObject gameObj in this.TroopEvents)
+            {
+                TroopEvent te = gameObj as TroopEvent;
+                if (te == null)
+                {
+                    continue;
+                }
+                
+                try
+                {
+                    te.Init();
+                    te.AfterHappenedEvent = te.AfterEventHappened >= 0 ? this.TroopEvents.GetGameObject(te.AfterEventHappened) as TroopEvent : null;
+                    te.LaunchPerson = this.Persons.GetGameObject(te.LaunchPersonString) as Person;
+                    te.Conditions.LoadFromString(this.GameCommonData.AllConditions, te.ConditionsString);
+                    te.LoadTargetPersonFromString(this.AllPersons, te.TargetPersonsString);
+                    te.LoadSelfEffectFromString(this.GameCommonData.AllTroopEventEffects, te.SelfEffectsString);
+                    te.LoadEffectPersonFromString(this.AllPersons, this.GameCommonData.AllTroopEventEffects, te.EffectPersonsString);
+                    te.LoadEffectAreaFromString(this.GameCommonData.AllTroopEventEffects, te.EffectAreasString);
+                    te.LoadDialogFromString(this.AllPersons, te.dialogString);
+                    if (te.TryToShowString == null) te.TryToShowString = "";
+
+                    // 🔥 关键修复：订阅OnApplyTroopEvent事件（与新开档时的AddTroopEventWithEvent逻辑一致）
+                    // 参考：GameScenario.cs 第5903行使用 AddTroopEventWithEvent(te, false)
+                    // 参考：TroopEventList.cs AddTroopEventWithEvent方法
+                    this.TroopEvents.AddTroopEventWithEvent(te, false);
+                    troopEventSubscribedCount++;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AfterLoadSaveFile] TroopEvent {te.Name}(ID:{te.ID}) 订阅失败: {ex.Message}");
+                }
+            }
+            
+            System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════╗");
+            System.Diagnostics.Debug.WriteLine($"║  [AfterLoadSaveFile] TroopEvent订阅完成                     ║");
+            System.Diagnostics.Debug.WriteLine($"║  - 事件总数: {this.TroopEvents.Count}                       ║");
+            System.Diagnostics.Debug.WriteLine($"║  - 事件订阅: {troopEventSubscribedCount}                    ║");
             System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
 
             // 🔥 性能诊断：详细拆解 AfterLoadSaveFile 的耗时

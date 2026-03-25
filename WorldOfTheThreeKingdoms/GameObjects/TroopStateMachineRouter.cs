@@ -43,27 +43,70 @@ namespace GameObjects
     {
         public static QueueAction DetermineQueueAction(Troop candidate)
         {
+            #if DEBUG
+            if (candidate.ManualControl)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} 状态检查: Status={candidate.Status}, MovLeft={candidate.MovabilityLeft}, OperationDone={candidate.OperationDone}, Command={candidate.Command}, Operated={candidate.Operated}");
+            }
+            #endif
+            
             if (candidate.Status == TroopStatus.混乱 || candidate.Status == TroopStatus.埋伏)
+            {
+                #if DEBUG
+                if (candidate.ManualControl)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} → SkipTurn (Status={candidate.Status})");
+                }
+                #endif
                 return QueueAction.SkipTurn;
+            }
 
             if (candidate.MovabilityLeft <= 0)
             {
                 if (candidate.OperationDone)
+                {
+                    #if DEBUG
+                    if (candidate.ManualControl)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} → EndTroop (MovLeft=0, OperationDone=true)");
+                    }
+                    #endif
                     return QueueAction.EndTroop;
+                }
                 
+                #if DEBUG
+                if (candidate.ManualControl)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} → ForceCombatCheck (MovLeft=0, OperationDone=false)");
+                }
+                #endif
                 return QueueAction.ForceCombatCheck;
             }
 
-            if (!candidate.OperationDone && candidate.Command == TroopCommand.Stratagem)
+            // 🔥 2026-03-24 修复：计略指令也需要进入移动管线
+            // 问题：ExecuteStratagemDirectly 假设部队已在射程内，如果不在则直接跳过
+            // 原因：玩家下达计略指令时，部队可能不在射程内，需要先移动
+            // 解决：计略指令也进入 EnterMovementPipeline，让 TroopChangeRealDestination 设置目标
+            //       UpdateMovementLogic 会驱动部队移动到射程内，然后 ToDoCombatAction 施放计略
+            // 注意：移除 ExecuteStratagemDirectly 分支，统一使用移动管线处理所有指令
+            
+            if (!candidate.OperationDone && candidate.Command != TroopCommand.None)
             {
-                return QueueAction.ExecuteStratagemDirectly;
-            }
-
-            if (!candidate.OperationDone && candidate.Command != TroopCommand.Stratagem)
-            {
+                #if DEBUG
+                if (candidate.ManualControl)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} → EnterMovementPipeline (Command={candidate.Command})");
+                }
+                #endif
                 return QueueAction.EnterMovementPipeline;
             }
 
+            #if DEBUG
+            if (candidate.ManualControl)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DetermineQueueAction] {candidate.DisplayName} → EndTroop (默认)");
+            }
+            #endif
             return QueueAction.EndTroop;
         }
 

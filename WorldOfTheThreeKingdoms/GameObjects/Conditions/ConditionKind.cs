@@ -461,6 +461,16 @@ namespace GameObjects.Conditions
             {
                 return architecture.Mayor != null && this.CheckConditionKind(architecture.Mayor, e);
             }
+            // 🔥 修复：2000-3000 范围的条件是地点条件，应该直接检查 Architecture
+            // 日期：2026-03-23
+            // 原因：魏王等称号的 ArchitectureConditions (如条件30710：邺县) 无法生效
+            //       因为基类对 2000-3000 范围的 ID 会调用 CheckConditionKind(architecture)
+            //       但 CheckConditionKind(Architecture) 对 2000-3000 范围又返回 false
+            // 解决：2000-3000 范围的条件本身就是地点条件，直接调用 CheckConditionKind(architecture)
+            if (this.ID >= 2000 && this.ID < 3000)
+            {
+                return this.CheckConditionKind(architecture);
+            }
             if (this.ID >= 3000 && this.ID < 4000)
             {
                 return architecture.BelongedFaction != null && this.CheckConditionKind(architecture.BelongedFaction, e);
@@ -508,6 +518,17 @@ namespace GameObjects.Conditions
             if (this.ID < 1000 || (this.ID >= 4000 && this.ID < 5000))
             {
                 return architecture.Mayor != null && this.CheckConditionKind(architecture.Mayor);
+            }
+            // 🔥 修复：2000-3000 范围的条件是地点条件，子类会重写此方法
+            // 日期：2026-03-23
+            // 原因：魏王等称号的 ArchitectureConditions (如条件30710：邺县) 无法生效
+            //       ConditionKind2900 等子类已经重写了 CheckConditionKind(Architecture)
+            //       但基类对 2000-3000 范围直接返回 false，导致子类的重写无法生效
+            // 解决：2000-3000 范围的条件本身就是地点条件，基类返回 false 让子类重写
+            if (this.ID >= 2000 && this.ID < 3000)
+            {
+                // 子类（如 ConditionKind2900）必须重写此方法
+                return false;
             }
             if (this.ID >= 3000 && this.ID < 4000)
             {

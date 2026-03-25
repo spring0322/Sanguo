@@ -9728,6 +9728,17 @@ namespace GameObjects
             this.guanjue++;
             Session.Current.Scenario.YearTable.addSelfBecomeEmperorEntry(Session.Current.Scenario.Date, this);
             var guanjueInfo2 = Session.Current.Scenario.GameCommonData.suoyouguanjuezhonglei.Getguanjuedezhonglei(this.guanjue);
+            
+            if (this.Leader == null)
+            {
+                throw new InvalidOperationException($"数据损坏：势力 {this.Name} 没有君主");
+            }
+            
+            if (this.Leader.ID == 7200)
+            {
+                throw new InvalidOperationException($"数据损坏：势力 {this.Name} 的君主是传令官（ID=7200），应该是 {this.LeaderName}");
+            }
+            
             Session.MainGame.mainGameScreen.xianshishijiantupian(this.Leader, this.LeaderName, TextMessageKind.BecomeEmperorIllegally, "Zili", "BecomeEmperor.jpg", "",
                 guanjueInfo2?.Name ?? "", true);
             Session.MainGame.mainGameScreen.xiejinxingjilu(this.Leader, "Zili", this.LeaderName,

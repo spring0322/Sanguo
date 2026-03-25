@@ -136,6 +136,11 @@ namespace tupianwenziPlugin
             GameObject p = (GameObject) person;
             TextMessageKind k = (TextMessageKind) kind;
 
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[SetGameObjectBranch-Enum] person类型={person?.GetType().Name}, person.ID={(person as GameObject)?.ID}, person.Name={(person as GameObject)?.Name}");
+            System.Diagnostics.Debug.WriteLine($"[SetGameObjectBranch-Enum] kind={kind}, branchName={branchName}");
+            #endif
+
             List<String> msg = Session.Current.Scenario.GameCommonData.AllTextMessages.GetTextMessage(p.ID, k);
             if (msg.Count > 0)
             {

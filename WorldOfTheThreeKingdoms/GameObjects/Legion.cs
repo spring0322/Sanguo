@@ -193,6 +193,7 @@ namespace GameObjects
             {
                 if (obj is Troop t && (t.Command == TroopCommand.AttackArch || 
                                        t.Command == TroopCommand.AttackTroop ||
+                                       t.Command == TroopCommand.Attack ||
                                        t.Command == TroopCommand.Stratagem))
                 {
                     hasStrategicCommand = true;
@@ -227,6 +228,7 @@ namespace GameObjects
                 // 日期：2026-03-07
                 bool hasPlayerStrategicCommand = (troop.Command == TroopCommand.AttackArch || 
                                                    troop.Command == TroopCommand.AttackTroop ||
+                                                   troop.Command == TroopCommand.Attack ||
                                                    troop.Command == TroopCommand.Stratagem);
                 
                 if (shouldExecuteAI || shouldExecutePlayerMove || hasPlayerStrategicCommand)
@@ -1280,10 +1282,11 @@ namespace GameObjects
                 // 🔥 修复：跳过已在城池接触区的部队（与攻击触发条件一致）
                 // 使用 GetContactArea 而非 IsBaseViewingArchitecture，确保部队不会被重新分配坑位
                 bool inContactArea = this.WillArchitecture.ArchitectureArea.GetContactArea(false).HasPoint(troop.Position);
-                if (inContactArea)
+                bool inAttackRange = troop.CanAttack(this.WillArchitecture);
+                if (inContactArea || inAttackRange)
                 {
                     // 🔥 新增：协同前进检查 - 如果堵住了后方友军，尝试侧移到其他攻击位
-                    bool isBlockingAllies = IsBlockingAlliesPath(troop, sortedTroops);
+                    bool isBlockingAllies = IsBlockingAlliesPath(troop, sortedTroops, takenPositions);
                     if (isBlockingAllies)
                     {
                         System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 已在接触区但堵住后方友军，尝试侧移");
@@ -1315,14 +1318,14 @@ namespace GameObjects
                     }
                     else
                     {
-                        // 🔥 修复：已在接触区且不堵路的部队，需要把位置加入 takenPositions
+                        // 🔥 修复：已在攻击位置且不堵路的部队，需要把位置加入 takenPositions
                         // 日期：2026-03-08
                         // 原因：如果不加入，后续部队会认为该位置可用，导致候选坑位被错误过滤
                         // 场景：曹操队已在接触区 → 不加入 takenPositions → 朱儁队生成候选时认为该位置可用
                         //       → 但实际上曹操队占据了 → 导致朱儁队只有1个候选坑位
                         takenPositions.Add(troop.Position);
                         this.TakenPositions.Add(troop.Position);
-                        System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 已在接触区（攻击位置），跳过分配，标记位置为已占用");
+                        System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 已在攻击范围内且不堵路，保持原位并标记位置为已占用");
                     }
                     continue;
                 }
@@ -1330,6 +1333,14 @@ namespace GameObjects
                 Point siegePos = troop.GetSmartSiegePosition(this.WillArchitecture, takenPositions);
                 if (siegePos != new Point(-1, -1))
                 {
+                    if (siegePos == troop.Position)
+                    {
+                        takenPositions.Add(troop.Position);
+                        this.TakenPositions.Add(troop.Position);
+                        System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 当前攻击位评分最高，保持原位");
+                        continue;
+                    }
+
                     takenPositions.Add(siegePos);
                     this.TakenPositions.Add(siegePos); // 使用Legion自带的字段
                     troop.ApplySmartSiegePosition(siegePos);
@@ -1343,8 +1354,13 @@ namespace GameObjects
         /// <summary>
         /// 🔥 协同前进：检查部队是否堵住了后方友军的路径
         /// </summary>
-        private bool IsBlockingAlliesPath(Troop frontTroop, List<Troop> allTroops)
+        private bool IsBlockingAlliesPath(Troop frontTroop, List<Troop> allTroops, HashSet<Point> takenPositions)
         {
+            HashSet<Point> reservedPositions = new HashSet<Point>(takenPositions)
+            {
+                frontTroop.Position
+            };
+
             // 检查是否有后方友军想要前进但被堵住
             foreach (Troop backTroop in allTroops)
             {
@@ -1359,6 +1375,12 @@ namespace GameObjects
                 // 简化判断：如果后方部队的目标是 WillArchitecture，且前方部队在其路径上
                 if (backTroop.WillArchitecture == this.WillArchitecture)
                 {
+                    Point alternativeSiegePosition = backTroop.GetSmartSiegePosition(this.WillArchitecture, reservedPositions);
+                    if (alternativeSiegePosition != new Point(-1, -1))
+                    {
+                        continue;
+                    }
+
                     // 检查前方部队是否在后方部队和目标之间
                     // 使用曼哈顿距离判断
                     int backToTarget = Math.Abs(backTroop.Position.X - this.WillArchitecture.Position.X) +

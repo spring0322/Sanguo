@@ -387,7 +387,11 @@ namespace TabListPlugin
         public void ResetScrollTracks()
         {
             Microsoft.Xna.Framework.Rectangle realLowerVisibleClient = this.tabList.GetRealLowerVisibleClient();
-            if (this.tabList.FullLowerClient.Width > realLowerVisibleClient.Width)
+            
+            // 🔥 推荐版模式：禁用横向滚动条（需求 4.1, 4.5）
+            bool isRecommendedMode = this.tabList.IsRecommendedMode();
+            
+            if (!isRecommendedMode && this.tabList.FullLowerClient.Width > realLowerVisibleClient.Width)
             {
                 this.tabList.ShowHorizontalScrollBar = true;
                 if (this.tabList.FullLowerClient.Height > realLowerVisibleClient.Height)

@@ -48,13 +48,11 @@ namespace GameObjects.ArchitectureDetail
             // 🔥 诊断：检查字典状态
             if (ArchitectureKinds == null)
             {
-                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ❌ ArchitectureKinds 字典为 null！");
                 return null;
             }
             
             if (ArchitectureKinds.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ❌ ArchitectureKinds 字典为空！");
                 return null;
             }
             
@@ -62,7 +60,6 @@ namespace GameObjects.ArchitectureDetail
             
             if (architectureKind == null)
             {
-                System.Diagnostics.Debug.WriteLine($"[GetArchitectureKind] ⚠️ 找不到 ID={id} 的建筑类型，字典包含: {string.Join(", ", ArchitectureKinds.Keys)}");
             }
 
             return architectureKind;

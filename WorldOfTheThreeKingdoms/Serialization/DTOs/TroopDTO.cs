@@ -15,12 +15,18 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
         // Position
         public int PositionX { get; set; }
         public int PositionY { get; set; }
+        public int RealDestinationX { get; set; } = -1;
+        public int RealDestinationY { get; set; } = -1;
         
         // Reference fields
         public int BelongedFactionID { get; set; } = -1;
         public int BelongedLegionID { get; set; } = -1;
         public int BelongedArchitectureID { get; set; } = -1;
         public int StartingArchitectureID { get; set; } = -1;  // 🔥 修复：添加缺失的出发城市ID
+        public int WillArchitectureID { get; set; } = -1;
+        public int WillTroopID { get; set; } = -1;
+        public int TargetArchitectureID { get; set; } = -1;
+        public int TargetTroopID { get; set; } = -1;
         public int LeaderID { get; set; } = -1;
         public int MilitaryID { get; set; } = -1;
         
@@ -54,6 +60,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
         // 问题：TroopDTO 缺少特技字段，导致读档后特技剩余时间变成0，AI误判并自动触发新特技
         public int CurrentStuntIDString { get; set; }
         public int StuntDayLeft { get; set; }
+        public int CurrentCombatMethodID { get; set; } = -1;
+        public int CurrentStratagemID { get; set; } = -1;
+        public int AutoCombatMethodID { get; set; } = -1;
         
         // Collection references
         public List<int> PersonIDs { get; set; } = [];

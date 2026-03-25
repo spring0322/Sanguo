@@ -67,8 +67,54 @@ namespace WorldOfTheThreeKingdoms.GameManager
             
             // 如果当前地形很差（比如陆军在水里），通过简单的移动逻辑尝试脱困
             // (这里不展开复杂寻路，依靠 Troop.ProcessMovementAI 去走)
-            decision.Action = TacticalAction.Move;
+            Point moveTarget = ResolveStrategicMoveTarget(troop);
+            if (IsValidMoveTarget(moveTarget) && moveTarget != troop.Position)
+            {
+                decision.TargetPosition = moveTarget;
+                decision.Action = TacticalAction.Move;
+                return decision;
+            }
+
+            decision.TargetPosition = troop.Position;
+            decision.Action = TacticalAction.Wait;
             return decision;
+        }
+
+        private static Point ResolveStrategicMoveTarget(Troop troop)
+        {
+            if (troop == null) return new Point(-1, -1);
+
+            if (IsValidMoveTarget(troop.RealDestination))
+            {
+                return troop.RealDestination;
+            }
+
+            if (troop.TargetTroop != null && !troop.TargetTroop.Destroyed && IsValidMoveTarget(troop.TargetTroop.Position))
+            {
+                return troop.TargetTroop.Position;
+            }
+
+            if (troop.TargetArchitecture != null && IsValidMoveTarget(troop.TargetArchitecture.Position))
+            {
+                return troop.TargetArchitecture.Position;
+            }
+
+            if (troop.WillArchitecture != null && IsValidMoveTarget(troop.WillArchitecture.Position))
+            {
+                return troop.WillArchitecture.Position;
+            }
+
+            if (troop.StartingArchitecture != null && IsValidMoveTarget(troop.StartingArchitecture.Position))
+            {
+                return troop.StartingArchitecture.Position;
+            }
+
+            return new Point(-1, -1);
+        }
+
+        private static bool IsValidMoveTarget(Point position)
+        {
+            return position.X >= 0 && position.Y >= 0 && position != Point.Zero;
         }
 
         // -----------------------------------------------------------------------
@@ -314,8 +360,8 @@ namespace WorldOfTheThreeKingdoms.GameManager
     // 保持辅助类定义
     public class TacticalDecision
     {
-        public TacticalAction Action;
-        public Point TargetPosition;
+        public TacticalAction Action = TacticalAction.Wait;
+        public Point TargetPosition = new Point(-1, -1);
     }
 
     public enum TacticalAction

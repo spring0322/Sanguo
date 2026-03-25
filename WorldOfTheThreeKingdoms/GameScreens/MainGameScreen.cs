@@ -591,6 +591,23 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 _whiteTileOverlay.SetData([Color.White]);
             }
         }
+
+        private void ClearSelectedTroopZoc()
+        {
+            if (_selectedTroopZocTiles.Count > 0)
+            {
+                _selectedTroopZocTiles.Clear();
+            }
+
+            _lastSelectedTroop = null;
+        }
+
+        private bool ShouldShowHoveredTroopZoc()
+        {
+            return !this.Plugins.ContextMenuPlugin.IsShowing &&
+                   base.UndoneWorks.Count > 0 &&
+                   base.UndoneWorks.Peek().Kind == UndoneWorkKind.None;
+        }
         
         /// <summary>
         /// 更新选中部队的能量覆盖范围缓存
@@ -604,6 +621,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private void UpdateSelectedTroopZoc()
         {
             Troop hoveredTroop = null;
+            
+            if (!ShouldShowHoveredTroopZoc())
+            {
+                ClearSelectedTroopZoc();
+                return;
+            }
             
             // 🔥 复用 TroopSurveyPlugin 的悬停检测逻辑（参考第 13318-13346 行）
             // 日期：2026-03-21
@@ -656,7 +679,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // ✅ 正确：null 检查是合理的（业务逻辑）
             if (hoveredTroop == null)
             {
-                _selectedTroopZocTiles.Clear();
+                ClearSelectedTroopZoc();
                 return;
             }
             
@@ -2672,39 +2695,62 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             {
                                 System.Diagnostics.Debug.WriteLine($"[SelectorTroopsDestination] 部队{troop.DisplayName}满足条件，开始设置目标");
                                 
+                                bool isStratagemCommand = troop.CurrentStratagem != null;
+                                bool prefersTroopTarget = targetTroop != null &&
+                                    (targetArchitecture == null || targetArchitecture.Endurance <= 0 || troop.Army.Kind.AirOffence || troop.CurrentStratagem != null || troop.CurrentCombatMethod != null);
+
                                 if (targetArchitecture != null)
                                 {
-                                    if (targetTroop != null && troop.Army.Kind.AirOffence)
-                                    {
-                                        troop.TargetTroop = targetTroop;
-                                    }
-                                    else
-                                    {
-                                        troop.TargetArchitecture = targetArchitecture;
-                                    }
                                     troop.WillArchitecture = targetArchitecture;
                                     troop.BelongedLegion.SetOperationalTarget(targetArchitecture);
                                     if (targetArchitecture.BelongedFaction == troop.BelongedFaction)
                                     {
+                                        troop.TargetArchitecture = targetArchitecture;
                                         troop.TargetTroop = null;
                                         troop.WillTroop = null;
+                                        troop.SelectedMove = true;
+                                        troop.SelectedAttack = false;
                                         troop.SetCommand(TroopCommand.Enter);
+                                    }
+                                    else if (prefersTroopTarget)
+                                    {
+                                        troop.TargetTroop = targetTroop;
+                                        troop.WillTroop = targetTroop;
+                                        troop.TargetArchitecture = null;
+                                        troop.SelectedMove = !isStratagemCommand;
+                                        troop.SelectedAttack = true;
+                                        troop.SetCommand(TroopCommand.AttackTroop);
                                     }
                                     else
                                     {
-                                        troop.SetCommand(TroopCommand.Attack);
+                                        troop.TargetArchitecture = targetArchitecture;
+                                        troop.TargetTroop = null;
+                                        troop.WillTroop = null;
+                                        troop.SelectedMove = !isStratagemCommand;
+                                        troop.SelectedAttack = true;
+                                        troop.SetCommand(TroopCommand.AttackArch);
                                     }
-
-                                    troop.SelectedAttack = true;
-                                   
                                 }
                                 else if (targetTroop != null)
                                 {
                                     troop.TargetTroop = targetTroop;
                                     troop.WillTroop = targetTroop;
-
+                                    troop.TargetArchitecture = null;
+                                    troop.SelectedMove = !isStratagemCommand;
                                     troop.SelectedAttack = true;
-                                    troop.SetCommand(TroopCommand.Attack);
+                                    troop.SetCommand(TroopCommand.AttackTroop);
+                                }
+
+                                if ((troop.CurrentCombatMethod != null || troop.CurrentStratagem != null) && troop.TargetTroop != null)
+                                {
+                                    troop.OrientationTroop = troop.TargetTroop;
+                                    troop.OrientationArchitecture = null;
+                                    troop.TargetTroop.OrientationTroop = troop;
+                                }
+                                else if (troop.CurrentCombatMethod != null && troop.TargetArchitecture != null)
+                                {
+                                    troop.OrientationTroop = null;
+                                    troop.OrientationArchitecture = troop.TargetArchitecture;
                                 }
                                 else
                                 {
@@ -2999,7 +3045,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         else if (this.CurrentTroop.TargetArchitecture != null && this.CurrentTroop.TargetTroop != null)
                         {
                             // 同时有建筑和部队 → 根据兵种特性决定
-                            if (this.CurrentTroop.Army.Kind.AirOffence || this.CurrentTroop.CurrentStratagem != null)
+                            if (this.CurrentTroop.TargetArchitecture.Endurance <= 0 ||
+                                this.CurrentTroop.Army.Kind.AirOffence ||
+                                this.CurrentTroop.CurrentStratagem != null ||
+                                this.CurrentTroop.CurrentCombatMethod != null)
                             {
                                 // 远程兵种或有战法 → 优先攻击部队
                                 this.CurrentTroop.SetCommand(TroopCommand.AttackTroop);
@@ -10160,9 +10209,13 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         {
             if (Session.Current.Scenario.CurrentPlayer == null || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(p.Position) || Session.GlobalVariables.SkyEye)
             {
+                // 🔥 关键修复：使用当事人而非courier作为说话人
+                // 日期：2026-03-23
+                // 原因：courier (ID=7200) 是系统占位符，不应该显示给玩家
+                // 修复：将说话人从 courier 改为 p（获得称号的当事人）
                 if (title.AutoLearnTextByCourier.Length > 0 && title.Level >= 6)
                 {
-                    this.Plugins.tupianwenziPlugin.SetGameObjectBranch(courier, null, title.AutoLearnTextByCourier.Replace("%0", p.Name));
+                    this.Plugins.tupianwenziPlugin.SetGameObjectBranch(p, null, title.AutoLearnTextByCourier.Replace("%0", p.Name));
                     this.Plugins.tupianwenziPlugin.IsShowing = true;
                 }
                 if (title.AutoLearnText.Length > 0 && title.Level >= 6)
@@ -10339,7 +10392,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         public override void TroopCriticalStrike(Troop sending, Troop receiving)
         {
             // 🔥 Anti-Band-Aid: 调用方保证 sending 不为 null
-            // 这里只做基本的可见性检查
+            // 可见性检查：视野内 或 天眼模式
             bool isVisible = Session.Current.Scenario.CurrentPlayer == null 
                 || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(sending.Position) 
                 || Session.GlobalVariables.SkyEye;
@@ -10356,9 +10409,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 this.Plugins.PersonBubblePlugin.AddPerson(sending.Leader, sending.Position, TextMessageKind.CriticalArchitecture, "CriticalStrikeOnArchitecture");
             }
             
-            // 🎯 显示暴击图（统一使用普通攻击暴击类型）
-            // 注：战法暴击因架构限制暂时无法区分，统一显示普通暴击图
-            _criticalHitImageManager.AddCriticalHitImage(sending, WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitType.普通攻击暴击, _currentGameTime);
+            // 🎯 显示暴击图：仅玩家部队显示
+            // 条件：视野内 + 玩家部队
+            bool isPlayerTroop = Session.Current.Scenario.CurrentPlayer != null 
+                && sending.BelongedFaction == Session.Current.Scenario.CurrentPlayer;
+            
+            if (isPlayerTroop)
+            {
+                _criticalHitImageManager.AddCriticalHitImage(sending, WorldOfTheThreeKingdoms.GameObjects.Animations.CriticalHitType.普通攻击暴击, _currentGameTime);
+            }
             
             /* 🚧 战法暴击功能暂时注释（架构限制：战法在暴击判定时还未施放）
             // 普通攻击暴击
@@ -14095,7 +14154,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
         private void DrawSelectedTroopZocHighlight(SpriteBatch spriteBatch, GameTime gameTime)
         {
             // 🔥 Hot Path：快速返回
-            if (_selectedTroopZocTiles.Count == 0 || _whiteTileOverlay == null)
+            if (!ShouldShowHoveredTroopZoc() || _selectedTroopZocTiles.Count == 0 || _whiteTileOverlay == null)
             {
                 return;
             }

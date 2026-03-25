@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.Conditions;
 using GameObjects.Influences;
@@ -6,10 +6,12 @@ using GameObjects.TroopDetail;
 using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 2026-03-23 添加：支持 [GenerateUIAccessor] 特性
 
 namespace GameObjects.PersonDetail
 {
     [DataContract]
+    [GenerateUIAccessor]  // 🔥 2026-03-23 修复：添加源生成器特性，支持 UI 访问 Title 属性（Description, Level, KindName 等）
     public class Title : GameObject
     {
         private bool combat;

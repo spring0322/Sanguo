@@ -105,7 +105,7 @@ namespace GameObjects.AI.Helper
                     }
                 }
 
-                Console.WriteLine($"[MapNavigationHelper] 为部队 {troop.ID} 找到 {results.Count} 个可移动位置（使用BFS算法）");
+                // Console.WriteLine($"[MapNavigationHelper] 为部队 {troop.ID} 找到 {results.Count} 个可移动位置（使用BFS算法）");
             }
             catch (Exception ex)
             {
@@ -358,7 +358,7 @@ namespace GameObjects.AI.Helper
                     if (troop.FirstTierPath != null && troop.FirstTierPath.Count > 0)
                     {
                         path.AddRange(troop.FirstTierPath);
-                        Console.WriteLine($"[MapNavigationHelper] 成功计算路径，包含 {path.Count} 个节点");
+                        // Console.WriteLine($"[MapNavigationHelper] 成功计算路径，包含 {path.Count} 个节点");
                     }
                 }
                 else
@@ -692,7 +692,7 @@ namespace GameObjects.AI.Helper
                     }
                 }
 
-                Console.WriteLine($"[MapNavigationHelper] 为部队 {troop.ID} 找到撤退位置 ({bestPosition.X},{bestPosition.Y})，评分: {bestScore:F1}");
+                // Console.WriteLine($"[MapNavigationHelper] 为部队 {troop.ID} 找到撤退位置 ({bestPosition.X},{bestPosition.Y})，评分: {bestScore:F1}");
             }
             catch (Exception ex)
             {

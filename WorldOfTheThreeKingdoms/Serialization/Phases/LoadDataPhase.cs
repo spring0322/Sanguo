@@ -200,8 +200,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             #if DEBUG
             if (debugCounter > maxDebugOutput)
             {
-                System.Diagnostics.Debug.WriteLine($"[LoadPersons] ... 省略其余 {debugCounter - maxDebugOutput} 个武将的调试输出");
-            }
+}
             #endif
         }
         
@@ -1093,12 +1092,17 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             
             // 🔥 同步设置 PreviousPosition，避免首次移动时的异常
             troop.PreviousPosition = troop.position;
+            troop.RealDestination = new Point(dto.RealDestinationX, dto.RealDestinationY);
             
             // Store ID references
             troop.BelongedFactionID = dto.BelongedFactionID;
             troop.BelongedLegionID = dto.BelongedLegionID;
             troop.BelongedArchitectureID = dto.BelongedArchitectureID;
             troop.StartingArchitectureID = dto.StartingArchitectureID;  // 🔥 修复：恢复出发城市ID
+            troop.WillArchitectureID = dto.WillArchitectureID;
+            troop.WillTroopID = dto.WillTroopID;
+            troop.TargetArchitectureID = dto.TargetArchitectureID;
+            troop.TargetTroopID = dto.TargetTroopID;
             troop.LeaderID = dto.LeaderID;
             troop.MilitaryID = dto.MilitaryID;
             
@@ -1175,6 +1179,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             troop.Food = dto.Food;
             troop.CurrentStuntIDString = dto.CurrentStuntIDString;
             troop.StuntDayLeft = dto.StuntDayLeft;
+            troop.CurrentCombatMethodID = dto.CurrentCombatMethodID;
+            troop.CurrentStratagemID = dto.CurrentStratagemID;
+            troop.AutoCombatMethodID = dto.AutoCombatMethodID;
             
             #if DEBUG
             if (dto.CurrentStuntIDString > 0 || dto.StuntDayLeft > 0)

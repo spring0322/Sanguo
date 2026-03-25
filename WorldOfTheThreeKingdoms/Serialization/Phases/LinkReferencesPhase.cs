@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
@@ -43,6 +43,51 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         private readonly TroopReferenceLinker _troopLinker;
         private readonly SectionReferenceLinker _sectionLinker;
         
+        private void LinkTroopEventReferences(GameScenario scenario, LookupTables lookupTables)
+        {
+            if (scenario.TroopEvents == null || scenario.TroopEvents.Count == 0)
+            {
+                return;
+            }
+
+            foreach (GameObject gameObject in scenario.TroopEvents)
+            {
+                TroopEvent troopEvent = gameObject as TroopEvent;
+                if (troopEvent == null)
+                {
+                    continue;
+                }
+
+                troopEvent.Init();
+
+                if (troopEvent.AfterEventHappened >= 0)
+                {
+                    troopEvent.AfterHappenedEvent = scenario.TroopEvents.GetGameObject(troopEvent.AfterEventHappened) as TroopEvent;
+                }
+                else
+                {
+                    troopEvent.AfterHappenedEvent = null;
+                }
+
+                if (troopEvent.LaunchPersonString >= 0 && lookupTables.Persons.TryGetValue(troopEvent.LaunchPersonString, out Person launchPerson))
+                {
+                    troopEvent.LaunchPerson = launchPerson;
+                }
+                else
+                {
+                    troopEvent.LaunchPerson = null;
+                }
+
+                troopEvent.Conditions.LoadFromString(scenario.GameCommonData.AllConditions, troopEvent.ConditionsString);
+                troopEvent.LoadTargetPersonFromString(lookupTables.Persons, troopEvent.TargetPersonsString ?? string.Empty);
+                troopEvent.LoadSelfEffectFromString(scenario.GameCommonData.AllTroopEventEffects, troopEvent.SelfEffectsString ?? string.Empty);
+                troopEvent.LoadEffectPersonFromString(lookupTables.Persons, scenario.GameCommonData.AllTroopEventEffects, troopEvent.EffectPersonsString ?? string.Empty);
+                troopEvent.LoadEffectAreaFromString(scenario.GameCommonData.AllTroopEventEffects, troopEvent.EffectAreasString ?? string.Empty);
+                troopEvent.LoadDialogFromString(lookupTables.Persons, troopEvent.dialogString);
+                troopEvent.TryToShowString ??= string.Empty;
+            }
+        }
+
         /// <summary>
         /// Constructor - initializes all reference linkers
         /// </summary>
@@ -55,112 +100,43 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             _troopLinker = new TroopReferenceLinker();
             _sectionLinker = new SectionReferenceLinker();
         }
-        
+
         /// <summary>
         /// Main entry point for Link References Phase
         /// Links all references for all game objects in the scenario
-        /// 
-        /// Performance Optimization:
-        /// Pre-builds lookup tables for all collections to enable O(1) lookups
         /// </summary>
-        /// <param name="scenario">The game scenario with all objects created but references not yet linked</param>
         public void LinkReferences(GameScenario scenario)
         {
             if (scenario == null)
                 throw new ArgumentNullException(nameof(scenario));
             
-            // 馃敟 璇婃柇锛氱‘璁?LinkReferencesPhase 鏄惁鎵ц
-            // 鏃ユ湡锛?026-02-11
-            // System.Diagnostics.Debug.WriteLine("馃敟馃敟馃敟 [LinkReferencesPhase.Execute] 寮€濮嬫墽琛岋紒");
-            
-            // Performance Optimization: Pre-build lookup tables for O(1) reference resolution
-            // This avoids O(n) linear searches through collections during reference linking
-            // System.Diagnostics.Debug.WriteLine("[LinkReferencesPhase] Building lookup tables for O(1) reference resolution...");
             var lookupTables = BuildLookupTables(scenario);
-            // System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] Lookup tables built: {lookupTables.Persons.Count} persons, {lookupTables.Factions.Count} factions, {lookupTables.Architectures.Count} architectures, {lookupTables.MilitaryKinds.Count} militaryKinds");
             
             LinkReferences(scenario, lookupTables);
         }
 
         /// <summary>
         /// Link references using pre-built lookup tables
-        /// Allows for external profiling of the linking process separate from table building
         /// </summary>
-        /// <param name="scenario">The game scenario</param>
-        /// <param name="lookupTables">Pre-built lookup tables</param>
         public void LinkReferences(GameScenario scenario, LookupTables lookupTables)
         {
             if (scenario == null) throw new ArgumentNullException(nameof(scenario));
             if (lookupTables == null) throw new ArgumentNullException(nameof(lookupTables));
 
-            // System.Diagnostics.Debug.WriteLine($"  - Scenario: {(scenario != null ? "瀛樺湪" : "null")}");
-            // System.Diagnostics.Debug.WriteLine($"  - Troops: {scenario?.Troops?.Count ?? 0}");
-            // System.Diagnostics.Debug.WriteLine($"  - Militaries: {scenario?.Militaries?.Count ?? 0}");
-            // System.Diagnostics.Debug.WriteLine($"  - GameCommonData: {(scenario?.GameCommonData != null ? "瀛樺湪" : "null")}");
-            // System.Diagnostics.Debug.WriteLine($"  - AllMilitaryKinds: {(scenario?.GameCommonData?.AllMilitaryKinds != null ? "瀛樺湪" : "null")}");
-            
-            // Link references in dependency order
-            // 1. Persons (depend on Factions, Treasures, Architectures, Troops)
             LinkPersonReferences(scenario, lookupTables);
-            
-            // 2. Factions (depend on Persons, Architectures, Militaries, Legions, Troops, Sections)
             LinkFactionReferences(scenario, lookupTables);
-            
-            // 3. Architectures (depend on Factions, Sections, Persons, Militaries, Facilities)
             LinkArchitectureReferences(scenario, lookupTables);
-            
-            // 4. Legions (depend on Factions, Persons, Troops)
             LinkLegionReferences(scenario, lookupTables);
-            
-            // 馃敟 淇锛氭坊鍔?Military 閾炬帴姝ラ
-            // 鏃ユ湡锛?026-02-10
-            // 闂锛歁ilitary.Kind 寮曠敤浠庢潵娌℃湁琚摼鎺ヨ繃
-            // 5. Militaries (depend on MilitaryKinds)
             LinkMilitaryReferences(scenario, lookupTables);
-            
-            // 6. Troops (depend on Factions, Legions, Architectures, Persons, Militaries)
             LinkTroopReferences(scenario, lookupTables);
-            
-            // 7. Sections (depend on Factions, Architectures)
             LinkSectionReferences(scenario, lookupTables);
-            
-            // 馃敟 淇锛氭坊鍔?Information 閾炬帴姝ラ
-            // 鏃ユ湡锛?026-03-07
-            // 闂锛欼nformation.BelongedFaction 鍜?BelongedArchitecture 寮曠敤浠庢湭琚摼鎺?
-            // 8. Informations (depend on Factions, Architectures)
             LinkInformationReferences(scenario, lookupTables);
-            
-            // 馃敟 淇锛氭坊鍔?States 鍜?Regions 閾炬帴姝ラ
-            // 鏃ユ湡锛?026-02-16
-            // 闂锛歋tates 鍜?Regions 鐨勫叧鑱斿叧绯讳粠鏈閾炬帴
-            // 9. States and Regions (depend on Architectures)
+            LinkTroopEventReferences(scenario, lookupTables);
             LinkStatesAndRegions(scenario, lookupTables);
-            
-            // 馃敟 淇锛氫负娌℃湁 LinkedRegion 鐨?State 鍒涘缓榛樿 Region
-            // 鏃ユ湡锛?026-02-16
-            // 闂锛氭棫瀛樻。娌℃湁 Region 鏁版嵁锛屽鑷?State.LinkedRegion 涓?null
-            // 瑙ｅ喅锛氳嚜鍔ㄤ负姣忎釜 State 鍒涘缓瀵瑰簲鐨?Region
             EnsureStatesHaveRegions(scenario);
-            
-            // 馃敟 璇婃柇锛氶獙璇侀摼鎺ョ粨鏋?
-            // 鏃ユ湡锛?026-02-11
-            int nullArmyCount = 0;
-            int nullKindCount = 0;
-            foreach (Troop troop in scenario.Troops.GetList())
-            {
-                if (troop.Army == null) nullArmyCount++;
-                else if (troop.Army.Kind == null) nullKindCount++;
-            }
-            System.Diagnostics.Debug.WriteLine($"馃敟 [LinkReferencesPhase] 閾炬帴瀹屾垚鍚庣粺璁?");
-            System.Diagnostics.Debug.WriteLine($"  - Troop.Army 涓?null: {nullArmyCount} / {scenario.Troops.Count}");
-            System.Diagnostics.Debug.WriteLine($"  - Troop.Army.Kind 涓?null: {nullKindCount} / {scenario.Troops.Count}");
-            
-            // 8. Rebuild caches after all references are linked
-            // System.Diagnostics.Debug.WriteLine("[LinkReferencesPhase] Rebuilding caches...");
+
             scenario.CreatePersonStatusCache();
             scenario.CreatePersonWorkCache();
-            // System.Diagnostics.Debug.WriteLine("[LinkReferencesPhase] 鉁?Caches rebuilt");
-            // System.Diagnostics.Debug.WriteLine("馃敟馃敟馃敟 [LinkReferencesPhase.Execute] 鎵ц瀹屾垚锛?);
         }
         
         /// <summary>
@@ -210,15 +186,12 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // Build ArchitectureKind lookup table
             // 馃敟 淇锛氭坊鍔犺缁嗚瘖鏂?
             // 鏃ユ湡锛?026-02-10
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?ArchitectureKind 鏌ユ壘琛?..");
-            // System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
+// System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - AllArchitectureKinds: {(scenario.GameCommonData?.AllArchitectureKinds != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - ArchitectureKinds瀛楀吀: {(scenario.GameCommonData?.AllArchitectureKinds?.ArchitectureKinds != null ? "瀛樺湪" : "null")}");
             
             if (scenario.GameCommonData?.AllArchitectureKinds?.ArchitectureKinds != null)
             {
-                System.Diagnostics.Debug.WriteLine($"  - ArchitectureKinds.Count: {scenario.GameCommonData.AllArchitectureKinds.ArchitectureKinds.Count}");
-                
                 foreach (var kvp in scenario.GameCommonData.AllArchitectureKinds.ArchitectureKinds)
                 {
                     if (kvp.Value != null && !tables.ArchitectureKinds.ContainsKey(kvp.Key))
@@ -226,21 +199,11 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                         tables.ArchitectureKinds[kvp.Key] = kvp.Value;
                     }
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"  - 鏋勫缓瀹屾垚锛屾煡鎵捐〃鍖呭惈 {tables.ArchitectureKinds.Count} 涓?ArchitectureKind");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine("  - [WARN] ArchitectureKinds is null; lookup table is empty.");
             }
             
             // Build Treasure lookup table
             // 馃敟 璇婃柇锛氱‘璁ゅ疂鐗╂煡鎵捐〃鏄惁姝ｇ‘鏋勫缓
             // 鏃ユ湡锛?026-03-17
-            System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?Treasure 鏌ユ壘琛?..");
-            System.Diagnostics.Debug.WriteLine($"  - scenario.Treasures: {(scenario.Treasures != null ? "瀛樺湪" : "null")}");
-            System.Diagnostics.Debug.WriteLine($"  - scenario.Treasures.Count: {scenario.Treasures?.Count ?? 0}");
-            
             if (scenario.Treasures != null && scenario.Treasures.Count > 0)
             {
                 foreach (Treasure treasure in scenario.Treasures.GetList())
@@ -250,16 +213,6 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                         tables.Treasures[treasure.ID] = treasure;
                     }
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"  - 鏋勫缓瀹屾垚锛屾煡鎵捐〃鍖呭惈 {tables.Treasures.Count} 涓?Treasure");
-                
-                // 鏄剧ず鍓?涓疂鐗╃殑ID
-                var first5 = tables.Treasures.Keys.Take(5).ToList();
-                System.Diagnostics.Debug.WriteLine($"  - 鍓?涓疂鐗㊣D: {string.Join(", ", first5)}");
-            }
-            else
-            {
-                System.Diagnostics.Debug.WriteLine("  - [WARN] Treasures is empty; lookup table is empty.");
             }
             
             // Build Legion lookup table
@@ -312,8 +265,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             
             // Build Facility lookup table
             // 馃敟 2026-03-16 璇婃柇锛氱‘璁よ鏂芥暟鎹槸鍚︽纭姞杞?
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?Facility 鏌ユ壘琛?..");
-            // System.Diagnostics.Debug.WriteLine($"  - scenario.Facilities: {(scenario.Facilities != null ? "瀛樺湪" : "null")}");
+// System.Diagnostics.Debug.WriteLine($"  - scenario.Facilities: {(scenario.Facilities != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - scenario.Facilities.Count: {scenario.Facilities?.Count ?? 0}");
             
             if (scenario.Facilities != null && scenario.Facilities.Count > 0)
@@ -336,8 +288,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // 馃敟 淇锛氭瀯寤?MilitaryKind 鏌ユ壘琛?
             // 鏃ユ湡锛?026-02-10
             // 闂锛歁ilitary.Kind 寮曠敤浠庢潵娌℃湁琚摼鎺ヨ繃
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?MilitaryKind 鏌ユ壘琛?..");
-            // System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
+// System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - AllMilitaryKinds: {(scenario.GameCommonData?.AllMilitaryKinds != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - MilitaryKinds瀛楀吀: {(scenario.GameCommonData?.AllMilitaryKinds?.MilitaryKinds != null ? "瀛樺湪" : "null")}");
             
@@ -363,8 +314,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // 馃敟 淇锛氭瀯寤?SectionAIDetail 鏌ユ壘琛?
             // 鏃ユ湡锛?026-02-13
             // 闂锛歋ection.AIDetail 寮曠敤浠庢潵娌℃湁琚摼鎺ヨ繃锛屽鑷磋妗ｅ悗鐜╁鍔垮姏琚?AI 鎺у埗
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?SectionAIDetail 鏌ユ壘琛?..");
-            // System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
+// System.Diagnostics.Debug.WriteLine($"  - scenario.GameCommonData: {(scenario.GameCommonData != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - AllSectionAIDetails: {(scenario.GameCommonData?.AllSectionAIDetails != null ? "瀛樺湪" : "null")}");
             // System.Diagnostics.Debug.WriteLine($"  - SectionAIDetails瀛楀吀: {(scenario.GameCommonData?.AllSectionAIDetails?.SectionAIDetails != null ? "瀛樺湪" : "null")}");
             
@@ -391,8 +341,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // 馃敟 淇锛氭瀯寤?State 鏌ユ壘琛?
             // 鏃ユ湡锛?026-02-16
             // 闂锛歋tates 闆嗗悎娌℃湁琚簭鍒楀寲锛屽鑷磋妗ｅ悗 LocationState 涓?null
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?State 鏌ユ壘琛?..");
-            if (scenario.States != null && scenario.States.Count > 0)
+if (scenario.States != null && scenario.States.Count > 0)
             {
                 // System.Diagnostics.Debug.WriteLine($"  - States.Count: {scenario.States.Count}");
                 
@@ -413,8 +362,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             
             // 馃敟 淇锛氭瀯寤?Region 鏌ユ壘琛?
             // 鏃ユ湡锛?026-02-16
-            // System.Diagnostics.Debug.WriteLine("[BuildLookupTables] 寮€濮嬫瀯寤?Region 鏌ユ壘琛?..");
-            if (scenario.Regions != null && scenario.Regions.Count > 0)
+if (scenario.Regions != null && scenario.Regions.Count > 0)
             {
                 // System.Diagnostics.Debug.WriteLine($"  - Regions.Count: {scenario.Regions.Count}");
                 
@@ -444,18 +392,12 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             if (scenario.Persons == null || scenario.Persons.Count == 0)
                 return;
             
-            #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[LinkPersonReferences] 寮€濮嬮摼鎺?{scenario.Persons.Count} 涓汉鐗╃殑寮曠敤...");
-            #endif
             
             foreach (Person person in scenario.Persons.GetList())
             {
                 _personLinker.LinkReferences(person, scenario, lookupTables);
             }
             
-            #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[LinkPersonReferences] Linked {scenario.Persons.Count} persons.");
-            #endif
         }
         
         /// <summary>
@@ -465,31 +407,19 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario.Factions == null || scenario.Factions.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine("[LinkFactionReferences] 鈿狅笍 Factions 闆嗗悎涓虹┖");
-                return;
+return;
             }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences] 寮€濮嬮摼鎺?{scenario.Factions.Count} 涓娍鍔涚殑寮曠敤...");
-            System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences] lookupTables.Persons.Count = {lookupTables.Persons.Count}");
-            System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences] lookupTables.Architectures.Count = {lookupTables.Architectures.Count}");
-            
-            int linkedLeaderCount = 0;
+int linkedLeaderCount = 0;
             int linkedCapitalCount = 0;
             
             foreach (Faction faction in scenario.Factions.GetList())
             {
-                System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences] 澶勭悊鍔垮姏 {faction.ID} ({faction.Name}): LeaderID={faction.LeaderID}, CapitalID={faction.CapitalID}");
-                
-                _factionLinker.LinkReferences(faction, scenario, lookupTables);
+_factionLinker.LinkReferences(faction, scenario, lookupTables);
                 
                 if (faction.Leader != null) linkedLeaderCount++;
                 if (faction.Capital != null) linkedCapitalCount++;
-                
-                System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences]   缁撴灉: Leader={faction.Leader?.Name ?? "null"}, Capital={faction.Capital?.Name ?? "null"}");
-            }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkFactionReferences] 鉁?瀹屾垚: Leader 閾炬帴 {linkedLeaderCount}/{scenario.Factions.Count}, Capital 閾炬帴 {linkedCapitalCount}/{scenario.Factions.Count}");
-        }
+}
+}
         
         /// <summary>
         /// Link references for all Architectures
@@ -529,13 +459,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario.Militaries == null || scenario.Militaries.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine("[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitaries 闆嗗悎涓虹┖");
-                return;
+return;
             }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 寮€濮嬮摼鎺?{scenario.Militaries.Count} 涓?Military 鐨勫紩鐢?..");
-            
-            int kindLinkedCount = 0;
+int kindLinkedCount = 0;
             int kindFailedCount = 0;
             int archLinkedCount = 0;
             int archFailedCount = 0;
@@ -556,16 +482,14 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitary {military.ID} ({military.Name}) 寮曠敤浜嗕笉瀛樺湪鐨?MilitaryKind {military.KindID}");
-                        System.Diagnostics.Debug.WriteLine($"  - 鍙敤鐨?MilitaryKind IDs: {string.Join(", ", lookupTables.MilitaryKinds.Keys.Take(10))}...");
+System.Diagnostics.Debug.WriteLine($"  - 鍙敤鐨?MilitaryKind IDs: {string.Join(", ", lookupTables.MilitaryKinds.Keys.Take(10))}...");
                         // 娉ㄦ剰锛氫笉鍐嶈缃?military.Kind = null锛屽洜涓?Kind setter 浼氭妸 kindID 鏀逛负 -1锛岀牬鍧忓師濮嬫暟鎹?
                         kindFailedCount++;
                     }
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitary {military.ID} ({military.Name}) 鐨?KindID 涓?{military.KindID}锛岃烦杩嘖ind閾炬帴");
-                    // 娉ㄦ剰锛氫笉鍐嶈缃?military.Kind = null锛岄伩鍏?Kind setter 鎶?kindID 鏀逛负 -1
+// 娉ㄦ剰锛氫笉鍐嶈缃?military.Kind = null锛岄伩鍏?Kind setter 鎶?kindID 鏀逛负 -1
                     kindFailedCount++;
                 }
                 
@@ -580,8 +504,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitary {military.ID} ({military.Name}) 寮曠敤浜嗕笉瀛樺湪鐨?Architecture {military.BelongedArchitectureID}");
-                        military.BelongedArchitectureID = -1;
+military.BelongedArchitectureID = -1;
                         military.BelongedArchitecture = null;
                         archFailedCount++;
                     }
@@ -608,8 +531,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitary {military.ID} ({military.Name}) 寮曠敤浜嗕笉瀛樺湪鐨?Leader {military.LeaderID}");
-                        military.LeaderID = -1;
+military.LeaderID = -1;
                         military.Leader = null;
                         leaderFailedCount++;
                     }
@@ -625,8 +547,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] 鈿狅笍 璀﹀憡锛歁ilitary {military.ID} ({military.Name}) 寮曠敤浜嗕笉瀛樺湪鐨?FollowedLeader {military.FollowedLeaderID}");
-                        military.FollowedLeaderID = -1;
+military.FollowedLeaderID = -1;
                         military.FollowedLeader = null;
                         followedLeaderFailedCount++;
                     }
@@ -762,15 +683,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                 }
             }
-
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] Kind linked={kindLinkedCount}, failed={kindFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] BelongedArchitecture linked={archLinkedCount}, failed={archFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] Leader linked={leaderLinkedCount}, failed={leaderFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] FollowedLeader linked={followedLeaderLinkedCount}, failed={followedLeaderFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] TargetArchitecture linked={targetArchLinkedCount}, failed={targetArchFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] StartingArchitecture linked={startingArchLinkedCount}, failed={startingArchFailedCount}");
-            System.Diagnostics.Debug.WriteLine($"[LinkMilitaryReferences] ShelledMilitary linked={shelledLinkedCount}, failed={shelledFailedCount}");
-        }
+}
         
         /// <summary>
         /// Link references for all Troops
@@ -780,10 +693,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario.Troops == null || scenario.Troops.Count == 0)
                 return;
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkTroopReferences] 寮€濮嬮摼鎺?{scenario.Troops.Count} 涓?Troop 鐨勫紩鐢?..");
-            
-            int armyLinkedCount = 0, armyFailedCount = 0;
+int armyLinkedCount = 0, armyFailedCount = 0;
             
             foreach (Troop troop in scenario.Troops.GetList())
             {
@@ -799,9 +709,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 else if (troop.MilitaryID > 0)
                     armyFailedCount++;
             }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkTroopReferences] Army linked={armyLinkedCount}, failed={armyFailedCount}");
-        }
+}
         
         /// <summary>
         /// Link references for all Sections
@@ -827,13 +735,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario.Informations == null || scenario.Informations.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine("[LinkInformationReferences] 鈿狅笍 Informations 鍒楄〃涓虹┖");
                 return;
             }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkInformationReferences] 寮€濮嬮摼鎺?{scenario.Informations.Count} 涓儏鎶ュ紩鐢?..");
-            
-            int linkedFactionCount = 0;
+int linkedFactionCount = 0;
             int linkedArchitectureCount = 0;
             int failedCount = 0;
             
@@ -851,8 +755,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkInformationReferences] Missing faction reference: info={info.ID}, factionID={info.BelongedFactionID}");
-                        success = false;
+success = false;
                     }
                 }
                 
@@ -866,8 +769,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine($"[LinkInformationReferences] Missing architecture reference: info={info.ID}, architectureID={info.BelongedArchitectureID}");
-                        success = false;
+success = false;
                     }
                 }
                 
@@ -876,9 +778,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     failedCount++;
                 }
             }
-            
-            System.Diagnostics.Debug.WriteLine($"[LinkInformationReferences] 鉁?瀹屾垚閾炬帴:");
-            System.Diagnostics.Debug.WriteLine($"  - 閾炬帴鍔垮姏: {linkedFactionCount}");
+System.Diagnostics.Debug.WriteLine($"  - 閾炬帴鍔垮姏: {linkedFactionCount}");
             System.Diagnostics.Debug.WriteLine($"  - 閾炬帴寤虹瓚: {linkedArchitectureCount}");
             System.Diagnostics.Debug.WriteLine($"  - 澶辫触: {failedCount}");
         }
@@ -890,14 +790,10 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         /// </summary>
         private void LinkStatesAndRegions(GameScenario scenario, LookupTables lookupTables)
         {
-            System.Diagnostics.Debug.WriteLine("[LinkStatesAndRegions] 寮€濮嬮摼鎺?States 鍜?Regions 寮曠敤...");
-            
-            // Link States
+// Link States
             if (scenario.States != null && scenario.States.Count > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[LinkStatesAndRegions] 閾炬帴 {scenario.States.Count} 涓窞鍩?..");
-                
-                foreach (State state in scenario.States.GetList())
+foreach (State state in scenario.States.GetList())
                 {
                     // Link LinkedRegion
                     // 馃敟 ID 鍒ゆ柇淇锛欼D=0 鏄湁鏁堢殑锛堜腑鍘熷湴鍩?ID=0锛?
@@ -920,16 +816,12 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                         }
                     }
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"[LinkStatesAndRegions] 鉁?States 閾炬帴瀹屾垚");
-            }
+}
             
             // Link Regions - 鍙摼鎺?RegionCore锛屼笉璋冪敤 LoadStatesFromString
             if (scenario.Regions != null && scenario.Regions.Count > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[LinkStatesAndRegions] 閾炬帴 {scenario.Regions.Count} 涓湴鍩?..");
-                
-                foreach (Region region in scenario.Regions.GetList())
+foreach (Region region in scenario.Regions.GetList())
                 {
                     // 馃敟 淇锛氬彧閾炬帴 RegionCore锛屼笉瑕佽皟鐢?LoadStatesFromString
                     // 鍘熷洜锛歀oadStatesFromString 鍙兘浼氫慨鏀规暟鎹紝褰卞搷鍚庣画鐨?ApplyInfluences
@@ -940,9 +832,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                         region.RegionCore = regionCore;
                     }
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"[LinkStatesAndRegions] 鉁?Regions 閾炬帴瀹屾垚");
-            }
+}
         }
         
         /// <summary>
@@ -955,10 +845,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario.States == null || scenario.States.Count == 0)
                 return;
-            
-            System.Diagnostics.Debug.WriteLine("[EnsureStatesHaveRegions] 妫€鏌?States 鏄惁閮芥湁 LinkedRegion...");
-            
-            int createdCount = 0;
+int createdCount = 0;
             int nextRegionID = scenario.Regions.Count > 0 
                 ? scenario.Regions.GetList().Cast<Region>().Max(r => r.ID) + 1 
                 : 1;
@@ -967,9 +854,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             {
                 if (state.LinkedRegion == null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[EnsureStatesHaveRegions] State {state.ID} ({state.Name}) 娌℃湁 LinkedRegion锛岃嚜鍔ㄥ垱寤?..");
-                    
-                    // 鍒涘缓瀵瑰簲鐨?Region
+// 鍒涘缓瀵瑰簲鐨?Region
                     var region = new Region
                     {
                         ID = nextRegionID++,
@@ -989,12 +874,10 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             
             if (createdCount > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[EnsureStatesHaveRegions] 鉁?涓?{createdCount} 涓?State 鍒涘缓浜嗛粯璁?Region");
-            }
+}
             else
             {
-                System.Diagnostics.Debug.WriteLine($"[EnsureStatesHaveRegions] 鉁?鎵€鏈?State 閮芥湁 LinkedRegion");
-            }
+}
         }
     }
     
@@ -1123,8 +1006,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             #if DEBUG
             if (person.ID <= 2)
             {
-                System.Diagnostics.Debug.WriteLine($"[PersonReferenceLinker] {person.Name}(ID:{person.ID}): 鍑嗗璋冪敤 LinkSkills");
-            }
+}
             #endif
             
             LinkSkills(person, scenario);
@@ -1163,8 +1045,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             if (person.ID == 14)
             {
                 /*
-                System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] 妫€鏌?Person 14 ({person.Name}) 鐨勫娍鍔涘叧绯?);
-                System.Diagnostics.Debug.WriteLine($"  - BelongedFactionID: {person.BelongedFactionID}");
+System.Diagnostics.Debug.WriteLine($"  - BelongedFactionID: {person.BelongedFactionID}");
                 System.Diagnostics.Debug.WriteLine($"  - LocationArchitectureID: {person.LocationArchitectureID}");
                 System.Diagnostics.Debug.WriteLine($"  - LocationTroopID: {person.LocationTroopID}");
                 System.Diagnostics.Debug.WriteLine($"  - Status: {person.Status}");
@@ -1205,7 +1086,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 }
             }
         }
-        
+
         /// <summary>
         /// Link LocationArchitecture reference using O(1) dictionary lookup
         /// </summary>
@@ -1334,16 +1215,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             else
                 person.Treasures.Clear();
             
-            // 馃敟 璇婃柇锛氳褰曞墠20涓灏嗙殑瀹濈墿閾炬帴鎯呭喌
-            // 鏃ユ湡锛?026-03-17
-            #if DEBUG
-            // 馃敟 2026-03-18 淇锛氭墿澶ц瘖鏂寖鍥村埌鍓?00涓灏嗭紝纭繚瑕嗙洊鏇规搷锛圛D=343锛?
-            if (person.ID <= 500)
-            {
 
-            }
-            #endif
-            
             // Link each treasure by ID using O(1) dictionary lookup
             if (person.TreasureIDs != null && person.TreasureIDs.Count > 0)
             {
@@ -1369,24 +1241,14 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                         treasure.BelongedPerson = person;
                         treasure.BelongedPersonIDString = person.ID;
                         
-                        #if DEBUG
-                        if (person.ID <= 20)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"    鉁?閾炬帴鎴愬姛: Treasure {treasureID} ({treasure.Name})");
-                        }
-                        #endif
+
                     }
                     else
                     {
                         // Invalid reference - log warning and skip
                         LogWarning($"Person {person.ID} ({person.Name}) references non-existent Treasure {treasureID}");
                         
-                        #if DEBUG
-                        if (person.ID <= 20)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"    [FAILED] Treasure {treasureID} does not exist.");
-                        }
-                        #endif
+
                     }
                 }
                 
@@ -1397,12 +1259,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                     person.TreasureIDs.AddRange(validTreasureIDs);
                 }
                 
-                #if DEBUG
-                if (person.ID <= 20)
-                {
-                    System.Diagnostics.Debug.WriteLine($"  - Final linked treasures: {person.Treasures.Count}");
-                }
-                #endif
+
             }
         }
         
@@ -1412,9 +1269,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         private void LogWarning(string message)
         {
             // Use System.Diagnostics for logging
-            // System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] WARNING: {message}");
-            
-            // Could also use a proper logging framework if available
+// Could also use a proper logging framework if available
             // Logger.Warning($"[LinkReferencesPhase] {message}");
         }
         
@@ -2039,8 +1894,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         /// </summary>
         private void LogWarning(string message)
         {
-            System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] WARNING: {message}");
-        }
+}
     }
 
     /// <summary>
@@ -2563,8 +2417,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         /// </summary>
         private void LogWarning(string message)
         {
-            System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] WARNING: {message}");
-        }
+}
     }
 
     /// <summary>
@@ -3166,8 +3019,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         /// </summary>
         private void LogWarning(string message)
         {
-            System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] WARNING: {message}");
-        }
+}
     }
 
     /// <summary>
@@ -3257,8 +3109,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         /// </summary>
         private void LogWarning(string message)
         {
-            System.Diagnostics.Debug.WriteLine($"[LinkReferencesPhase] WARNING: {message}");
-        }
+}
     }
 
 
@@ -3486,6 +3337,45 @@ public static class TroopReferenceLinkerExtensions
         
         // 馃敟 2026-02-11 淇锛氬鐞?Army (Military) 寮曠敤
         // 娉ㄦ剰锛歁ilitary ID=0 鏄湁鏁堢殑锛堣櫧鐒朵笉鎺ㄨ崘锛夛紝鎵€浠ヤ娇鐢?>= 0
+        if (troop.WillTroopID >= 0)
+        {
+            if (lookupTables.Troops.TryGetValue(troop.WillTroopID, out Troop willTroop))
+            {
+                troop.WillTroop = willTroop;
+            }
+            else
+            {
+                troop.WillTroopID = -1;
+                troop.WillTroop = null;
+            }
+        }
+        
+        if (troop.TargetArchitectureID >= 0)
+        {
+            if (lookupTables.Architectures.TryGetValue(troop.TargetArchitectureID, out Architecture targetArchitecture))
+            {
+                troop.TargetArchitecture = targetArchitecture;
+            }
+            else
+            {
+                troop.TargetArchitectureID = -1;
+                troop.TargetArchitecture = null;
+            }
+        }
+        
+        if (troop.TargetTroopID >= 0)
+        {
+            if (lookupTables.Troops.TryGetValue(troop.TargetTroopID, out Troop targetTroop))
+            {
+                troop.TargetTroop = targetTroop;
+            }
+            else
+            {
+                troop.TargetTroopID = -1;
+                troop.TargetTroop = null;
+            }
+        }
+        
         if (troop.MilitaryID >= 0)
         {
             if (lookupTables.Militaries.TryGetValue(troop.MilitaryID, out Military military))
@@ -3640,27 +3530,17 @@ public static class SectionReferenceLinkerExtensions
                 
                 if (isPlayerSection && aiDetail.AutoRun)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[LinkSectionAIDetail] WARNING: Player section is AutoRun.");
-                    System.Diagnostics.Debug.WriteLine($"  - 鍐涘尯: {section.ID} ({section.Name})");
-                    System.Diagnostics.Debug.WriteLine($"  - 鍔垮姏: {section.BelongedFaction.Name}");
-                    System.Diagnostics.Debug.WriteLine($"  - AIDetail ID: {aiDetail.ID}");
-                    System.Diagnostics.Debug.WriteLine($"  - AIDetail AutoRun: {aiDetail.AutoRun}");
-                    System.Diagnostics.Debug.WriteLine($"  - AIDetail Description: {aiDetail.Description}");
+                    
                 }
-                
-                System.Diagnostics.Debug.WriteLine($"[LinkSectionAIDetail] 鉁?鍐涘尯 {section.ID} ({section.Name}) 閾炬帴 AIDetail ID={aiDetail.ID}, AutoRun={aiDetail.AutoRun}");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine($"[LinkSectionAIDetail] ERROR: Section {section.ID} ({section.Name}) references missing AIDetail ID={section.AIDetailID}.");
                 throw new InvalidOperationException($"Section {section.ID} ({section.Name}) references missing AIDetail ID={section.AIDetailID}.");
             }
         }
         else
         {
             // AIDetailID < 0 鏄暟鎹敊璇?
-            System.Diagnostics.Debug.WriteLine($"[LinkSectionAIDetail] ERROR: Section {section.ID} ({section.Name}) has invalid AIDetailID={section.AIDetailID} (< 0).");
-            System.Diagnostics.Debug.WriteLine($"[LinkSectionAIDetail]    杩欒鏄庡啗鍖哄湪鍒涘缓鎴栧姞杞芥椂娌℃湁姝ｇ‘璁剧疆 AIDetail");
             throw new InvalidOperationException($"Section {section.ID} ({section.Name}) has invalid AIDetailID={section.AIDetailID} (< 0).");
         }
         

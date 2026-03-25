@@ -318,6 +318,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                     white,
                                     0f, Vector2.Zero, SpriteEffects.None, 0.5f);
                                 // ---------------------------------------------------------
+                                
+                                // 🔥 关键修复：补齐受击/受术动作生命周期收口
+                                // 日期：2026-03-24
+                                // 原因：攻击/施法发起者有动画结束收口，但受击/受术目标没有
+                                //       导致目标部队的 BeAttacked/BeCasted 动作残留
+                                // 解决：为受击/受术动作补对称的生命周期（与发起者一致：60 帧）
+                                troop._attackAnimationFrameCounter++;
+                                
+                                const int DEFENSE_ANIMATION_DURATION_FRAMES = 60;
+                                
+                                if (troop._attackAnimationFrameCounter >= DEFENSE_ANIMATION_DURATION_FRAMES)
+                                {
+                                    // 调用统一清理方法
+                                    troop.ClearTransientExecutionState();
+                                    troop._attackAnimationFrameCounter = 0;
+                                }
                                 nullable = null;
                                 if (Session.MainGame.mainGameScreen.Textures?.TileFrameTextures != null && 
                                     Session.MainGame.mainGameScreen.Textures.TileFrameTextures.Length > 2)
@@ -351,14 +367,30 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                             }
                         }
                         
-                        bool delayCombatNumber =
+                        // 🔥 修复：战法动画和伤害数字的延迟显示机制
+                        // 日期：2026-03-23
+                        // 问题：战法动画和伤害数字同时显示，视觉混乱
+                        // 解决：战法动画期间不显示伤害数字，动画结束后延迟30帧再显示
+                        bool isInCombatAnimation =
                             troop.Action == TroopAction.Attack ||
                             troop.Action == TroopAction.Cast ||
                             troop.Action == TroopAction.BeAttacked ||
                             troop.Action == TroopAction.BeCasted ||
                             troop.PreAction != TroopPreAction.无;
-                        if (!delayCombatNumber)
+                        
+                        if (isInCombatAnimation)
                         {
+                            // 战法动画期间：重置延迟计数器，不显示伤害数字
+                            troop._damageNumberDelayCounter = 30; // 延迟30帧（约0.5秒）
+                        }
+                        else if (troop._damageNumberDelayCounter > 0)
+                        {
+                            // 战法动画结束后：递减延迟计数器，仍不显示伤害数字
+                            troop._damageNumberDelayCounter--;
+                        }
+                        else
+                        {
+                            // 延迟结束后：显示伤害数字
                             if (!troop.IncrementNumberList.IsEmpty)
                             {
                                 troop.IncrementNumberList.Draw(Session.Current.Scenario.GameCommonData.NumberGenerator, new GetDisplayRectangle(Session.MainGame.mainGameScreen.mainMapLayer.GetDestination), Session.MainGame.mainGameScreen.mainMapLayer.TileWidth, gameTime);

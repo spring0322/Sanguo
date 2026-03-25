@@ -4,6 +4,24 @@ using WorldOfTheThreeKingdoms.GameLogic.Config;
 
 namespace WorldOfTheThreeKingdoms.GameGlobal
 {
+    public enum ActiveAbilityCategory
+    {
+        Passive = 0,
+        EnemyTargetedOffense = 1,
+        SelfBuffOffense = 2,
+        SelfBuffDefense = 3,
+        FriendlySupport = 4,
+        Utility = 5,
+        Disabled = 6
+    }
+
+    public enum ActiveAbilityEvaluationMode
+    {
+        Disabled = 0,
+        Direct = 1,
+        IndirectCombatMethod = 2
+    }
+
     /// <summary>
     /// AI角色配置管理器
     /// 负责加载和管理AIRoleSelector的配置数据
@@ -171,6 +189,57 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
                     ["29"] = "运输队",
                     ["601"] = "建造队",
                     ["621"] = "工程队"
+                },
+                AbilityProfiles = new AbilityProfilesConfig
+                {
+                    CombatMethods = new Dictionary<string, AbilityProfileEntry>
+                    {
+                        ["0"] = new AbilityProfileEntry { Category = nameof(ActiveAbilityCategory.SelfBuffDefense) },
+                        ["1"] = new AbilityProfileEntry { Category = nameof(ActiveAbilityCategory.SelfBuffOffense) },
+                        ["2"] = new AbilityProfileEntry { Category = nameof(ActiveAbilityCategory.EnemyTargetedOffense) },
+                        ["58"] = new AbilityProfileEntry { Category = nameof(ActiveAbilityCategory.SelfBuffOffense) }
+                    },
+                    Skills = new Dictionary<string, AbilityProfileEntry>
+                    {
+                        ["21"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.Passive),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.Disabled)
+                        },
+                        ["22"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.Passive),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.Disabled)
+                        },
+                        ["26"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.Utility),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.Disabled)
+                        },
+                        ["30"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.SelfBuffDefense),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.IndirectCombatMethod),
+                            LinkedCombatMethodID = 0
+                        },
+                        ["31"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.SelfBuffOffense),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.IndirectCombatMethod),
+                            LinkedCombatMethodID = 1
+                        },
+                        ["32"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.EnemyTargetedOffense),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.IndirectCombatMethod),
+                            LinkedCombatMethodID = 2
+                        },
+                        ["92"] = new AbilityProfileEntry
+                        {
+                            Category = nameof(ActiveAbilityCategory.Utility),
+                            EvaluationMode = nameof(ActiveAbilityEvaluationMode.Disabled)
+                        }
+                    }
                 }
             };
         }
@@ -257,6 +326,125 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
             }
             return $"兵种{troopKindID}";
         }
+
+        public static ActiveAbilityCategory GetCombatMethodCategory(int combatMethodID, bool viewingHostileFallback)
+        {
+            return TryGetCombatMethodCategory(combatMethodID, out var category)
+                ? category
+                : (viewingHostileFallback ? ActiveAbilityCategory.EnemyTargetedOffense : ActiveAbilityCategory.Utility);
+        }
+
+        public static ActiveAbilityCategory GetStuntCategory(int stuntID)
+        {
+            return TryGetStuntCategory(stuntID, out var category)
+                ? category
+                : ActiveAbilityCategory.Utility;
+        }
+
+        public static ActiveAbilityCategory GetSkillCategory(int skillID)
+        {
+            return TryGetSkillCategory(skillID, out var category)
+                ? category
+                : ActiveAbilityCategory.Passive;
+        }
+
+        public static bool TryGetCombatMethodCategory(int combatMethodID, out ActiveAbilityCategory category)
+        {
+            return TryGetCategory(Config?.AbilityProfiles?.CombatMethods, combatMethodID, out category);
+        }
+
+        public static bool TryGetStuntCategory(int stuntID, out ActiveAbilityCategory category)
+        {
+            return TryGetCategory(Config?.AbilityProfiles?.Stunts, stuntID, out category);
+        }
+
+        public static bool TryGetSkillCategory(int skillID, out ActiveAbilityCategory category)
+        {
+            return TryGetCategory(Config?.AbilityProfiles?.Skills, skillID, out category);
+        }
+
+        public static ActiveAbilityEvaluationMode GetSkillEvaluationMode(int skillID)
+        {
+            return TryGetSkillEvaluationMode(skillID, out var evaluationMode)
+                ? evaluationMode
+                : ActiveAbilityEvaluationMode.Disabled;
+        }
+
+        public static bool TryGetSkillEvaluationMode(int skillID, out ActiveAbilityEvaluationMode evaluationMode)
+        {
+            return TryGetEvaluationMode(Config?.AbilityProfiles?.Skills, skillID, out evaluationMode);
+        }
+
+        public static bool TryGetSkillLinkedCombatMethodID(int skillID, out int linkedCombatMethodID)
+        {
+            linkedCombatMethodID = -1;
+            var table = Config?.AbilityProfiles?.Skills;
+            if (table == null)
+            {
+                return false;
+            }
+
+            var key = skillID.ToString();
+            if (!table.TryGetValue(key, out var profile) || profile == null || !profile.LinkedCombatMethodID.HasValue)
+            {
+                return false;
+            }
+
+            linkedCombatMethodID = profile.LinkedCombatMethodID.Value;
+            return linkedCombatMethodID >= 0;
+        }
+
+        private static bool TryGetCategory(
+            Dictionary<string, AbilityProfileEntry> table,
+            int id,
+            out ActiveAbilityCategory category)
+        {
+            category = ActiveAbilityCategory.Utility;
+            if (table == null)
+            {
+                return false;
+            }
+
+            var key = id.ToString();
+            if (!table.TryGetValue(key, out var profile) || profile == null || string.IsNullOrEmpty(profile.Category))
+            {
+                return false;
+            }
+
+            if (Enum.TryParse(profile.Category, true, out category))
+            {
+                return true;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[AIRoleConfig] AbilityProfiles[{key}] category invalid: {profile.Category}");
+            return false;
+        }
+
+        private static bool TryGetEvaluationMode(
+            Dictionary<string, AbilityProfileEntry> table,
+            int id,
+            out ActiveAbilityEvaluationMode evaluationMode)
+        {
+            evaluationMode = ActiveAbilityEvaluationMode.Disabled;
+            if (table == null)
+            {
+                return false;
+            }
+
+            var key = id.ToString();
+            if (!table.TryGetValue(key, out var profile) || profile == null || string.IsNullOrEmpty(profile.EvaluationMode))
+            {
+                return false;
+            }
+
+            if (Enum.TryParse(profile.EvaluationMode, true, out evaluationMode))
+            {
+                return true;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[AIRoleConfig] AbilityProfiles[{key}] evaluation mode invalid: {profile.EvaluationMode}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -268,7 +456,22 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
         public GlobalSettings GlobalSettings { get; set; }
         public Dictionary<string, string> SkillMappings { get; set; }
         public Dictionary<string, string> TroopKindMappings { get; set; }
+        public AbilityProfilesConfig AbilityProfiles { get; set; }
         public UtilityAIConfig UtilityAI { get; set; }
+    }
+
+    public class AbilityProfilesConfig
+    {
+        public Dictionary<string, AbilityProfileEntry> CombatMethods { get; set; }
+        public Dictionary<string, AbilityProfileEntry> Stunts { get; set; }
+        public Dictionary<string, AbilityProfileEntry> Skills { get; set; }
+    }
+
+    public class AbilityProfileEntry
+    {
+        public string Category { get; set; }
+        public string EvaluationMode { get; set; }
+        public int? LinkedCombatMethodID { get; set; }
     }
 
     /// <summary>

@@ -225,6 +225,8 @@ namespace WorldOfTheThreeKingdoms.Serialization
     
     // AIRoleConfig 子配置类型（主类型已注册）
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.UtilityAIConfig))]
+    [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.AbilityProfilesConfig))]
+    [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.AbilityProfileEntry))]
     
     // 单挑配置
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameScreens.ScreenLayers.DantiaoConfigData))]
@@ -234,6 +236,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
     [JsonSerializable(typeof(Dictionary<string, global::WorldOfTheThreeKingdoms.GameGlobal.StrategicPostureConfig>))]
     [JsonSerializable(typeof(Dictionary<string, global::WorldOfTheThreeKingdoms.GameGlobal.FormationConfig>))]
     [JsonSerializable(typeof(Dictionary<string, global::WorldOfTheThreeKingdoms.GameGlobal.RoleThresholdConfig>))]
+    [JsonSerializable(typeof(Dictionary<string, global::WorldOfTheThreeKingdoms.GameGlobal.AbilityProfileEntry>))]
     [JsonSerializable(typeof(Dictionary<string, int>))]
     
     // Core Tables and Lists
@@ -609,6 +612,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     new SystemTextJson.FactionLeaderConverter(),
                     new SystemTextJson.PersonIdealTendencyConverter(),
                     new SystemTextJson.IdealTendencyKindConverter(),
+                    new SystemTextJson.EventEffectKindConverter(),
                     // 🔥 2026-02-12 关键修复：移除 EventEffectListDictionaryConverter
                     // 问题：自定义转换器阻止了 AOT 生成 Dictionary<int, List<EventEffect>> 的元数据
                     // 解决：让 AOT 自动处理，已在 GameJsonContext 中注册完整类型
@@ -690,6 +694,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     new SystemTextJson.FactionLeaderConverter(),
                     new SystemTextJson.PersonIdealTendencyConverter(),
                     new SystemTextJson.IdealTendencyKindConverter(),
+                    new SystemTextJson.EventEffectKindConverter(),
                     new SystemTextJson.LegacyDictionaryConverter<Microsoft.Xna.Framework.Point, global::GameObjects.NoFoodPosition>(),
                     new SystemTextJson.IntDictionaryConverter(),
                     new SystemTextJson.TextMessageTableConverter(),
@@ -751,6 +756,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     new SystemTextJson.FactionLeaderConverter(),
                     new SystemTextJson.PersonIdealTendencyConverter(),
                     new SystemTextJson.IdealTendencyKindConverter(),
+                    new SystemTextJson.EventEffectKindConverter(),
                     // 🔥 2026-02-12 根本修复：移除 EventEffect 相关的全局转换器
                     // 问题：全局转换器会拦截所有 Dictionary<int, EventEffect> 的序列化，阻止 AOT 生成元数据
                     // 解决：让 AOT 源生成器完全接管 EventEffectTable 和 EventEffectKindTable 的序列化

@@ -235,9 +235,13 @@ namespace GameObjects
         {
             get
             {
+                if (Session.Current == null || Session.Current.Scenario == null || Session.Current.Scenario.Architectures == null)
+                {
+                    return null;
+                }
                 foreach (Architecture a in Session.Current.Scenario.Architectures)
                 {
-                    if (a.Facilities.GameObjects.Contains(this))
+                    if (a.Facilities != null && a.Facilities.GameObjects.Contains(this))
                     {
                         return a;
                     }

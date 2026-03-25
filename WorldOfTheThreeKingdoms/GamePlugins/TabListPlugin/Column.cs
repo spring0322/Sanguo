@@ -63,6 +63,12 @@ namespace TabListPlugin
 
         public void Draw()
         {
+            // 🔥 推荐版模式：跳过描述列绘制（改为右侧竖向详情区）
+            if (this.tabList.IsRecommendedMode() && this.Name == "Description")
+            {
+                return;
+            }
+
             // 1. 基础视口剔除
             if (this.DisplayPosition.Right <= this.tabList.VisibleLowerClient.Left || 
                 this.DisplayPosition.Left >= this.tabList.VisibleLowerClient.Right)
@@ -562,24 +568,32 @@ namespace TabListPlugin
 
                 if (!this.Editable && this.tabList.gameObjectList != null && this.ColumnTextList.Count > 0)
                 {
-                    float contentScale = (this.ColumnTextList.Font != null) ? this.ColumnTextList.Font.Scale : headerScale;
-                    float maxContentPixelWidth = 0;
-
-                    for (int i = 0; i < this.ColumnTextList.Count; i++)
+                    // 🔥 推荐版模式：禁用描述列的内容测宽扩列
+                    // 日期：2026-03-23
+                    // 原因：描述列宽度由 Tab.ReCalculate 决定（弹性列），不应根据内容扩列
+                    bool isDescriptionInRecommendedMode = this.tabList.IsRecommendedMode() && this.Name == "Description";
+                    
+                    if (!isDescriptionInRecommendedMode)
                     {
-                        string text = this.ColumnTextList[i].Text;
-                        if (!string.IsNullOrEmpty(text))
+                        float contentScale = (this.ColumnTextList.Font != null) ? this.ColumnTextList.Font.Scale : headerScale;
+                        float maxContentPixelWidth = 0;
+
+                        for (int i = 0; i < this.ColumnTextList.Count; i++)
                         {
-                            float w = 0;
-                            try { w = font.MeasureString(text).X * contentScale; } catch { }
-                            if (w > maxContentPixelWidth) maxContentPixelWidth = w;
+                            string text = this.ColumnTextList[i].Text;
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                float w = 0;
+                                try { w = font.MeasureString(text).X * contentScale; } catch { }
+                                if (w > maxContentPixelWidth) maxContentPixelWidth = w;
+                            }
                         }
-                    }
 
-                    float safeContentWidth = maxContentPixelWidth + 30;
-                    if (safeContentWidth > finalCalculatedWidth)
-                    {
-                        finalCalculatedWidth = safeContentWidth;
+                        float safeContentWidth = maxContentPixelWidth + 30;
+                        if (safeContentWidth > finalCalculatedWidth)
+                        {
+                            finalCalculatedWidth = safeContentWidth;
+                        }
                     }
                 }
             }

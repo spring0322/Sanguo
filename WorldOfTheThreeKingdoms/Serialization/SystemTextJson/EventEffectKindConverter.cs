@@ -37,13 +37,14 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 name = nameElement.GetString() ?? "";
 
             // 根据 ID 创建对应的派生类实例
-            EventEffectKind result = CreateEventEffectKindById(id);
-            if (result != null)
+            EventEffectKind result = EventEffectKindFactory.CreateEventEffectKindByID(id);
+            if (result == null)
             {
-                result.ID = id;
-                result.Name = name;
+                throw new JsonException($"Unknown troop EventEffectKind ID: {id}");
             }
 
+            result.ID = id;
+            result.Name = name;
             return result;
         }
 

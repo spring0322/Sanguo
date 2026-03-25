@@ -183,6 +183,13 @@ namespace GameObjects
                 troop.InitializeInQueue();
                 
                 bool canMove = troop.CanMoveAnyway();
+                
+                #if DEBUG
+                if (troop.ManualControl)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BuildQueue] {troop.DisplayName} CanMoveAnyway={canMove}, Status={troop.Status}, Controllable={troop.Controllable}");
+                }
+                #endif
 
                 if (canMove)
                 {
@@ -197,7 +204,7 @@ namespace GameObjects
                         // 🔥 诊断日志：记录玩家部队入队
                         if (troop.ManualControl)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[BuildQueue] ✅ 玩家部队 {troop.DisplayName} 已入队 - SelectedMove={troop.SelectedMove}, MovLeft={troop.MovabilityLeft}, Status={troop.Status}");
+                            System.Diagnostics.Debug.WriteLine($"[BuildQueue] ✅ 玩家部队 {troop.DisplayName} 已入队 - SelectedMove={troop.SelectedMove}, Command={troop.Command}, Operated={troop.Operated}, MovLeft={troop.MovabilityLeft}, Status={troop.Status}");
                         }
                     }
                 }
@@ -340,19 +347,30 @@ namespace GameObjects
                     // 改进：如果不能攻击（需要移动到更好的位置），继续驱动移动逻辑
                     // 参考：远程部队位置调整失败_CanExecuteCombatAction检查缺失修复_2026-03-22.md
                     
+                    bool isNoTargetCleanup = this.CurrentTroop.OperationDone &&
+                                             this.CurrentTroop.Command == TroopCommand.None &&
+                                             this.CurrentTroop.CurrentAIState == TroopAIState.Idle &&
+                                             this.CurrentTroop.MovabilityLeft < 0;
+                    
                     #if DEBUG
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} 检查是否需要执行攻击 " +
-                        $"(Pos={this.CurrentTroop.Position}, RealDest={this.CurrentTroop.RealDestination}, " +
-                        $"Command={this.CurrentTroop.Command}, TargetTroop={this.CurrentTroop.TargetTroop?.DisplayName ?? "null"}, " +
-                        $"TargetArch={this.CurrentTroop.TargetArchitecture?.Name ?? "null"})");
+                    if (!isNoTargetCleanup)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} 检查是否需要执行攻击 " +
+                            $"(Pos={this.CurrentTroop.Position}, RealDest={this.CurrentTroop.RealDestination}, " +
+                            $"Command={this.CurrentTroop.Command}, TargetTroop={this.CurrentTroop.TargetTroop?.DisplayName ?? "null"}, " +
+                            $"TargetArch={this.CurrentTroop.TargetArchitecture?.Name ?? "null"})");
+                    }
                     #endif
                     
                     bool canExecuteCombat = this.CurrentTroop.ToDoCombatAction();
                     
                     #if DEBUG
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} ToDoCombatAction 返回: {canExecuteCombat}");
+                    if (!isNoTargetCleanup)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} ToDoCombatAction 返回: {canExecuteCombat}");
+                    }
                     #endif
                     
                     if (canExecuteCombat)
@@ -373,10 +391,13 @@ namespace GameObjects
                         // 不能执行攻击，继续移动
                         
                         #if DEBUG
-                        System.Diagnostics.Debug.WriteLine(
-                            $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} canExecuteCombat=false，调用 UpdateMovementLogic " +
-                            $"(RealDest={this.CurrentTroop.RealDestination}, Pos={this.CurrentTroop.Position}, " +
-                            $"State={this.CurrentTroop.CurrentAIState}, Command={this.CurrentTroop.Command})");
+                        if (!isNoTargetCleanup)
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} canExecuteCombat=false，调用 UpdateMovementLogic " +
+                                $"(RealDest={this.CurrentTroop.RealDestination}, Pos={this.CurrentTroop.Position}, " +
+                                $"State={this.CurrentTroop.CurrentAIState}, Command={this.CurrentTroop.Command})");
+                        }
                         #endif
                         
                         // 🔥 关键：调用 UpdateMovementLogic 驱动移动
@@ -396,13 +417,16 @@ namespace GameObjects
                                                (this.CurrentTroop.HasCachedPath && this.CurrentTroop.MovabilityLeft > 0);
                         
                         #if DEBUG
-                        System.Diagnostics.Debug.WriteLine(
-                            $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} UpdateMovementLogic 后: " +
-                            $"IsAnimationPlaying={this.CurrentTroop.IsAnimationPlaying}, " +
-                            $"IsPathfinding={this.CurrentTroop.IsPathfinding}, " +
-                            $"HasCachedPath={this.CurrentTroop.HasCachedPath}, " +
-                            $"MovabilityLeft={this.CurrentTroop.MovabilityLeft}, " +
-                            $"isActuallyMoving={isActuallyMoving}");
+                        if (!isNoTargetCleanup)
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} UpdateMovementLogic 后: " +
+                                $"IsAnimationPlaying={this.CurrentTroop.IsAnimationPlaying}, " +
+                                $"IsPathfinding={this.CurrentTroop.IsPathfinding}, " +
+                                $"HasCachedPath={this.CurrentTroop.HasCachedPath}, " +
+                                $"MovabilityLeft={this.CurrentTroop.MovabilityLeft}, " +
+                                $"isActuallyMoving={isActuallyMoving}");
+                        }
                         #endif
                         
                         if (!isActuallyMoving)
@@ -411,10 +435,18 @@ namespace GameObjects
                             // 标记为完成，避免死循环
                             
                             #if DEBUG
-                            System.Diagnostics.Debug.WriteLine(
-                                $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} 无法移动，标记为完成 " +
-                                $"(RealDest={this.CurrentTroop.RealDestination}, Pos={this.CurrentTroop.Position}, " +
-                                $"State={this.CurrentTroop.CurrentAIState}, stuckedFor={this.CurrentTroop.stuckedFor})");
+                            if (isNoTargetCleanup)
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} 已在目标判定阶段正常结束，跳过重复的移动失败日志");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"[CurrentQueueTroopMove] {this.CurrentTroop.DisplayName} 无法移动，标记为完成 " +
+                                    $"(RealDest={this.CurrentTroop.RealDestination}, Pos={this.CurrentTroop.Position}, " +
+                                    $"State={this.CurrentTroop.CurrentAIState}, stuckedFor={this.CurrentTroop.stuckedFor})");
+                            }
                             #endif
                             
                             this.CurrentTroop.OperationDone = true;
@@ -476,9 +508,25 @@ namespace GameObjects
                 if (this.CurrentQueue.Count > 0)
                 {
                     Troop candidate = this.CurrentQueue.Dequeue();
+                    
+                    #if DEBUG
+                    if (candidate.ManualControl)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[CurrentQueueTroopMove] 从队列取出: {candidate.DisplayName}, Destroyed={candidate.Destroyed}");
+                    }
+                    #endif
 
                     // 校验有效性
-                    if (candidate.Destroyed) continue;
+                    if (candidate.Destroyed)
+                    {
+                        #if DEBUG
+                        if (candidate.ManualControl)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[CurrentQueueTroopMove] {candidate.DisplayName} 已销毁，跳过");
+                        }
+                        #endif
+                        continue;
+                    }
 
                     // === 找到有效部队 ===
                     this.CurrentTroop = candidate;
@@ -547,11 +595,23 @@ namespace GameObjects
                             if (this.CurrentTroop.Command == TroopCommand.Enter)
                             {
                                 this.CurrentTroop.CurrentAIState = TroopAIState.EnterCity;
+                                #if DEBUG
+                                if (this.CurrentTroop.ManualControl)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[EnterMovementPipeline] {this.CurrentTroop.DisplayName} 设置 CurrentAIState=EnterCity");
+                                }
+                                #endif
                             }
                             else if (this.CurrentTroop.Command != TroopCommand.None)
                             {
                                 // 所有非空指令（Move/Attack/AttackArch/AttackTroop/Stratagem）都设置为 Marching
                                 this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
+                                #if DEBUG
+                                if (this.CurrentTroop.ManualControl)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"[EnterMovementPipeline] {this.CurrentTroop.DisplayName} 设置 CurrentAIState=Marching (Command={this.CurrentTroop.Command})");
+                                }
+                                #endif
                             }
 
                             // 🔥 修复：传递 gameTime 参数，确保移动冷却能正常递减
@@ -567,12 +627,18 @@ namespace GameObjects
                             // 检查1：攻击城池 - 检查是否已在攻击范围内
                             if (this.CurrentTroop.Command == TroopCommand.AttackArch)
                             {
-                                // 🔥 Anti-Band-Aid：不检查 TargetArchitecture 是否为 null
-                                // 如果 Command == AttackArch 但 TargetArchitecture == null，说明数据源有问题
-                                // 让它崩溃，暴露问题：指令设置时必须验证目标有效性
-                                
+                                var targetArchitecture = this.CurrentTroop.TargetArchitecture;
+                                if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
+                                {
+                                    this.CurrentTroop.SetCommand(TroopCommand.None);
+                                    this.CurrentTroop.SelectedAttack = false;
+                                    this.CurrentTroop.OperationDone = true;
+                                    this.CurrentTroop = null;
+                                    break;
+                                }
+
                                 int distToCity = int.MaxValue;
-                                var cityArea = this.CurrentTroop.TargetArchitecture.ArchitectureArea.Area;
+                                var cityArea = targetArchitecture.ArchitectureArea.Area;
                                 
                                 for (int i = 0; i < cityArea.Count; i++)
                                 {
@@ -597,6 +663,16 @@ namespace GameObjects
                             // 检查2：攻击部队 - 使用战术评分系统决定是否立即攻击
                             else if (this.CurrentTroop.Command == TroopCommand.AttackTroop)
                             {
+                                Troop targetTroop = this.CurrentTroop.TargetTroop;
+                                if (targetTroop == null || targetTroop.Destroyed)
+                                {
+                                    this.CurrentTroop.SetCommand(TroopCommand.None);
+                                    this.CurrentTroop.SelectedAttack = false;
+                                    this.CurrentTroop.OperationDone = true;
+                                    this.CurrentTroop = null;
+                                    break;
+                                }
+
                                 // 🔥 2026-03-22 修复：复用现有的战术评分系统
                                 // 问题：原逻辑只检查"是否在射程内"，导致远程部队在非最佳距离直接攻击
                                 // 改进：使用 AITacticalPositioner.EvaluateRangedPosition 评估位置价值
@@ -606,8 +682,8 @@ namespace GameObjects
                                 // 如果 Command == AttackTroop 但 TargetTroop == null，说明数据源有问题
                                 // 让它崩溃，暴露问题：指令设置时必须验证目标有效性，或在目标被摧毁时清空指令
                                 
-                                int dx = Math.Abs(this.CurrentTroop.Position.X - this.CurrentTroop.TargetTroop.Position.X);
-                                int dy = Math.Abs(this.CurrentTroop.Position.Y - this.CurrentTroop.TargetTroop.Position.Y);
+                                int dx = Math.Abs(this.CurrentTroop.Position.X - targetTroop.Position.X);
+                                int dy = Math.Abs(this.CurrentTroop.Position.Y - targetTroop.Position.Y);
                                 int distToTroop = Math.Max(dx, dy);
                                 
                                 bool inRange = (distToTroop <= this.CurrentTroop.OffenceRadius);
@@ -621,9 +697,9 @@ namespace GameObjects
                                     {
                                         // 评估当前位置和目标位置的战术价值
                                         float currentPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                                            this.CurrentTroop, this.CurrentTroop.Position, this.CurrentTroop.TargetTroop);
+                                            this.CurrentTroop, this.CurrentTroop.Position, targetTroop);
                                         float targetPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                                            this.CurrentTroop, this.CurrentTroop.RealDestination, this.CurrentTroop.TargetTroop);
+                                            this.CurrentTroop, this.CurrentTroop.RealDestination, targetTroop);
                                         
                                         // 如果目标位置的评分显著高于当前位置，继续移动
                                         // 阈值：50分（避免为了微小的改进而频繁移动）
@@ -713,10 +789,10 @@ namespace GameObjects
         }
 
         // 保留原有的 AI 目标修正逻辑 (非常重要，否则 AI 会乱走)
-        private void TroopChangeRealDestination(Troop troop)
+        public void TroopChangeRealDestination(Troop troop)
         {
             #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 被调用！Command={troop.Command}, RealDestination={troop.RealDestination}, ManualControl={troop.ManualControl}, Position={troop.Position}, Destroyed={troop.Destroyed}");
+            System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 进入目标判定 Command={troop.Command}, RealDestination={troop.RealDestination}, ManualControl={troop.ManualControl}, Position={troop.Position}, Destroyed={troop.Destroyed}");
             #endif
             
             // 🔥 根本修复：玩家战略指令分类处理
@@ -729,18 +805,84 @@ namespace GameObjects
             // 攻击城池指令：不设置 RealDestination，等待 SmartSiege 系统处理
             if (troop.Command == TroopCommand.AttackArch)
             {
-                #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 攻击城池指令，交给 SmartSiege 处理");
-                #endif
+                var targetArchitecture = troop.TargetArchitecture;
+                if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
+                {
+                    Troop targetTroop = troop.TargetTroop;
+                    if (targetTroop != null && !targetTroop.Destroyed)
+                    {
+                        troop.SetCommand(TroopCommand.AttackTroop);
+                    }
+                    else
+                    {
+                        troop.SetCommand(TroopCommand.None);
+                        troop.SelectedAttack = false;
+                        return;
+                    }
+                }
+
+                if (troop.Command == TroopCommand.AttackArch)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 攻击城池指令，交给 SmartSiege 处理");
+                    #endif
+                    return;
+                }
+            }
+            
+            // 🔥 2026-03-24 新增：入城指令处理
+            // 原因：CommandBufferScheduler 生成 EnterCommand，需要设置 RealDestination 为城池位置
+            // 策略：使用 TargetArchitecture.Position（城池中心点）
+            if (troop.Command == TroopCommand.Enter)
+            {
+                if (troop.TargetArchitecture != null)
+                {
+                    troop.RealDestination = troop.TargetArchitecture.Position;
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 入城指令，目标城池: {troop.TargetArchitecture.Name}, 位置: {troop.RealDestination}");
+                    #endif
+                }
+                else
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 入城指令但 TargetArchitecture 为 null，清空指令");
+                    #endif
+                    troop.SetCommand(TroopCommand.None);
+                    troop.OperationDone = true;
+                }
                 return;
             }
             
             // 移动指令：玩家已设置 RealDestination，保持不变
             if (troop.Command == TroopCommand.Move)
             {
-                #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 移动指令，保持玩家目标不变");
-                #endif
+                // 🔥 2026-03-24 修复：验证 RealDestination 是否有效
+                // 问题：玩家下达移动指令后，RealDestination 可能未设置（仍为 -1, -1）
+                // 原因：某些代码路径只设置了 Command，没有设置 RealDestination
+                // 解决：检查 RealDestination 是否有效，无效则标记为完成
+                bool hasInvalidDestination = (troop.RealDestination.X == -1 && troop.RealDestination.Y == -1) ||
+                                             troop.RealDestination == Point.Zero ||
+                                             troop.RealDestination == troop.Position;
+                
+                if (hasInvalidDestination)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] ⚠️ {troop.DisplayName} 移动指令但目标无效 (RealDest={troop.RealDestination})，标记为完成");
+                    #endif
+                    
+                    // 标记为已完成，避免无限循环
+                    troop.OperationDone = true;
+                    troop.MovabilityLeft = -1;
+                    troop.SetCommand(TroopCommand.None);
+                    troop.CurrentAIState = TroopAIState.Idle;
+                    troop.Action = TroopAction.Stop;
+                }
+                else
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 移动指令，保持玩家目标不变 (RealDest={troop.RealDestination})");
+                    #endif
+                }
                 return;
             }
             
@@ -748,10 +890,11 @@ namespace GameObjects
             // 🔥 数据验证：检查 TargetTroop 是否有效，避免时序问题（目标被消灭但指令未清空）
             if (troop.Command == TroopCommand.AttackTroop)
             {
+                Troop targetTroop = troop.TargetTroop;
                 // 修复日期：2026-03-08
                 // 问题：目标部队被消灭后，TargetTroop 被设为 null，但 Command 可能还未清空，导致 NullReferenceException
                 // 解决：在调用 GetOptimalAttackPosition 前检查目标有效性，无效则清空指令
-                if (troop.TargetTroop == null || troop.TargetTroop.Destroyed)
+                if (targetTroop == null || targetTroop.Destroyed)
                 {
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 攻击目标无效，清空指令");
@@ -762,7 +905,7 @@ namespace GameObjects
                 }
                 
                 // 🎯 远程战术：远程部队保持在最大射程，近战部队直接接近
-                troop.RealDestination = troop.GetOptimalAttackPosition(troop.TargetTroop);
+                troop.RealDestination = troop.GetOptimalAttackPosition(targetTroop);
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 攻击部队指令，目标位置: {troop.RealDestination}");
                 #endif
@@ -822,7 +965,14 @@ namespace GameObjects
             }
             
             #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} Command={troop.Command}，执行原有 AI 逻辑");
+            if (troop.Command == TroopCommand.None)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 无显式指令，执行 AI 目标判定");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} Command={troop.Command}，执行原有 AI 逻辑");
+            }
             #endif
             
             // 🔥 根本修复：Command=None 且 RealDestination 无效时，标记部队为"已完成"
@@ -843,7 +993,7 @@ namespace GameObjects
                 if (hasInvalidDestination)
                 {
                     #if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 无有效目标，标记为已完成");
+                    System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 无有效目标，本回合正常结束");
                     #endif
                     
                     // 标记为已完成，避免无限循环
@@ -993,6 +1143,3 @@ namespace GameObjects
         }
     }
 }
-
-
-

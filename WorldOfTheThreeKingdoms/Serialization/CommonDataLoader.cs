@@ -36,7 +36,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
         /// </summary>
         public static CommonData LoadFromFile(string filePath)
         {
-            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] 开始加载: {filePath}");
             
             if (!File.Exists(filePath))
             {
@@ -44,7 +43,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
             }
             
             string jsonContent = File.ReadAllText(filePath);
-            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] 文件大小: {jsonContent.Length} 字符");
             
             return LoadFromJson(jsonContent);
         }
@@ -54,7 +52,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
         /// </summary>
         public static CommonData LoadFromJson(string jsonContent)
         {
-            System.Diagnostics.Debug.WriteLine("[CommonDataLoader] 开始解析 JSON");
             
             using var document = JsonDocument.Parse(jsonContent);
             var root = document.RootElement;
@@ -68,7 +65,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
             {
                 try
                 {
-                    System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] 处理属性: {property.Name}");
                     
                     switch (property.Name)
                     {
@@ -85,7 +81,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                     JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<int, ArchitectureKind>>(
                                         archKindsElement.GetRawText(), options) ?? [];
                             }
-                            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] AllArchitectureKinds: {commonData.AllArchitectureKinds.ArchitectureKinds.Count} 项");
                             break;
                             
                         case "AllMilitaryKinds":
@@ -96,7 +91,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                     JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<int, MilitaryKind>>(
                                         milKindsElement.GetRawText(), options) ?? [];
                             }
-                            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] AllMilitaryKinds: {commonData.AllMilitaryKinds.MilitaryKinds.Count} 项");
                             break;
                             
                         case "AllConditionKinds":
@@ -107,7 +101,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                     JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<int, ConditionKind>>(
                                         condKindsElement.GetRawText(), options) ?? [];
                             }
-                            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] AllConditionKinds: {commonData.AllConditionKinds.ConditionKinds.Count} 项");
                             break;
                             
                         case "AllIdealTendencyKinds":
@@ -141,7 +134,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                     commonData.AllIdealTendencyKinds.Add(obj);
                                 }
                             }
-                            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] AllIdealTendencyKinds: {commonData.AllIdealTendencyKinds.Count} 项");
                             break;
                             
                         // 🔥 其他属性：使用标准反序列化（这些不包含字符串键字典）
@@ -258,18 +250,14 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             break;
                             
                         default:
-                            System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] ⚠️ 跳过未知属性: {property.Name}");
                             break;
                     }
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] ❌ 处理属性 {property.Name} 失败: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"[CommonDataLoader] 堆栈: {ex.StackTrace}");
                 }
             }
             
-            System.Diagnostics.Debug.WriteLine("[CommonDataLoader] ✅ CommonData 加载完成");
             return commonData;
         }
     }

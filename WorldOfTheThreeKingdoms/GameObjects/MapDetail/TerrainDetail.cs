@@ -8,6 +8,7 @@ using GameManager;
 namespace GameObjects.MapDetail
 {
     [DataContract]
+    [GenerateUIAccessor]  // 🔥 2026-03-23 修复：添加源生成器特性，支持 UI 访问 TerrainDetail 属性
     public class TerrainDetail : GameObject
     {
         private float fireDamageRate;

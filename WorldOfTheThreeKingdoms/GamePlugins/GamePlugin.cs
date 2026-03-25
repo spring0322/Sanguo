@@ -128,11 +128,10 @@ namespace WorldOfTheThreeKingdoms.GameLogic
             var swTotal = Stopwatch.StartNew();
             var sw = Stopwatch.StartNew();
             
-            // ?? �����Ż�������Ԥ�������в������
+            // ?? ŻԤв
             sw.Restart();
             CacheManager.PreloadTextures(PluginTexturePaths, isTemp: true);
             sw.Stop();
-            Debug.WriteLine($"[�������] ? ����Ԥ�������: {sw.ElapsedMilliseconds} ms");
             
             IBasePlugin plugin = new HelpPlugin.HelpPlugin();
             if ((plugin != null) && (plugin.Instance is IHelp))
@@ -142,7 +141,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.HelpPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.HelpPlugin.Instance as GameObject);
             }
-            LogPluginTime("HelpPlugin", sw);
             
             plugin = new PersonDetailPlugin.PersonDetailPlugin();
             if ((plugin != null) && (plugin.Instance is IPersonDetail))
@@ -152,7 +150,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.PersonDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.PersonDetailPlugin.Instance as GameObject);
             }
-            LogPluginTime("PersonDetailPlugin", sw);
             plugin = new TroopDetailPlugin.TroopDetailPlugin();
             if ((plugin != null) && (plugin.Instance is ITroopDetail))
             {
@@ -161,7 +158,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TroopDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.TroopDetailPlugin.Instance as GameObject);
             }
-            LogPluginTime("TroopDetailPlugin", sw);
             
             plugin = new ArchitectureDetail.ArchitectureDetailPlugin();
             if ((plugin != null) && (plugin.Instance is IArchitectureDetail))
@@ -171,7 +167,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.ArchitectureDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.ArchitectureDetailPlugin.Instance as GameObject);
             }
-            LogPluginTime("ArchitectureDetailPlugin", sw);
             
             plugin = new FactionTechniquesPlugin.FactionTechniquesPlugin();
             if ((plugin != null) && (plugin.Instance is IFactionTechniques))
@@ -181,7 +176,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.FactionTechniquesPlugin.SetGraphicsDevice();
                 screen.PluginList.Add(this.FactionTechniquesPlugin.Instance as GameObject);
             }
-            LogPluginTime("FactionTechniquesPlugin", sw);
             
             plugin = new TreasureDetailPlugin.TreasureDetailPlugin();;
             if ((plugin != null) && (plugin.Instance is ITreasureDetail))
@@ -191,7 +185,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TreasureDetailPlugin.SetScreen(screen);
                 screen.PluginList.Add(this.TreasureDetailPlugin.Instance as GameObject);
             }
-            LogPluginTime("TreasureDetailPlugin", sw);
             
             plugin = new CommentTextPlugin.CommentTextPlugin();  // Plugin.Plugins.AvailablePlugins.Find("CommentTextPlugin");
             if ((plugin != null) && (plugin.Instance is IConmentText))
@@ -249,7 +242,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TileInfluenceInfoPlugin.SetGraphicsDevice();
                 screen.PluginList.Add(this.TileInfluenceInfoPlugin.Instance as GameObject);
             }
-            LogPluginTime("TileInfluenceInfoPlugin", sw);
             
             plugin = new MapViewSelectorPlugin.MapViewSelectorPlugin();  // Plugin.Plugins.AvailablePlugins.Find("MapViewSelectorPlugin");
             if ((plugin != null) && (plugin.Instance is IMapViewSelector))
@@ -275,7 +267,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.TabListPlugin.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.TabListPlugin.Instance as GameObject);
             }
-            LogPluginTime("TabListPlugin", sw);
             
             plugin = new OptionDialogPlugin.OptionDialogPlugin();  // Plugin.Plugins.AvailablePlugins.Find("OptionDialogPlugin");
             if ((plugin != null) && (plugin.Instance is IOptionDialog))
@@ -470,7 +461,6 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.youcelanPlugin.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.youcelanPlugin.Instance as GameObject);
             }
-            LogPluginTime("youcelanPlugin", sw);
 
             plugin = new BianduiLiebiaoChajian.TabListPlugin();  // Plugin.Plugins.AvailablePlugins.Find("BianduiLiebiaoChajian");
             if ((plugin != null) && (plugin.Instance is IBianduiLiebiao))
@@ -487,18 +477,17 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 this.BianduiLiebiao.SetMapViewSelector(this.MapViewSelectorPlugin);
                 screen.PluginList.Add(this.BianduiLiebiao.Instance as GameObject);
             }
-            LogPluginTime("BianduiLiebiaoChajian", sw);
 
-            // ��ʼ����Ϸ�ڱ༭����� (������ǿ����)
+            // ʼϷڱ༭ (ǿ)
             plugin = new InGameEditorPlugin.InGameEditorPlugin();
             if ((plugin != null) && (plugin.Instance is IInGameEditor))
             {
                 this.InGameEditorPlugin = plugin.Instance as IInGameEditor;
-                this.InGameEditorPlugin.SetGraphicsDevice(); // �ȴ���EditorFrame
-                this.InGameEditorPlugin.SetScreen(screen);   // ������screen (����editorFrame������)
+                this.InGameEditorPlugin.SetGraphicsDevice(); // ȴEditorFrame
+                this.InGameEditorPlugin.SetScreen(screen);   // screen (editorFrame)
                 this.InGameEditorPlugin.SetNumberInputer(this.NumberInputerPlugin);
                 
-                // ȷ�������Ѽ��أ����༭��ʹ��
+                // ȷѼأ༭ʹ
                 if (Session.Current.Font == null)
                 {
                     Session.LoadFont(Setting.Current.Language);
@@ -506,23 +495,12 @@ namespace WorldOfTheThreeKingdoms.GameLogic
                 
                 screen.PluginList.Add(this.InGameEditorPlugin.Instance as GameObject);
             }
-            LogPluginTime("InGameEditorPlugin", sw);
             
             swTotal.Stop();
-            Debug.WriteLine($"[�������] ? ���в����ʼ����ɣ��ܺ�ʱ: {swTotal.ElapsedMilliseconds} ms");
         }
         
         private static void LogPluginTime(string pluginName, Stopwatch sw)
         {
-            long elapsed = sw.ElapsedMilliseconds;
-            if (elapsed > 100)
-            {
-                Debug.WriteLine($"[�������] ?? {pluginName}: {elapsed} ms");
-            }
-            else if (elapsed > 10)
-            {
-                Debug.WriteLine($"[�������] {pluginName}: {elapsed} ms");
-            }
             sw.Restart();
         }
 

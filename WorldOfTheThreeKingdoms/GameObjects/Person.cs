@@ -668,11 +668,19 @@ namespace GameObjects
         {
             get
             {
+                if (locationTroop == null && LocationTroopID >= 0)
+                {
+                    if (Session.Current != null && Session.Current.Scenario != null && Session.Current.Scenario.Troops != null)
+                    {
+                        locationTroop = Session.Current.Scenario.Troops.GetGameObject(LocationTroopID) as Troop;
+                    }
+                }
                 return locationTroop;
             }
             set
             {
                 locationTroop = value;
+                LocationTroopID = value != null ? value.ID : -1;
             }
         }
 
@@ -684,11 +692,19 @@ namespace GameObjects
         {
             get
             {
+                if (locationArchitecture == null && LocationArchitectureID >= 0)
+                {
+                    if (Session.Current != null && Session.Current.Scenario != null && Session.Current.Scenario.Architectures != null)
+                    {
+                        locationArchitecture = Session.Current.Scenario.Architectures.GetGameObject(LocationArchitectureID) as Architecture;
+                    }
+                }
                 return locationArchitecture;
             }
             set
             {
                 locationArchitecture = value;
+                LocationArchitectureID = value != null ? value.ID : -1;
             }
         }
 
@@ -1326,7 +1342,8 @@ namespace GameObjects
                 }
                 else if (this.Status == PersonStatus.Captive)
                 {
-                    return this.BelongedCaptive.CaptiveFaction;
+                    Captive captive = this.BelongedCaptive;
+                    return captive != null ? captive.CaptiveFaction : null;
                 }
                 return null;
             }
@@ -1931,13 +1948,18 @@ namespace GameObjects
             {
                 if (this.IsCaptive)
                 {
-                    if (this.BelongedCaptive.CaptiveFaction != null)
+                    Captive captive = this.BelongedCaptive;
+                    if (captive == null)
                     {
-                        return this.BelongedCaptive.CaptiveFaction.Capital;
+                        return null;
+                    }
+                    if (captive.CaptiveFaction != null)
+                    {
+                        return captive.CaptiveFaction.Capital;
                     }
                     else
                     {
-                        return this.BelongedCaptive.LocationArchitecture;
+                        return captive.LocationArchitecture;
                     }
                     
                 }
@@ -2233,14 +2255,7 @@ namespace GameObjects
         {
             get
             {
-                foreach (Troop t in Session.Current.Scenario.Troops.GameObjects)
-                {
-                    if (t.Persons.GameObjects.Contains(this))
-                    {
-                        return t;
-                    }
-                }
-                return null;
+                return this.LocationTroop;
             }
         }
 
@@ -5883,7 +5898,11 @@ namespace GameObjects
         {
             get
             {
-                return WillLoseLoyalty || (this.BelongedCaptive.LocationArchitecture.captiveLoyaltyFall.Count > 0);
+                if (WillLoseLoyalty) return true;
+                Captive captive = this.BelongedCaptive;
+                return captive != null
+                    && captive.LocationArchitecture != null
+                    && captive.LocationArchitecture.captiveLoyaltyFall.Count > 0;
             }
         }
 
@@ -9108,15 +9127,22 @@ namespace GameObjects
             {
                 if (this.IsCaptive)
                 {
-                    if (this.BelongedCaptive.LocationArchitecture != null)
+                    Captive captive = this.BelongedCaptive;
+                    if (captive != null)
                     {
-                        return this.BelongedCaptive.LocationArchitecture.Position;
+                        if (captive.LocationArchitecture != null)
+                        {
+                            return captive.LocationArchitecture.Position;
+                        }
+                        if (captive.LocationTroop != null)
+                        {
+                            return captive.LocationTroop.Position;
+                        }
+                        if (captive.BelongedFaction != null && captive.BelongedFaction.Capital != null)
+                        {
+                            return captive.BelongedFaction.Capital.Position;
+                        }
                     }
-                    if (this.BelongedCaptive.LocationTroop != null)
-                    {
-                        return this.BelongedCaptive.LocationTroop.Position;
-                    }
-                    return this.BelongedCaptive.BelongedFaction.Capital.Position;
                 }
                 if (this.LocationTroop != null)
                 {

@@ -13,29 +13,44 @@ public class CommandBuffer
     // 🔥 移动指令队列
     public ConcurrentQueue<MoveCommand> MoveQueue { get; } = new();
     
-    // 🔥 战斗指令队列
-    public ConcurrentQueue<AttackCommand> AttackQueue { get; } = new();
+    // 🔥 入城指令队列
+    public ConcurrentQueue<EnterCommand> EnterQueue { get; } = new();
+    
+    // 🔥 攻击部队指令队列
+    public ConcurrentQueue<AttackTroopCommand> AttackTroopQueue { get; } = new();
+    
+    // 🔥 攻击城池指令队列
+    public ConcurrentQueue<AttackArchCommand> AttackArchQueue { get; } = new();
     
     // 🔥 计略指令队列
     public ConcurrentQueue<StratagemCommand> StratagemQueue { get; } = new();
     
-    // 🔥 攻城指令队列
+    // 🔥 旧版战斗指令队列（保留用于兼容）
+    public ConcurrentQueue<AttackCommand> AttackQueue { get; } = new();
+    
+    // 🔥 旧版攻城指令队列（保留用于兼容）
     public ConcurrentQueue<SiegeCommand> SiegeQueue { get; } = new();
     
     // 🔥 清空所有队列（每回合结束后调用）
     public void Clear()
     {
         MoveQueue.Clear();
-        AttackQueue.Clear();
+        EnterQueue.Clear();
+        AttackTroopQueue.Clear();
+        AttackArchQueue.Clear();
         StratagemQueue.Clear();
+        AttackQueue.Clear();
         SiegeQueue.Clear();
     }
     
     // 🔥 获取指令总数（用于调试）
     public int TotalCommandCount => 
         MoveQueue.Count + 
-        AttackQueue.Count + 
+        EnterQueue.Count +
+        AttackTroopQueue.Count +
+        AttackArchQueue.Count +
         StratagemQueue.Count + 
+        AttackQueue.Count + 
         SiegeQueue.Count;
     
     // 🔥 调试：记录所有指令
@@ -49,14 +64,29 @@ public class CommandBuffer
             System.Diagnostics.Debug.WriteLine($"  [Move] {cmd.TroopId} -> {cmd.TargetPosition} (优先级:{cmd.Priority})");
         }
         
-        foreach (var cmd in AttackQueue)
+        foreach (var cmd in EnterQueue)
         {
-            System.Diagnostics.Debug.WriteLine($"  [Attack] {cmd.AttackerId} -> {cmd.TargetId} (伤害:{cmd.Damage})");
+            System.Diagnostics.Debug.WriteLine($"  [Enter] {cmd.TroopId} -> 城池{cmd.ArchitectureId} @ {cmd.TargetPosition}");
+        }
+        
+        foreach (var cmd in AttackTroopQueue)
+        {
+            System.Diagnostics.Debug.WriteLine($"  [AttackTroop] {cmd.AttackerId} -> {cmd.TargetTroopId} @ {cmd.OptimalPosition}");
+        }
+        
+        foreach (var cmd in AttackArchQueue)
+        {
+            System.Diagnostics.Debug.WriteLine($"  [AttackArch] {cmd.AttackerId} -> 城池{cmd.ArchitectureId} @ {cmd.SiegePosition}");
         }
         
         foreach (var cmd in StratagemQueue)
         {
             System.Diagnostics.Debug.WriteLine($"  [Stratagem] {cmd.CasterId} -> {cmd.TargetId} (计略ID:{cmd.StratagemId})");
+        }
+        
+        foreach (var cmd in AttackQueue)
+        {
+            System.Diagnostics.Debug.WriteLine($"  [Attack] {cmd.AttackerId} -> {cmd.TargetId} (伤害:{cmd.Damage})");
         }
         
         foreach (var cmd in SiegeQueue)

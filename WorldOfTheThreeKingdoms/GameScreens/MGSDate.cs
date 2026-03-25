@@ -35,32 +35,63 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private bool AfterDayStarting(GameTime gameTime)
         {
-            bool result = this.MoveTheTroops(gameTime);
+            // 🔥 2026-03-23 灰度开关：CommandBufferScheduler vs 旧系统
+            // 策略：同一帧只允许一个调度器落盘，避免双写
+            bool useCommandBufferScheduler =
+                Session.GlobalVariables.EnableCommandBufferScheduler &&
+                Session.Current?.CommandBufferScheduler != null &&
+                Session.Current.CommandBufferScheduler.HasValidBuffer;
             
-            // 🔥 2026-03-16 阶段 3.1：并行运行 WegoEngine（测试模式）
-            // 仅在开关打开时运行，不修改游戏状态，只记录对比日志
-            if (Session.GlobalVariables.EnableWegoEngine && Session.Current?.WegoEngine != null)
+            if (useCommandBufferScheduler)
             {
-                try
+                // 使用新调度器
+                return this.MoveTheTroopsWithCommandBuffer(gameTime);
+            }
+            else
+            {
+                // 使用旧系统
+                bool result = this.MoveTheTroops(gameTime);
+                
+                // 🔥 2026-03-16 阶段 3.1：并行运行 WegoEngine（测试模式）
+                // 仅在开关打开时运行，不修改游戏状态，只记录对比日志
+                if (Session.GlobalVariables.EnableWegoEngine && Session.Current?.WegoEngine != null)
                 {
-                    #if DEBUG
-                    System.Diagnostics.Debug.WriteLine("[AfterDayStarting] 🔥 开始 WegoEngine.Update()（测试模式）");
-                    #endif
-                    
-                    Session.Current.WegoEngine.Update();
-                    
-                    #if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] ✅ WegoEngine 完成: 移动={Session.Current.WegoEngine.ProcessedMoveCommands}, 战斗={Session.Current.WegoEngine.ProcessedAttackCommands}, 计略={Session.Current.WegoEngine.ProcessedStratagemCommands}, 攻城={Session.Current.WegoEngine.ProcessedSiegeCommands}");
-                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] 📊 对比: 现有逻辑返回={result} (false=全部移完, true=还在移动)");
-                    #endif
+                    try
+                    {
+                        Session.Current.WegoEngine.Update();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] ❌ WegoEngine 异常: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+                
+                return result;
+            }
+        }
+        
+        // 🔥 2026-03-23 新增：使用 CommandBufferScheduler 的移动逻辑
+        private bool MoveTheTroopsWithCommandBuffer(GameTime gameTime)
+        {
+            if (!Session.Current.Scenario.Threading)
+            {
+                bool isPlayerControlling = Session.Current.Scenario.CurrentPlayer != null && 
+                                           Session.Current.Scenario.CurrentPlayer.Controlling;
+                
+                if (!isPlayerControlling)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AfterDayStarting] ❌ WegoEngine 异常: {ex.Message}\n{ex.StackTrace}");
+                    // 🔥 关键：调用新调度器的逐帧更新
+                    bool stillRunning = Session.Current.CommandBufferScheduler.UpdateFrame(gameTime, Session.Current.Scenario);
+                    
+                    if (!stillRunning)
+                    {
+                        // 执行完毕
+                        return false;
+                    }
                 }
             }
             
-            return result;
+            return true;
         }
 
 

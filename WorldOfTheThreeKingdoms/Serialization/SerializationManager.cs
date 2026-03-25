@@ -243,16 +243,13 @@ namespace WorldOfTheThreeKingdoms.Serialization
             try
             {
                 // Log start of load operation
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Starting load from: {filePath}");
                 
                 var swTotal = Stopwatch.StartNew();
                 // 阶段 1: I/O 与 反序列化
                 var swStep = Stopwatch.StartNew();
                 
                 // Phase 1: Detect file format
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 1: Detecting file format...");
                 FileFormat format = DetectFileFormat(filePath);
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Detected format: {format}");
                 
                 GameScenarioDTO dto;
                 
@@ -324,7 +321,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 // 🔥 Phase 4.5: 手动加载 Faction 的 BaseMilitaryKinds 和 AvailableTechniques
                 // 原因：OnDeserialized 在 CommonData 加载前触发，LoadFromString() 被跳过
                 // 日期：2026-03-20
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 4.5: Loading Faction MilitaryKinds and Techniques...");
                 
                 // 🔥 Fail Fast：EnsureCommonDataLoaded 之后，CommonData 必须已加载
                 if (scenario.GameCommonData?.AllMilitaryKinds == null)
@@ -348,7 +344,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 
                 // 🧊 Cold Path：使用 for 循环避免迭代器分配
                 var factionList = scenario.Factions.GetList();
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Phase 4.5: 找到 {factionList.Count} 个势力");
                 
                 for (int i = 0; i < factionList.Count; i++)
                 {
@@ -361,18 +356,13 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             $"数据损坏：Factions 集合中索引 {i} 的元素为 null");
                     }
                     
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager] Phase 4.5: 处理势力 {faction.Name}(ID:{faction.ID})");
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager]   BaseMilitaryKindsString = '{faction.BaseMilitaryKindsString}'");
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager]   AvailableTechniquesString = '{faction.AvailableTechniquesString}'");
                     
                     // 加载 BaseMilitaryKinds
                     if (!string.IsNullOrEmpty(faction.BaseMilitaryKindsString))
                     {
                         #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   开始加载 BaseMilitaryKinds: '{faction.BaseMilitaryKindsString}'");
                         
                         // 🔥 诊断：检查 AllMilitaryKinds 是否包含所需的兵种
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   AllMilitaryKinds.MilitaryKinds.Count = {scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Count}");
                         
                         // 解析 BaseMilitaryKindsString 中的 ID
                         // 🔥 C# 12：使用集合表达式
@@ -382,7 +372,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             if (int.TryParse(idStr, out int mkId))
                             {
                                 bool exists = scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.ContainsKey(mkId);
-                                System.Diagnostics.Debug.WriteLine($"[SerializationManager]     兵种 ID={mkId}: {(exists ? "存在" : "❌ 不存在")}");
                             }
                         }
                         #endif
@@ -397,25 +386,19 @@ namespace WorldOfTheThreeKingdoms.Serialization
                         
                         if (errors.Count > 0)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SerializationManager]   ⚠️ 加载错误: {string.Join(", ", errors)}");
                         }
                         
                         // 🔥 诊断：列出实际加载的兵种
                         if (faction.BaseMilitaryKinds.MilitaryKinds.Count > 0)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SerializationManager]   实际加载的兵种:");
                             foreach (var mk in faction.BaseMilitaryKinds.MilitaryKinds.Values)
                             {
-                                System.Diagnostics.Debug.WriteLine($"[SerializationManager]     - ID={mk.ID}, Name={mk.Name}");
                             }
                         }
                         #endif
                     }
                     else
                     {
-                        #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   ⚠️ BaseMilitaryKindsString 为空，跳过加载");
-                        #endif
                     }
                     
                     // 加载 AvailableTechniques
@@ -539,20 +522,16 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 swTotal.Stop();
                 System.Diagnostics.Debug.WriteLine($"[性能分析] === 总耗时: {swTotal.ElapsedMilliseconds} ms ===");
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Load completed successfully: {filePath}");
                 return scenario;
             }
             catch (JsonException ex)
             {
                 // JSON deserialization error
                 string errorMessage = $"Failed to deserialize game data from JSON. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 
                 // Try to recover from backup
                 if (TryRecoverFromBackup(filePath, out GameScenarioDTO recoveredDto))
                 {
-                    System.Diagnostics.Debug.WriteLine("[SerializationManager] Successfully recovered from backup, continuing with load...");
                     
                     // Continue with the recovered DTO
                     GameScenario recoveredScenario = _loadPhase.LoadFromDTO(recoveredDto, isNewScenario: false);  // 错误恢复路径，总是存档
@@ -561,7 +540,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     
                     if (recoveredReport.HasErrors || recoveredReport.HasWarnings || recoveredReport.HasFixes)
                     {
-                        System.Diagnostics.Debug.WriteLine("[SerializationManager] Validation Report (Recovered):");
                         System.Diagnostics.Debug.WriteLine(recoveredReport.GetSummary());
                     }
                     
@@ -574,13 +552,10 @@ namespace WorldOfTheThreeKingdoms.Serialization
             {
                 // GZip decompression error (corrupted file)
                 string errorMessage = $"Failed to decompress save file. File may be corrupted: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 
                 // Try to read as uncompressed JSON (fallback)
                 if (TryReadUncompressed(filePath, out string json))
                 {
-                    System.Diagnostics.Debug.WriteLine("[SerializationManager] Successfully read as uncompressed JSON, continuing with load...");
                     
                     try
                     {
@@ -597,7 +572,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             
                             if (uncompressedReport.HasErrors || uncompressedReport.HasWarnings || uncompressedReport.HasFixes)
                             {
-                                System.Diagnostics.Debug.WriteLine("[SerializationManager] Validation Report (Uncompressed):");
                                 System.Diagnostics.Debug.WriteLine(uncompressedReport.GetSummary());
                             }
                             
@@ -606,7 +580,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     }
                     catch (Exception uncompressedEx)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager] Failed to load uncompressed JSON: {uncompressedEx.Message}");
                         // Fall through to throw CorruptedFileException
                     }
                 }
@@ -617,16 +590,12 @@ namespace WorldOfTheThreeKingdoms.Serialization
             {
                 // File I/O error
                 string errorMessage = $"Failed to read save file. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 throw new DeserializationException(errorMessage, ex);
             }
             catch (Exception ex) when (ex is not DeserializationException && ex is not CorruptedFileException)
             {
                 // Unexpected error
                 string errorMessage = $"Unexpected error during load operation. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 throw new DeserializationException(errorMessage, ex);
             }
         }
@@ -655,14 +624,10 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════╗");
                 System.Diagnostics.Debug.WriteLine("║  [SerializationManager.LoadScenario] 🔥 开始加载剧本        ║");
                 System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Loading scenario from: {filePath}");
                 
                 // Phase 1: Read and deserialize JSON (uncompressed)
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 1: Reading JSON file...");
                 string json = File.ReadAllText(filePath);
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] JSON length: {json.Length} characters");
                 
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 2: Deserializing JSON to DTO...");
                 JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
                 GameScenarioDTO dto = JsonSerializer.Deserialize<GameScenarioDTO>(json, options);
                 
@@ -671,21 +636,15 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     throw new DeserializationException($"反序列化返回null，文件可能损坏: {filePath}");
                 }
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] DTO deserialized successfully");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] - Architectures count: {dto.Architectures?.Count ?? 0}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] - Facilities count: {dto.Facilities?.Count ?? 0}");
                 
                 // 🔥 2026-03-17 判断是否是新开剧本
                 // 规则：文件路径包含 "Scenario" 或 "Content/Data/Scenario" 表示新开剧本
                 //       文件路径包含 "Save" 表示读取存档
                 bool isNewScenario = filePath.Contains("Scenario", StringComparison.OrdinalIgnoreCase) && 
                                     !filePath.Contains("Save", StringComparison.OrdinalIgnoreCase);
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] 🔥 isNewScenario={isNewScenario} (路径: {filePath})");
                 
                 // Phase 2: Load data phase - create game objects from DTOs
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 3: Loading data from DTO...");
                 GameScenario scenario = _loadPhase.LoadFromDTO(dto, isNewScenario);
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Data loaded successfully");
                 
                 // 🔥 2026-03-18 关键修复：临时设置 Session.Current.Scenario
                 // 原因：InitializeHoneymoonForNewScenario() 会访问 Person.Loyalty
@@ -693,20 +652,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 // 时机：必须在 EnsureCommonDataLoaded() 之后、InitializeHoneymoonForNewScenario() 之前
                 // 注意：Session.StartScenario() 会再次赋值，这里只是临时设置以便加载流程能够访问
                 Session.Current.Scenario = scenario;
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ✅ 临时设置 Session.Current.Scenario（用于 Loyalty 计算）");
                 
                 // 🔥 关键修复：在 LinkReferences 之前先加载 CommonData
                 // 日期：2026-03-18
                 // 原因：Faction.OnDeserialized 在 LoadFromDTO 中触发，此时 CommonData 未加载
                 //       需要在 CommonData 加载后，手动调用 LoadFromString() 来加载 BaseMilitaryKinds
                 // Phase 3.5: Load CommonData
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 4: Loading CommonData...");
                 EnsureCommonDataLoaded(scenario);
                 
                 // 🔥 Phase 4.5: 手动加载 Faction 的 BaseMilitaryKinds 和 AvailableTechniques
                 // 原因：OnDeserialized 在 CommonData 加载前触发，LoadFromString() 被跳过
                 // 日期：2026-03-18
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 4.5: Loading Faction MilitaryKinds and Techniques...");
                 
                 // 🔥 Fail Fast：EnsureCommonDataLoaded 之后，CommonData 必须已加载
                 if (scenario.GameCommonData?.AllMilitaryKinds == null)
@@ -730,7 +686,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 
                 // 🧊 Cold Path：使用 for 循环避免迭代器分配
                 var factionList = scenario.Factions.GetList();
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Phase 4.5: 找到 {factionList.Count} 个势力");
                 
                 for (int i = 0; i < factionList.Count; i++)
                 {
@@ -743,18 +698,13 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             $"数据损坏：Factions 集合中索引 {i} 的元素为 null");
                     }
                     
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager] Phase 4.5: 处理势力 {faction.Name}(ID:{faction.ID})");
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager]   BaseMilitaryKindsString = '{faction.BaseMilitaryKindsString}'");
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager]   AvailableTechniquesString = '{faction.AvailableTechniquesString}'");
                     
                     // 加载 BaseMilitaryKinds
                     if (!string.IsNullOrEmpty(faction.BaseMilitaryKindsString))
                     {
                         #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   开始加载 BaseMilitaryKinds: '{faction.BaseMilitaryKindsString}'");
                         
                         // 🔥 诊断：检查 AllMilitaryKinds 是否包含所需的兵种
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   AllMilitaryKinds.MilitaryKinds.Count = {scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Count}");
                         
                         // 解析 BaseMilitaryKindsString 中的 ID
                         // 🔥 C# 12：使用集合表达式
@@ -764,7 +714,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             if (int.TryParse(idStr, out int mkId))
                             {
                                 bool exists = scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.ContainsKey(mkId);
-                                System.Diagnostics.Debug.WriteLine($"[SerializationManager]     兵种 ID={mkId}: {(exists ? "存在" : "❌ 不存在")}");
                             }
                         }
                         #endif
@@ -779,25 +728,19 @@ namespace WorldOfTheThreeKingdoms.Serialization
                         
                         if (errors.Count > 0)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SerializationManager]   ⚠️ 加载错误: {string.Join(", ", errors)}");
                         }
                         
                         // 🔥 诊断：列出实际加载的兵种
                         if (faction.BaseMilitaryKinds.MilitaryKinds.Count > 0)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SerializationManager]   实际加载的兵种:");
                             foreach (var mk in faction.BaseMilitaryKinds.MilitaryKinds.Values)
                             {
-                                System.Diagnostics.Debug.WriteLine($"[SerializationManager]     - ID={mk.ID}, Name={mk.Name}");
                             }
                         }
                         #endif
                     }
                     else
                     {
-                        #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager]   ⚠️ BaseMilitaryKindsString 为空，跳过加载");
-                        #endif
                     }
                     
                     // 加载 AvailableTechniques
@@ -816,7 +759,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 // 原因：Biography.MilitaryKinds 需要从 MilitaryKindsString 加载
                 // 日期：2026-03-18
                 // 修复：移除防御性空检查，改为 Fail Fast
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 4.6: Loading Biography MilitaryKinds...");
                 
                 // 🔥 Fail Fast：如果 AllBiographies 为 null，说明数据加载流程有严重错误
                 if (scenario.AllBiographies == null)
@@ -861,10 +803,8 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 }
                 
                 // Phase 4: Link references phase
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 5: Building lookup tables...");
                 var lookupTables = _linkPhase.BuildLookupTables(scenario);
                 
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 6: Linking references...");
                 _linkPhase.LinkReferences(scenario, lookupTables);
                 
                 // 🎯 新开剧本时：为所有势力武将初始化登庸蜜月期
@@ -918,7 +858,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 }
                 
                 // Phase 5: Validation phase
-                System.Diagnostics.Debug.WriteLine("[SerializationManager] Phase 7: Validating data...");
                 ValidationReport report = _validationPhase.Validate(scenario);
                 
                 if (report.HasErrors || report.HasWarnings || report.HasFixes)
@@ -926,7 +865,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     DebugLogger.Warning(DebugLogger.LogCategory.Validation, $"剧本数据验证发现问题:\n{report.GetSummary()}");
                 }
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Scenario loaded successfully: {filePath}");
                 System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════╗");
                 System.Diagnostics.Debug.WriteLine("║  [SerializationManager.LoadScenario] ✅ 加载完成            ║");
                 System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
@@ -935,22 +873,16 @@ namespace WorldOfTheThreeKingdoms.Serialization
             catch (JsonException ex)
             {
                 string errorMessage = $"Failed to deserialize scenario from JSON. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 throw new DeserializationException(errorMessage, ex);
             }
             catch (IOException ex)
             {
                 string errorMessage = $"Failed to read scenario file. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 throw new DeserializationException(errorMessage, ex);
             }
             catch (Exception ex) when (ex is not DeserializationException)
             {
                 string errorMessage = $"Unexpected error during scenario load. File: {filePath}";
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] ERROR: {errorMessage}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 throw new DeserializationException(errorMessage, ex);
             }
         }
@@ -1012,19 +944,15 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 // Ensure the metadata is small (< 1KB as per requirement)
                 if (metadataJson.Length > 1024)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager] WARNING: Metadata file is larger than 1KB ({metadataJson.Length} bytes)");
                 }
                 
                 // Write to file
                 File.WriteAllText(metaFilePath, metadataJson, System.Text.Encoding.UTF8);
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Metadata written successfully: {metaFilePath} ({metadataJson.Length} bytes)");
             }
             catch (Exception ex)
             {
                 // Log error but don't fail the save operation
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] WARNING: Failed to write metadata file: {metaFilePath}");
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Exception: {ex.Message}");
                 // Don't throw - metadata is optional
             }
         }
@@ -1056,7 +984,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
             
             // Default to JSON + GZip for unknown extensions
             // This allows for flexibility in file naming
-            System.Diagnostics.Debug.WriteLine($"[SerializationManager] WARNING: Unknown file extension '{extension}', assuming JSON + GZip format");
             return FileFormat.JsonGzip;
         }
         
@@ -1086,8 +1013,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 {
                     if (File.Exists(backupPath))
                     {
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager] Found backup file: {backupPath}");
-                        System.Diagnostics.Debug.WriteLine($"[SerializationManager] Attempting to recover from backup...");
                         
                         try
                         {
@@ -1100,25 +1025,21 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                 
                                 if (dto != null)
                                 {
-                                    System.Diagnostics.Debug.WriteLine($"[SerializationManager] Successfully recovered from backup: {backupPath}");
                                     return true;
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            System.Diagnostics.Debug.WriteLine($"[SerializationManager] Failed to recover from backup {backupPath}: {ex.Message}");
                             // Continue to next backup pattern
                         }
                     }
                 }
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] No valid backup files found for: {filePath}");
                 return false;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Error during backup recovery: {ex.Message}");
                 return false;
             }
         }
@@ -1136,7 +1057,6 @@ namespace WorldOfTheThreeKingdoms.Serialization
             
             try
             {
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Attempting to read as uncompressed JSON: {filePath}");
                 
                 // Try to read the file as plain text
                 json = File.ReadAllText(filePath, System.Text.Encoding.UTF8);
@@ -1147,23 +1067,19 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 
                 if (testDto != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[SerializationManager] Successfully read as uncompressed JSON: {filePath}");
                     return true;
                 }
                 
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] File is not valid JSON: {filePath}");
                 json = null;
                 return false;
             }
             catch (JsonException ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] File is not valid JSON: {ex.Message}");
                 json = null;
                 return false;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[SerializationManager] Failed to read as uncompressed JSON: {ex.Message}");
                 json = null;
                 return false;
             }
@@ -1191,7 +1107,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
                                    scenario.GameCommonData.AllMilitaryKinds?.MilitaryKinds == null ||
                                    scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Count == 0 ||
                                    scenario.GameCommonData.AllTechniques?.Techniques == null ||
-                                   scenario.GameCommonData.AllTechniques.Techniques.Count == 0;
+                                   scenario.GameCommonData.AllTechniques.Techniques.Count == 0 ||
+                                   scenario.GameCommonData.AllConditions?.Conditions == null ||
+                                   scenario.GameCommonData.AllConditions.Conditions.Count == 0 ||
+                                   scenario.GameCommonData.AllTroopEventEffectKinds?.EventEffectKinds == null ||
+                                   scenario.GameCommonData.AllTroopEventEffectKinds.EventEffectKinds.Count == 0 ||
+                                   scenario.GameCommonData.AllTroopEventEffects?.EventEffects == null ||
+                                   scenario.GameCommonData.AllTroopEventEffects.EventEffects.Count == 0 ||
+                                   scenario.GameCommonData.AllEventEffectKinds?.EventEffectKinds == null ||
+                                   scenario.GameCommonData.AllEventEffectKinds.EventEffectKinds.Count == 0 ||
+                                   scenario.GameCommonData.AllEventEffects?.EventEffects == null ||
+                                   scenario.GameCommonData.AllEventEffects.EventEffects.Count == 0;
             
             if (needsCommonData)
             {

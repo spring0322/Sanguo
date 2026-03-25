@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<AdvisorDialogueConfig>
+  <!-- 
+    Placeholders:
+    {LeaderAddress}: How the advisor addresses the leader (e.g. 主公, 父亲).
+    {SelfAddress}: How the advisor addresses themselves (e.g. 臣, 儿).
+    {Advisor}: Advisor's Name.
+    {Talent}: Talents's Name.
+    {Location}: Location Name.
+    {InitialLoyalty}: Initial Loyalty Value.
+    {Person}: Related Person Name.
+    {Fund}: Total Fund.
+    {Food}: Total Food.
+  -->
+
+  <!-- === 人才推荐对话 === -->
+  <Dialogue Result="Success_DirectJoin">
+    <Text>{LeaderAddress}！{SelfAddress}在巡查时偶遇贤才【{Talent}】，经过一番劝说，与其意气相投，他已答应出仕，现正在殿外候命！（初始忠诚度：{InitialLoyalty}）</Text>
+  </Dialogue>
+
+  <Dialogue Result="Success_FoundOnly">
+    <Text>{LeaderAddress}，{SelfAddress}在{Location}发现了一位名叫【{Talent}】的在野贤才。{SelfAddress}虽极力邀请，但其似乎意在待价而沽，还请{LeaderAddress}亲自出马（或派人）前往登庸。（预计忠诚度：{InitialLoyalty}）</Text>
+  </Dialogue>
+
+  <Dialogue Result="Fail_NoTalent">
+    <Text>{LeaderAddress}，{SelfAddress}已搜遍已知区域，暂未发现合适的贤才。{SelfAddress}会继续留意，请{LeaderAddress}耐心等待。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Fail_LowAbility">
+    <Text>{LeaderAddress}，{SelfAddress}才疏学浅，未能发现合适的人才。或许需要提升{SelfAddress}的见识，方能为{LeaderAddress}觅得良才。</Text>
+  </Dialogue>
+
+  <Dialogue Result="None">
+    <Text>{LeaderAddress}，{SelfAddress}今年已经进行过举荐，请待来年再行此事。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Unknown">
+    <Text>{LeaderAddress}，恕{SelfAddress}的搜寻遇到了意外情况，无法完成招募。</Text>
+  </Dialogue>
+
+  <!-- === 日常建议对话 === -->
+  <Dialogue Result="Advice_FundHigh">
+    <Text>{LeaderAddress}，当前府库充盈({Fund} 金)，正是厉兵秣马、招贤纳士之时。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Advice_FoodHigh">
+    <Text>{LeaderAddress}，粮草充足({Food} 石)，可考虑扩充军备或开拓疆土。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Advice_LowTroops">
+    <Text>{LeaderAddress}，当前军队相对城池较少，建议适当扩充军备以备不时之需。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Advice_LowPersons">
+    <Text>{LeaderAddress}，当前人才稀缺，建议多方招揽贤士以助大业。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Advice_Stable">
+    <Text>{LeaderAddress}，当前形势尚好，可继续按既定方针发展。</Text>
+  </Dialogue>
+
+  <Dialogue Result="Advice_Loading">
+    <Text>{LeaderAddress}，{SelfAddress}正在观察天下大势，稍后再为您详细分析。</Text>
+  </Dialogue>
+
+  <!-- === 紧急警报对话 === -->
+  <Dialogue Result="Emergency_Rebellion">
+    <Text>{LeaderAddress}！{SelfAddress}夜观天象，发现 {Person} 面露反骨，恐近日即将叛变！</Text>
+  </Dialogue>
+
+  <Dialogue Result="Emergency_CityUnderAttack">
+    <Text>{LeaderAddress}！{Location} 危在旦夕，敌军兵临城下，请{LeaderAddress}立即前往指挥！</Text>
+  </Dialogue>
+
+  <!-- === 无军师提示 === -->
+  <Dialogue Result="NoAdvisor">
+    <Text>{LeaderAddress}，当前无军师在侧，无法提供策略建议。</Text>
+  </Dialogue>
+
+  <!-- === 招募确认对话 === -->
+  <Dialogue Result="Discovery_Initial">
+    <Text>{LeaderAddress}，{SelfAddress}在巡查时发现有贤才在野，是否前去查看？</Text>
+  </Dialogue>
+
+  <Dialogue Result="Discovery_Confirm">
+    <Text>{LeaderAddress}，{SelfAddress}发现了贤才【{Talent}】，此人颇有才能，是否招募？</Text>
+  </Dialogue>
+
+  <Dialogue Result="Recruitment_Success">
+    <Text>{LeaderAddress}，{SelfAddress}已成功招募到【{Talent}】，现已安排其前往首都效力！</Text>
+  </Dialogue>
+
+  <Dialogue Result="Recruitment_Failed">
+    <Text>{LeaderAddress}，恕{SelfAddress}无能，【{Talent}】拒绝了我们的邀请，招募失败。</Text>
+  </Dialogue>
+
+</AdvisorDialogueConfig>

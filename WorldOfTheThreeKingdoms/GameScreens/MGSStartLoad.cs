@@ -42,11 +42,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             // 🔥 诊断：记录 Session.Current.Scenario 的状态
-            System.Diagnostics.Debug.WriteLine($"[MainGameScreen.Initialize] LoadScenarioInInitialization: {base.LoadScenarioInInitialization}");
-            System.Diagnostics.Debug.WriteLine($"[MainGameScreen.Initialize] Session.Current.Scenario == null: {Session.Current.Scenario == null}");
             if (Session.Current.Scenario != null)
             {
-                System.Diagnostics.Debug.WriteLine($"[MainGameScreen.Initialize] Session.Current.Scenario.ScenarioTitle: {Session.Current.Scenario.ScenarioTitle}");
             }
 
             if (base.LoadScenarioInInitialization)
@@ -55,7 +52,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // Session.StartScenario 已经加载了剧本，不需要再次加载
                 if (Session.Current.Scenario == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("[MainGameScreen.Initialize] Session.Current.Scenario 为 null，开始加载剧本");
                     
                     //原ACCESS加載方式，用於將MDB轉為json
                     //this.LoadScenarioOld(base.InitializationFileName, base.InitializationFactionIDs);
@@ -64,7 +60,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     var swLoadScenario = System.Diagnostics.Stopwatch.StartNew();
                     this.LoadScenario(base.InitializationFileName, base.InitializationFactionIDs, true, this);
                     swLoadScenario.Stop();
-                    System.Diagnostics.Debug.WriteLine($"[性能诊断] LoadScenario (新游戏) 耗时: {swLoadScenario.ElapsedMilliseconds} ms");
 
                     if (Session.Current.Scenario == null)
                     {
@@ -74,7 +69,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine("[MainGameScreen.Initialize] Session.Current.Scenario 已存在，跳过重复加载");
                 }
 
                 if (Setting.Current != null)
@@ -221,7 +215,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     // 🔥 修复：同步设置 CurrentPlayerID
                     // 注意：不需要空检查，如果 CurrentPlayer 为 null 说明数据源有问题，应该让它崩溃
                     Session.Current.Scenario.CurrentPlayerID = Session.Current.Scenario.CurrentPlayer.ID.ToString();
-                    System.Diagnostics.Debug.WriteLine($"[MGSStartLoad] 新游戏：设置 CurrentPlayer={Session.Current.Scenario.CurrentPlayer.Name}, CurrentPlayerID={Session.Current.Scenario.CurrentPlayerID}");
                 }                
             }
             else  //从开始菜单读取游戏
@@ -232,7 +225,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var swLoadScenario = System.Diagnostics.Stopwatch.StartNew();
                 this.LoadScenario(base.InitializationFileName, null, false, this);
                 swLoadScenario.Stop();
-                System.Diagnostics.Debug.WriteLine($"[性能诊断] LoadScenario (读档) 耗时: {swLoadScenario.ElapsedMilliseconds} ms");
 
                 //this.Plugins.DateRunnerPlugin.Reset();
                 //this.Plugins.GameRecordPlugin.Clear();
@@ -274,7 +266,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             var swTotal = System.Diagnostics.Stopwatch.StartNew();
             var swStep = System.Diagnostics.Stopwatch.StartNew();
             
-            System.Diagnostics.Debug.WriteLine("[性能诊断] ========== 界面初始化开始 ==========");
 
             // ----------------------------------------------------
             // 步骤 1: UI插件初始化
@@ -285,7 +276,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 this.Plugins.InitializePlugins(this);
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤1 - UI插件初始化: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 2: 建筑标题和旗帜初始化
@@ -293,7 +283,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             this.chushihuajianzhubiaotiheqizi();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤2 - 建筑标题/旗帜: {swStep.ElapsedMilliseconds} ms");
             
             // ----------------------------------------------------
             // 步骤 3: 音频系统预热
@@ -304,7 +293,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                var sound = Session.Current.SoundContent.RootDirectory;
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤3 - 音频系统: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 4: 事件初始化
@@ -312,7 +300,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             InitEvents();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤4 - 事件初始化: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 5: 剧本配置加载
@@ -341,7 +328,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 Session.Current.Scenario.AfterLoadSaveFile(this);
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤5 - 剧本配置加载: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 6: 地图图层初始化
@@ -349,7 +335,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             this.mainMapLayer.Initialize();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤6 - 地图图层: {swStep.ElapsedMilliseconds} ms");
             
             // ----------------------------------------------------
             // 步骤 7: 其他图层初始化
@@ -367,7 +352,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var _ = this.Textures.qizitupian; 
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤7 - 其他图层: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 8: 部队图层初始化
@@ -375,7 +359,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             this.troopLayer.Initialize();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤8 - 部队图层: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 9: 跳转到玩家势力
@@ -383,7 +366,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             JumpToFaction();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤9 - 跳转势力: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 10: 显示右侧栏
@@ -428,7 +410,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 System.Diagnostics.Debug.WriteLine($"[Initialize] ⚠️ Session.Current.Scenario.CurrentPlayer 为 null");
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤10 - 显示右侧栏: {swStep.ElapsedMilliseconds} ms");
             
             // ----------------------------------------------------
             // 步骤 11: 日期和季节设置
@@ -439,7 +420,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 Session.Current.Scenario.Date.SetSeason();
             }
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤11 - 日期设置: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 12: 四叉树和对话系统初始化
@@ -457,7 +437,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             System.Diagnostics.Debug.WriteLine("[Initialize] 暴击图管理器初始化完成");
             
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤12 - 四叉树/对话系统/暴击图: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 13: 字体加载
@@ -468,7 +447,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             var f3 = Session.Current.FontL;
             var f4 = Session.Current.FontE;
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤13 - 字体加载: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 14: 垃圾回收
@@ -477,7 +455,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             GC.Collect(); 
             GC.WaitForPendingFinalizers(); 
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤14 - 垃圾回收: {swStep.ElapsedMilliseconds} ms");
 
             // ----------------------------------------------------
             // 步骤 15: 更新视口和UI布局
@@ -485,11 +462,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             swStep.Restart();
             this.UpdateViewport();
             swStep.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 步骤15 - 更新视口和UI布局: {swStep.ElapsedMilliseconds} ms");
 
             swTotal.Stop();
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] ========== 界面初始化完成 ==========");
-            System.Diagnostics.Debug.WriteLine($"[性能诊断] 总耗时: {swTotal.ElapsedMilliseconds} ms");
         }
 
         private void InitializeQuadtree()
@@ -801,9 +775,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             this.chushihuajianzhubiaotiheqizi();
             
-            System.Diagnostics.Debug.WriteLine("[MGSStartLoad] ========== 读档完成，准备调用 gengxinyoucelan ==========");
             this.gengxinyoucelan();
-            System.Diagnostics.Debug.WriteLine("[MGSStartLoad] ========== gengxinyoucelan 调用完成 ==========");
         }
 
         private void LoadGameFromPosition(string id)
@@ -864,7 +836,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 try
                 {
                     System.Diagnostics.Debug.WriteLine("╔════════════════════════════════════════════════════════════╗");
-                    System.Diagnostics.Debug.WriteLine("║  [MGSStartLoad] 🔥 使用新的 SerializationManager.LoadScenario  ║");
                     System.Diagnostics.Debug.WriteLine("╚════════════════════════════════════════════════════════════╝");
                     System.Diagnostics.Debug.WriteLine($"[LoadScenarioData] 使用 SerializationManager 加载剧本: {scenarioName}");
                     scenario = serializationManager.LoadScenario(scenarioName);
@@ -1203,23 +1174,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds == null || 
                     scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Count == 0)
                 {
-                    System.Diagnostics.Debug.WriteLine("[MGSStartLoad] ⚠️ AllMilitaryKinds 需要从 CommonData 恢复");
                     
                     if (CommonData.Current?.AllMilitaryKinds != null)
                     {
                         scenario.GameCommonData.AllMilitaryKinds = CommonData.Current.AllMilitaryKinds;
                         scenario.UsingOwnCommonData = false;
-                        System.Diagnostics.Debug.WriteLine("[MGSStartLoad] ✅ 从 CommonData.Current 恢复 AllMilitaryKinds");
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("[MGSStartLoad] ❌ CommonData.Current.AllMilitaryKinds 也为 null，创建空实例");
                         scenario.GameCommonData.AllMilitaryKinds = new MilitaryKindTable();
                     }
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"[MGSStartLoad] ✅ AllMilitaryKinds 正常，包含 {scenario.GameCommonData.AllMilitaryKinds.MilitaryKinds.Count} 个兵种");
                 }
                 if (scenario.GameCommonData.AllSectionAIDetails == null || scenario.GameCommonData.AllSectionAIDetails.Count == 0)
                 {
@@ -1929,12 +1896,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             this.Plugins.AirViewPlugin.ResetFramePosition(base.viewportSize, this.mainMapLayer.LeftEdge, this.mainMapLayer.TopEdge, this.mainMapLayer.TotalMapSize);
             if (Session.Current.Scenario.ScenarioMap.MapName != null)
             {
-                System.Diagnostics.Debug.WriteLine($"[MGSStartLoad] Calling ReloadAirView with MapName: {Session.Current.Scenario.ScenarioMap.MapName}");
                 this.Plugins.AirViewPlugin.ReloadAirView(Session.Current.Scenario.ScenarioMap.MapName);
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine($"[MGSStartLoad] MapName is null, calling ReloadAirView without parameter");
                 this.Plugins.AirViewPlugin.ReloadAirView();
             }
             if (this.Plugins.AirViewPlugin.IsMapShowing)

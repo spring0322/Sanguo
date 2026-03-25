@@ -476,12 +476,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         public override void xianshishijiantupian(Person p, string TextResultString, TextMessageKind msgKind, string shijian, string tupian, string shengyin, string TextDestinationString, bool zongshixianshi)
         {
-            /*
-            if (troop.BelongedFaction == Session.Current.Scenario.CurrentPlayer || architecture.BelongedFaction == Session.Current.Scenario.CurrentPlayer)
-            {
-
-            }
-            */
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[xianshishijiantupian-7参数] Person={p?.Name}(ID:{p?.ID}), msgKind={msgKind}, shijian={shijian}, zongshixianshi={zongshixianshi}");
+            #endif
+            
             if (Session.Current.Scenario.CurrentPlayer == null) return;
 
             if ((zongshixianshi) || p.BelongedFaction == Session.Current.Scenario.CurrentPlayer)
@@ -491,8 +489,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 this.Plugins.tupianwenziPlugin.SetGameObjectBranch(p, p, msgKind, shijian, tupian, shengyin);
                 this.Plugins.tupianwenziPlugin.SetPosition(ShowPosition.Bottom, Session.MainGame.mainGameScreen);
                 this.Plugins.tupianwenziPlugin.IsShowing = true;
-               // this.PauseMusic();
-               // this.tufashijianzantingyinyue = true;
             }
         }
 

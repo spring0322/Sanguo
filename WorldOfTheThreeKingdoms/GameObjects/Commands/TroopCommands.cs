@@ -17,6 +17,36 @@ public readonly record struct MoveCommand(
     public const int PriorityNormalMove = 10;    // 普通移动
 }
 
+// 🔥 入城指令（区分于普通移动）
+// 日期：2026-03-23
+public readonly record struct EnterCommand(
+    Guid TroopId,           // 部队 ID
+    int ArchitectureId,     // 目标城池 ID（ID >= 0 有效，ID=0 是洛阳）
+    Point TargetPosition)   // 目标位置（城池区域内的某个格子）
+{
+    public bool IsValid() => TroopId != Guid.Empty && ArchitectureId >= 0;
+}
+
+// 🔥 攻击部队指令（区分于攻击城池）
+// 日期：2026-03-23
+public readonly record struct AttackTroopCommand(
+    Guid AttackerId,        // 攻击者 ID
+    Guid TargetTroopId,     // 目标部队 ID
+    Point OptimalPosition)  // 最佳攻击位置（由战术评分系统计算）
+{
+    public bool IsValid() => AttackerId != Guid.Empty && TargetTroopId != Guid.Empty;
+}
+
+// 🔥 攻击城池指令（区分于攻击部队）
+// 日期：2026-03-23
+public readonly record struct AttackArchCommand(
+    Guid AttackerId,        // 攻击者 ID
+    int ArchitectureId,     // 目标城池 ID（ID >= 0 有效，ID=0 是洛阳）
+    Point SiegePosition)    // 攻城位置（由 SmartSiege 分配）
+{
+    public bool IsValid() => AttackerId != Guid.Empty && ArchitectureId >= 0;
+}
+
 // 🔥 基础战斗指令
 public readonly record struct AttackCommand(
     Guid AttackerId,        // 攻击者 ID

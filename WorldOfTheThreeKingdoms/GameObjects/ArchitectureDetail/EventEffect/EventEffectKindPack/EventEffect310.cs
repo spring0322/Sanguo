@@ -1,4 +1,4 @@
-﻿using GameManager;
+using GameManager;
 using GameObjects;
 using GameObjects.PersonDetail;
 using System;

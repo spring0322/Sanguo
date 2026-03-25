@@ -751,17 +751,72 @@ namespace GameManager
         /// <summary>
         /// 【新增】将战术决策翻译为部队的具体指令
         /// </summary>
+        private static bool IsValidMoveTarget(Point position)
+        {
+            return position.X >= 0 && position.Y >= 0 && position != Point.Zero;
+        }
+
+        private static Point ResolveMoveTarget(Troop troop, Point requestedTarget)
+        {
+            if (IsValidMoveTarget(requestedTarget))
+            {
+                return requestedTarget;
+            }
+
+            if (troop == null)
+            {
+                return new Point(-1, -1);
+            }
+
+            if (IsValidMoveTarget(troop.RealDestination))
+            {
+                return troop.RealDestination;
+            }
+
+            if (troop.TargetTroop != null && !troop.TargetTroop.Destroyed && IsValidMoveTarget(troop.TargetTroop.Position))
+            {
+                return troop.TargetTroop.Position;
+            }
+
+            if (troop.TargetArchitecture != null && IsValidMoveTarget(troop.TargetArchitecture.Position))
+            {
+                return troop.TargetArchitecture.Position;
+            }
+
+            if (troop.WillArchitecture != null && IsValidMoveTarget(troop.WillArchitecture.Position))
+            {
+                return troop.WillArchitecture.Position;
+            }
+
+            if (troop.StartingArchitecture != null && IsValidMoveTarget(troop.StartingArchitecture.Position))
+            {
+                return troop.StartingArchitecture.Position;
+            }
+
+            return new Point(-1, -1);
+        }
+
         private void ApplyDecisionToTroop(Troop troop, WorldOfTheThreeKingdoms.GameManager.TacticalDecision decision)
         {
-            if (decision == null) return;
+            if (troop == null || troop.Destroyed || decision == null) return;
 
             switch (decision.Action)
             {
                 case WorldOfTheThreeKingdoms.GameManager.TacticalAction.Move:
                     // 只有当目的地改变时才重设，避免重复寻路
-                    if (troop.RealDestination != decision.TargetPosition)
+                    Point targetPosition = ResolveMoveTarget(troop, decision.TargetPosition);
+                    if (!IsValidMoveTarget(targetPosition))
                     {
-                        troop.RealDestination = decision.TargetPosition;
+                        if (EnableDebugLog)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ApplyDecisionToTroop] 部队{troop.ID} 移动决策缺少有效目标，已忽略。原始目标=({decision.TargetPosition.X}, {decision.TargetPosition.Y})");
+                        }
+                        break;
+                    }
+
+                    if (troop.RealDestination != targetPosition)
+                    {
+                        troop.RealDestination = targetPosition;
                         // 如果你有 SetDestination 方法更好，没有就直接赋值
                         // 确保触发简单的路径生成（之前优化的 GenerateSimplePath）
                         // 强制重置路径状态，让 Troop 在 Update 里自己去走

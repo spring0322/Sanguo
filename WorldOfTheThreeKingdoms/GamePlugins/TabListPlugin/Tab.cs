@@ -117,6 +117,14 @@ namespace TabListPlugin
 
         public void MoveHorizontal(int offset)
         {
+            // 🔥 推荐版模式禁用横向移动
+            // 日期：2026-03-23
+            // 原因：推荐版模式下固定列+弹性列布局，不需要横向滚动
+            if (this.tabList.IsRecommendedMode())
+            {
+                return;
+            }
+
             if ((this.Columns[0].DisplayPosition.Left + offset) > this.tabList.VisibleLowerClient.Left)
             {
                 offset = this.tabList.VisibleLowerClient.Left - this.Columns[0].DisplayPosition.Left;
@@ -148,25 +156,79 @@ namespace TabListPlugin
 
         internal void ReCalculate(int yOffset)
         {
-            if (this.selected)
+            if (!this.selected) return;
+
+            int x = this.tabList.RealClient.X;
+            this.tabList.FullLowerClient.X = x;
+            this.tabList.FullLowerClient.Y = this.tabList.VisibleLowerClient.Y;
+
+            // 🔥 推荐版模式：固定列 + 弹性列布局
+            // 日期：2026-03-23
+            if (this.tabList.IsRecommendedMode())
             {
-                int x = this.tabList.RealClient.X;
-                this.tabList.FullLowerClient.X = x;
-                this.tabList.FullLowerClient.Y = this.tabList.VisibleLowerClient.Y;
+                // 1. 计算固定列总宽（跳过描述列）
+                int fixedColumnsWidth = 0;
+                foreach (Column column in this.Columns)
+                {
+                    if (column.Name != "Description")
+                    {
+                        int columnWidth = CalculateFixedColumnWidth(column);
+                        fixedColumnsWidth += columnWidth + this.tabList.columnspliterWidth;
+                    }
+                }
+
+                // 2. 布局所有列（跳过描述列，因为下方有详情说明区）
+                foreach (Column column in this.Columns)
+                {
+                    if (column.Name == "Description")
+                    {
+                        // 🔥 推荐版模式：隐藏描述列（下方有详情说明区）
+                        continue;
+                    }
+
+                    // 固定列：使用受控宽度
+                    int fixedWidth = CalculateFixedColumnWidth(column);
+                    column.Text.Position = new Rectangle(x + 1, this.listKind.ColumnsTop, fixedWidth, column.Text.Position.Height);
+                    x = column.Text.Position.Right + this.tabList.columnspliterWidth;
+
+                    // 更新单元格位置
+                    if (this.tabList.gameObjectList != null)
+                    {
+                        for (int i = 0; i < column.ColumnTextList.Count; i++)
+                        {
+                            column.ColumnTextList[i].MaxWidth = fixedWidth;
+                            column.ColumnTextList[i].Position = new Rectangle(
+                                column.Text.Position.X,
+                                (column.Text.Position.Bottom + 1) + (i * this.tabList.rowHeight),
+                                fixedWidth,
+                                this.tabList.rowHeight);
+                        }
+                        column.ColumnTextList.ResetAllAlignedPositions();
+                    }
+
+                    column.ColumnTextList.DisplayOffset = new Point(0, yOffset);
+                }
+            }
+            else
+            {
+                // 原始逻辑：按内容测宽
                 foreach (Column column in this.Columns)
                 {
                     column.ReCalculate(this.listKind.ColumnsTop, ref x);
                     column.ColumnTextList.DisplayOffset = new Point(0, yOffset);
                 }
-                this.SortTheKeyColumn();
-                this.tabList.FullLowerClient.Width = x - this.tabList.RealClient.X + this.tabList.iGameFrame.LeftEdge + this.tabList.iGameFrame.RightEdge;
-                this.listKind.ResetScrollTracks();
-                if (this.Columns.Count > 0)
-                {
-                    this.Columns[0].AdjustRowRectangles(this.tabList.RowRectangles);
-                }
-                this.ResetAllTextures();
             }
+
+            this.SortTheKeyColumn();
+            this.tabList.FullLowerClient.Width = x - this.tabList.RealClient.X + this.tabList.iGameFrame.LeftEdge + this.tabList.iGameFrame.RightEdge;
+            this.listKind.ResetScrollTracks();
+            
+            if (this.Columns.Count > 0)
+            {
+                this.Columns[0].AdjustRowRectangles(this.tabList.RowRectangles);
+            }
+            
+            this.ResetAllTextures();
         }
 
         internal void ResetAllTextures()
@@ -206,6 +268,80 @@ namespace TabListPlugin
                     this.tabList.gameObjectList.GameObjects.Sort(comparer);
                 }
             }
+        }
+
+        /// <summary>
+        /// 计算固定列的宽度（推荐版模式）
+        /// 基于 XML 的 MinWidth + 内容测宽，应用上限（最多扩大到 MinWidth 的 2 倍）
+        /// 日期：2026-03-23
+        /// </summary>
+        private int CalculateFixedColumnWidth(Column column)
+        {
+            if (column == null) return 120; // 后备值
+
+            int baseWidth = column.MinWidth;
+            if (baseWidth <= 0) baseWidth = 80; // 最小后备值
+
+            // 🔥 上限：最多扩大到 MinWidth 的 2 倍
+            int maxAllowedWidth = baseWidth * 2;
+
+            // 测量内容宽度（复用 Column.ReCalculate 的逻辑）
+            var font = Session.Current.Font;
+            if (font == null) return baseWidth;
+
+            float finalCalculatedWidth = baseWidth;
+            float headerScale = column.Text.Builder.Scale;
+
+            // 1. 测量列头宽度
+            if (!string.IsNullOrEmpty(column.DisplayName))
+            {
+                float headerWidth = 0;
+                try { headerWidth = font.MeasureString(column.DisplayName).X * headerScale; } 
+                catch { headerWidth = column.DisplayName.Length * 24 * headerScale; }
+
+                float safeHeaderWidth = headerWidth + 50;
+                if (safeHeaderWidth > finalCalculatedWidth) 
+                    finalCalculatedWidth = safeHeaderWidth;
+            }
+
+            // 2. 测量内容宽度（仅对非可编辑列）
+            if (!column.Editable && this.tabList.gameObjectList != null && column.ColumnTextList.Count > 0)
+            {
+                float contentScale = (column.ColumnTextList.Font != null) 
+                    ? column.ColumnTextList.Font.Scale 
+                    : headerScale;
+                float maxContentPixelWidth = 0;
+
+                // 🔥 性能优化：只采样前 20 行（避免遍历大列表）
+                int sampleCount = Math.Min(20, column.ColumnTextList.Count);
+                for (int i = 0; i < sampleCount; i++)
+                {
+                    string text = column.ColumnTextList[i].Text;
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        float w = 0;
+                        try { w = font.MeasureString(text).X * contentScale; } 
+                        catch { w = text.Length * 14 * contentScale; }
+                        
+                        if (w > maxContentPixelWidth) 
+                            maxContentPixelWidth = w;
+                    }
+                }
+
+                float safeContentWidth = maxContentPixelWidth + 30;
+                if (safeContentWidth > finalCalculatedWidth)
+                {
+                    finalCalculatedWidth = safeContentWidth;
+                }
+            }
+
+            // 3. 应用上限
+            if (finalCalculatedWidth > maxAllowedWidth)
+            {
+                finalCalculatedWidth = maxAllowedWidth;
+            }
+
+            return (int)Math.Ceiling(finalCalculatedWidth);
         }
 
         internal int CurrentYOffset

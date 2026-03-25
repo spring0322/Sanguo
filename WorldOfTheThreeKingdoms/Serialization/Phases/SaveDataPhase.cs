@@ -820,10 +820,16 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 Status = (int)troop.Status,
                 PositionX = troop.Position.X,
                 PositionY = troop.Position.Y,
+                RealDestinationX = troop.RealDestination.X,
+                RealDestinationY = troop.RealDestination.Y,
                 BelongedFactionID = troop.BelongedFaction?.ID ?? -1,
                 BelongedLegionID = troop.BelongedLegion?.ID ?? -1,
                 BelongedArchitectureID = troop.BelongedArchitecture?.ID ?? -1,
                 StartingArchitectureID = troop.StartingArchitecture?.ID ?? -1,  // 🔥 修复：保存出发城市ID
+                WillArchitectureID = troop.WillArchitectureID,
+                WillTroopID = troop.WillTroopID,
+                TargetArchitectureID = troop.TargetArchitectureID,
+                TargetTroopID = troop.TargetTroopID,
                 LeaderID = troop.Leader?.ID ?? -1,
                 MilitaryID = troop.MilitaryID,  // 🔥 根本修复：使用 MilitaryID 字段而不是 Army?.ID，避免延迟加载问题
                 
@@ -852,6 +858,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 Food = troop.Food,
                 CurrentStuntIDString = troop.CurrentStuntIDString,
                 StuntDayLeft = troop.StuntDayLeft,
+                CurrentCombatMethodID = troop.CurrentCombatMethodID,
+                CurrentStratagemID = troop.CurrentStratagemID,
+                AutoCombatMethodID = troop.AutoCombatMethodID,
                 
                 // Using LINQ Select directly creates List<int> efficiently
                 PersonIDs = troop.Persons?.GetList().GameObjects.Cast<Person>().Select(p => p.ID).ToList() ?? [],

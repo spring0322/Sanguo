@@ -100,6 +100,13 @@ namespace TabListPlugin
         private int tooltipDelayFrames = 0;
         private const int TOOLTIP_DELAY = 30; // 30帧延迟（约0.5秒）
 
+        // 🎯 推荐版模式：详情说明区字段（需求 2.2）
+        // 日期：2026-03-23
+        private string detailDescriptionText = "";           // 详情说明区文本内容
+        private Rectangle detailDescriptionRect;             // 详情说明区绘制矩形
+        private const int DETAIL_AREA_HEIGHT = 120;          // 详情说明区固定高度（90-140px 可调）
+        private static readonly RasterizerState ScissorEnabledState = new RasterizerState { ScissorTestEnable = true };
+
         public void AddRows()
         {
             if (this.gameObjectList != null)
@@ -148,6 +155,20 @@ namespace TabListPlugin
             base.Draw();
             if (this.listKindToDisplay != null)
             {
+                // 🔥 推荐版模式：调用容器分区布局（需求 2.1, 2.4）
+                if (IsRecommendedMode())
+                {
+                    CalculateRecommendedLayout();
+                }
+                
+                // 🔥 推荐版模式：先绘制详情说明区背景（需求 3.5）
+                // 必须在 listKindToDisplay.Draw() 之前绘制，确保表格数据不会溢出到详情区
+                if (IsRecommendedMode())
+                {
+                    UpdateDetailDescription();
+                    DrawDetailDescriptionArea();
+                }
+                
                 this.listKindToDisplay.Draw();
                 if (MultiSelecting)
                 {
@@ -317,6 +338,276 @@ namespace TabListPlugin
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// 判定当前是否处于推荐版模式（浏览与阅读分层模式）
+        /// 
+        /// 推荐版模式特性：
+        /// - 容器分为表格区和详情说明区
+        /// - 禁用横向滚动
+        /// - 固定列 + 弹性描述列布局
+        /// - 描述列单行省略，完整内容在详情区显示
+        /// 
+        /// 白名单范围（当前）：
+        /// - ListKind: Title（称号列表）
+        /// - SelectedTab: Basic（基本信息页）
+        /// 
+        /// 扩展计划：
+        /// - 验证稳定后，扩展到其他"长描述"类型列表（技能、影响、兵种等）
+        /// - 最终抽象为通用模式，通过 XML 配置标记开启
+        /// 
+        /// 日期：2026-03-23
+        /// 需求：9.1, 9.5
+        /// </summary>
+        /// <returns>true 表示处于推荐版模式，false 表示使用原始布局</returns>
+        internal bool IsRecommendedMode()
+        {
+            // 防御性检查：确保对象存在
+            if (this.listKindToDisplay == null || 
+                this.listKindToDisplay.SelectedTab == null)
+            {
+                return false;
+            }
+
+            // 白名单判定：ListKind==Title && SelectedTab==Basic
+            return this.listKindToDisplay.Name == "Title" &&
+                   this.listKindToDisplay.SelectedTab.Name == "Basic";
+        }
+
+        /// <summary>
+        /// 计算推荐版模式的容器分区布局
+        /// 
+        /// 将可视区域分为两部分：
+        /// 1. 表格区（上方）：显示列头和数据行
+        /// 2. 详情说明区（下方）：显示完整描述文本
+        /// 
+        /// 日期：2026-03-23
+        /// 需求：2.1, 2.3
+        /// </summary>
+        private void CalculateRecommendedLayout()
+        {
+            // 原可视区域（整个列表区域）
+            Rectangle originalVisibleClient = base.RealClient;
+
+            // 🔥 右侧竖向布局：详情说明区占据右侧大部分空间
+            // 宽度扩展到接近右边界，只留 10px 间距
+            const int DETAIL_GAP = 10; // 与右边界的间距
+            const int TABLE_MIN_WIDTH = 600; // 表格最小宽度
+
+            // 详情说明区宽度 = 原可视区宽度 - 表格最小宽度 - 间距
+            int detailWidth = originalVisibleClient.Width - TABLE_MIN_WIDTH - DETAIL_GAP;
+            if (detailWidth < 200) detailWidth = 200; // 最小宽度保护
+
+            // 表格区宽度 = 原可视区宽度 - 详情说明区宽度 - 间距
+            int tableAreaWidth = originalVisibleClient.Width - detailWidth - DETAIL_GAP;
+
+            // 表格区矩形（左侧）
+            Rectangle tableArea = new Rectangle(
+                originalVisibleClient.X,
+                originalVisibleClient.Y,
+                tableAreaWidth,
+                originalVisibleClient.Height
+            );
+
+            // 详情说明区矩形（右侧，竖向）
+            this.detailDescriptionRect = new Rectangle(
+                originalVisibleClient.X + tableAreaWidth + DETAIL_GAP,
+                originalVisibleClient.Y,
+                detailWidth,
+                originalVisibleClient.Height
+            );
+
+            // 更新 VisibleLowerClient 为表格区矩形
+            this.VisibleLowerClient = tableArea;
+        }
+
+        /// <summary>
+        /// 更新详情说明区的内容
+        /// 
+        /// 优先级：SelectedItem > FocusedObject > 空
+        /// 使用 StaticMethods.GetPropertyValue 获取 Description 属性
+        /// 
+        /// 日期：2026-03-23
+        /// 需求：3.1, 3.2, 3.4
+        /// </summary>
+        private void UpdateDetailDescription()
+        {
+            if (!IsRecommendedMode())
+            {
+                this.detailDescriptionText = "";
+                return;
+            }
+
+            // 优先级：SelectedItem > FocusedObject > 空
+            GameObject targetObject = this.SelectedItem ?? this.FocusedObject;
+
+            if (targetObject == null)
+            {
+                this.detailDescriptionText = "";
+                return;
+            }
+
+            // 获取描述文本（异常处理）
+            try
+            {
+                object descObj = StaticMethods.GetPropertyValue(targetObject, "Description");
+                this.detailDescriptionText = descObj?.ToString() ?? "";
+            }
+            catch (Exception ex)
+            {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[TabListInFrame.UpdateDetailDescription] 获取描述失败: {ex.Message}");
+                #endif
+                this.detailDescriptionText = "";
+            }
+        }
+
+        /// <summary>
+        /// 屏蔽横向滚动输入
+        /// 
+        /// 在推荐版模式下：
+        /// - 屏蔽鼠标滚轮触发的横向滚动
+        /// - 屏蔽拖动横向滚动条的输入
+        /// 
+        /// 日期：2026-03-23
+        /// 需求：4.2, 4.3
+        /// </summary>
+        /// <returns>true 表示输入被屏蔽，false 表示允许输入</returns>
+        private bool BlockHorizontalScrollInput()
+        {
+            if (!IsRecommendedMode())
+            {
+                return false;
+            }
+
+            // 屏蔽横向滚动条拖动
+            if (this.MovingHorizontalScrollBar)
+            {
+                this.MovingHorizontalScrollBar = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 绘制详情说明区
+        /// 
+        /// 绘制内容：
+        /// 1. 背景（半透明黑色）
+        /// 2. 边框（金色）
+        /// 3. 文本（自动换行，超出可视区域停止）
+        /// 
+        /// 日期：2026-03-23
+        /// 需求：2.5, 3.3
+        /// </summary>
+        private void DrawDetailDescriptionArea()
+        {
+            if (!IsRecommendedMode() || string.IsNullOrEmpty(this.detailDescriptionText))
+            {
+                return;
+            }
+
+            // 🔥 关键修复：表头 Y 坐标必须与左侧表格对齐
+            // 使用 listKindToDisplay.ColumnsTop 而不是 VisibleLowerClient.Y
+            int headerTop = this.listKindToDisplay?.ColumnsTop ?? this.VisibleLowerClient.Y;
+
+            // 1. 完美融合 UI：复用表头材质，将详情区伪装成一个固定的"详细说明"列
+            Rectangle headerRect = new Rectangle(
+                this.detailDescriptionRect.X,
+                headerTop,
+                this.detailDescriptionRect.Width,
+                this.columnheaderHeight
+            );
+
+            // 绘制表头背景和左侧分割线，与左侧表格完全对齐
+            CacheManager.Draw(this.columnheaderTexture, headerRect, null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.035f);
+            CacheManager.Draw(this.columnspliterTexture, 
+                new Rectangle(headerRect.X, headerRect.Y, this.columnspliterWidth, this.columnspliterHeight), 
+                null, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.035f);
+
+            // 绘制表头文字，居中对齐
+            float headerScale = 1f;
+            string headerTitle = "详细说明";
+            Vector2 textSize = Session.Current.Font.MeasureString(headerTitle) * headerScale;
+            Vector2 headPos = new Vector2(
+                headerRect.X + (headerRect.Width - textSize.X) / 2f,
+                headerRect.Y + (headerRect.Height - textSize.Y) / 2f
+            );
+            CacheManager.DrawString(Session.Current.Font, headerTitle, headPos, Color.Gold, 0f, Vector2.Zero, headerScale, SpriteEffects.None, 0.0349f);
+
+            // 2. 绘制内容区背景：使用半透明黑底，去掉生硬的黄边框
+            Rectangle contentRect = new Rectangle(
+                this.detailDescriptionRect.X,
+                headerRect.Bottom,
+                this.detailDescriptionRect.Width,
+                this.detailDescriptionRect.Bottom - headerRect.Bottom
+            );
+
+            PlatformTexture dummyTexture = GetDummyTexture();
+            CacheManager.Draw(dummyTexture, contentRect, null, new Color(0, 0, 0, 150), 0f, Vector2.Zero, SpriteEffects.None, 0.036f);
+
+            // 3. 绘制排版规范的文本（彻底抛弃动态压缩行距的错误逻辑）
+            int padding = 15;
+            Rectangle textRect = new Rectangle(
+                contentRect.X + padding,
+                contentRect.Y + padding,
+                contentRect.Width - padding * 2,
+                contentRect.Height - padding * 2
+            );
+
+            // 适当缩小字号让长文本显得更精致，并设定死固定行距，绝不重叠
+            float textScale = 0.85f;
+            float fontHeight = Session.Current.Font.LineSpacing * textScale;
+            float lineHeight = fontHeight + 8f; // 固定行距
+
+            // 硬件裁剪：避免文字溢出面板底部
+            var graphicsDevice = Platforms.Platform.GraphicsDevice;
+            var oldScissorRect = graphicsDevice.ScissorRectangle;
+            var oldRasterizerState = graphicsDevice.RasterizerState;
+
+            try
+            {
+                var scissorRect = new Rectangle(contentRect.X, contentRect.Y, contentRect.Width, contentRect.Height);
+                if (scissorRect.Right > graphicsDevice.Viewport.Width) 
+                    scissorRect.Width = graphicsDevice.Viewport.Width - scissorRect.X;
+                if (scissorRect.Bottom > graphicsDevice.Viewport.Height) 
+                    scissorRect.Height = graphicsDevice.Viewport.Height - scissorRect.Y;
+
+                graphicsDevice.RasterizerState = ScissorEnabledState;
+                graphicsDevice.ScissorRectangle = scissorRect;
+
+                string wrappedText = TextManager.HandleAutoWrap(this.detailDescriptionText, CacheManager.FontPair, textRect.Width, textScale);
+                if (string.IsNullOrEmpty(wrappedText)) return;
+
+                string[] lines = wrappedText.Split('\n');
+                float yOffset = textRect.Y;
+
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    if (yOffset > textRect.Bottom) break; // 超出可视区域底部，WEGO 机制下快速剔除绘制
+
+                    CacheManager.DrawString(
+                        Session.Current.Font,
+                        lines[i],
+                        new Vector2(textRect.X, yOffset),
+                        Color.White,
+                        0f,
+                        Vector2.Zero,
+                        textScale,
+                        SpriteEffects.None,
+                        0.034f
+                    );
+
+                    yOffset += lineHeight;
+                }
+            }
+            finally
+            {
+                graphicsDevice.ScissorRectangle = oldScissorRect;
+                graphicsDevice.RasterizerState = oldRasterizerState;
+            }
         }
 
         public Rectangle GetRealLowerVisibleClient()
@@ -1108,11 +1399,14 @@ namespace TabListPlugin
                             }
                         }
                     }
-                    if (this.ShowHorizontalScrollBar && (this.MovingHorizontalScrollBar || StaticMethods.PointInRectangle(position, this.listKindToDisplay.HorizontalScrollBar)))
+                    
+                    // 🔥 推荐版模式：屏蔽横向滚动输入（需求 4.4）
+                    if (!BlockHorizontalScrollInput() && this.ShowHorizontalScrollBar && (this.MovingHorizontalScrollBar || StaticMethods.PointInRectangle(position, this.listKindToDisplay.HorizontalScrollBar)))
                     {
                         this.listKindToDisplay.MoveHorizontal(position.X - this.oldMousePosition.X);
                         this.MovingHorizontalScrollBar = true;
                     }
+                    
                     if (this.ShowVerticalScrollBar && (this.MovingVerticalScrollBar || StaticMethods.PointInRectangle(position, this.listKindToDisplay.VerticalScrollBar)))
                     {
                         this.listKindToDisplay.MoveVertical(position.Y - this.oldMousePosition.Y);
