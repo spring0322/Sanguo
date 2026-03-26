@@ -531,6 +531,21 @@ namespace GameObjects
                     // === 找到有效部队 ===
                     this.CurrentTroop = candidate;
 
+                    if (Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1)
+                    {
+                        GameScenario scenario = Session.Current?.Scenario;
+                        if (scenario != null)
+                        {
+                            var authorityContext = scenario.EnsureAIAuthorityContext();
+                            if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, this.CurrentTroop, IntentCheckpointKind.QueuePickup))
+                            {
+                                this.CurrentTroop.OperationDone = true;
+                                this.CurrentTroop = null;
+                                continue;
+                            }
+                        }
+                    }
+
                     var action = TroopStateMachineRouter.DetermineQueueAction(this.CurrentTroop);
                     switch (action)
                     {
@@ -592,7 +607,18 @@ namespace GameObjects
                             // 日期：2026-03-07
                             // 原因：玩家下达攻击指令后，CurrentAIState 保持 Idle，导致 UpdateMovementLogic 拒绝移动
                             // 解决：根据 Command 设置正确的 CurrentAIState
-                            if (this.CurrentTroop.Command == TroopCommand.Enter)
+                            bool projectedByAuthority = false;
+                            if (Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1)
+                            {
+                                GameScenario scenario = Session.Current?.Scenario;
+                                if (scenario != null)
+                                {
+                                    var authorityContext = scenario.EnsureAIAuthorityContext();
+                                    projectedByAuthority = authorityContext.ApplyIntentProjection(scenario, this.CurrentTroop);
+                                }
+                            }
+
+                            if (!projectedByAuthority && this.CurrentTroop.Command == TroopCommand.Enter)
                             {
                                 this.CurrentTroop.CurrentAIState = TroopAIState.EnterCity;
                                 #if DEBUG
@@ -602,7 +628,7 @@ namespace GameObjects
                                 }
                                 #endif
                             }
-                            else if (this.CurrentTroop.Command != TroopCommand.None)
+                            else if (!projectedByAuthority && this.CurrentTroop.Command != TroopCommand.None)
                             {
                                 // 所有非空指令（Move/Attack/AttackArch/AttackTroop/Stratagem）都设置为 Marching
                                 this.CurrentTroop.CurrentAIState = TroopAIState.Marching;
@@ -791,6 +817,30 @@ namespace GameObjects
         // 保留原有的 AI 目标修正逻辑 (非常重要，否则 AI 会乱走)
         public void TroopChangeRealDestination(Troop troop)
         {
+            if (Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1)
+            {
+                GameScenario scenario = Session.Current?.Scenario;
+                if (scenario != null)
+                {
+                    var authorityContext = scenario.EnsureAIAuthorityContext();
+                    if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, troop, IntentCheckpointKind.BeforeProjection))
+                    {
+                        troop.OperationDone = true;
+                        troop.Action = TroopAction.Stop;
+                        troop.SetCommand(TroopCommand.None);
+                        return;
+                    }
+
+                    if (!troop.ManualControl &&
+                        troop.Command != TroopCommand.AttackArch &&
+                        authorityContext.TryGetIntent(troop.ID, out _))
+                    {
+                        authorityContext.ApplyIntentProjection(scenario, troop);
+                        return;
+                    }
+                }
+            }
+
             #if DEBUG
             System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 进入目标判定 Command={troop.Command}, RealDestination={troop.RealDestination}, ManualControl={troop.ManualControl}, Position={troop.Position}, Destroyed={troop.Destroyed}");
             #endif

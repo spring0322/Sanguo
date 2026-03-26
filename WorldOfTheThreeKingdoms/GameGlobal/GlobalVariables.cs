@@ -165,6 +165,7 @@ public class GlobalVariables
     [DataMember] public bool EnableWeatherParticles = true;  // 🌧️ 2026-03-10 新增：天气粒子系统开关，默认打开
     [DataMember] public bool EnableWegoEngine = false;  // 🔥 2026-03-16 新增：WEGO 引擎开关，默认关闭（测试阶段）
     [DataMember] public bool EnableCommandBufferScheduler = false;  // 🔥 2026-03-23 新增：CommandBuffer 调度器开关，默认关闭（灰度测试）
+    [DataMember] public bool EnableAIAuthorityPhase1 = true;  // 2026-03-26 新增：阶段1收权模式开关，默认开启
 
     public const string cryptKey = "A3g0c3%2";
 
@@ -321,6 +322,7 @@ public class GlobalVariables
             TryParseAttribute(nextSibling, "ShowNumberAddTime", ref ShowNumberAddTime);
             TryParseAttribute(nextSibling, "TroopVoice", ref TroopVoice);
             TryParseAttribute(nextSibling, "MaxTupianwenzi", ref MaxTupianwenzi);
+            TryParseAttribute(nextSibling, "EnableAIAuthorityPhase1", ref EnableAIAuthorityPhase1);
             TryParseAttribute(nextSibling, "EnableWeatherParticles", ref EnableWeatherParticles); // 🌧️ 2026-03-10 新增
         }
         // Path B: 从传入的 XML 字符串加载 (Reflection Optimized with FrozenDictionary)
@@ -505,6 +507,7 @@ public class GlobalVariables
         Set(nameof(ShowNumberAddTime), ShowNumberAddTime);
         Set(nameof(TroopVoice), TroopVoice);
         Set(nameof(MaxTupianwenzi), MaxTupianwenzi);
+        Set(nameof(EnableAIAuthorityPhase1), EnableAIAuthorityPhase1);
         Set(nameof(EnableWeatherParticles), EnableWeatherParticles); // 🌧️ 2026-03-10 新增
 
         document.AppendChild(element);

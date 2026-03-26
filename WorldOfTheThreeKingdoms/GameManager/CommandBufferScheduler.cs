@@ -15,6 +15,18 @@ namespace WorldOfTheThreeKingdoms.GameManager;
 public class CommandBufferScheduler
 {
     private readonly CommandBuffer _commandBuffer = new();
+    private readonly ExecutionFrame _executionFrame = new(1024);
+    private readonly DeterministicArbitrator _arbitrator = new(512);
+    private readonly List<ExecutionCommand> _executionProposals = new(1024);
+    private readonly List<ExecutionCommand> _executionBatch = new(256);
+    private readonly List<ExecutionCommand> _arbitrationAccepted = new(256);
+    private readonly List<ExecutionCommand> _arbitrationRejected = new(256);
+
+    private const int PriorityTierEnter = 5000;
+    private const int PriorityTierAttackTroop = 4300;
+    private const int PriorityTierAttackArchitecture = 4200;
+    private const int PriorityTierStratagem = 4100;
+    private const int PriorityTierMove = 3500;
     
     // 🔥 性能优化：使用预分配数组代替 Queue（避免堆分配）
     private Troop[] _activeQueue = new Troop[256];
@@ -25,6 +37,9 @@ public class CommandBufferScheduler
     private Troop _currentTroop;
     private int _safetyCounter;
     private bool _queueEndedPassCompleted;
+    private int _buildIssuedTick;
+    private int _executionCursor;
+    private bool _executionFrameModeActive;
     
     // 本回合 CommandBuffer 是否可用（失败时必须整回合回退旧调度器）
     public bool HasValidBuffer { get; private set; }
@@ -39,6 +54,7 @@ public class CommandBufferScheduler
     public int ProcessedDirectAttacks { get; private set; }
     public int ProcessedCombatMethodAttacks { get; private set; }
     public int ProcessedStratagemAttacks { get; private set; }
+    public int ArbitrationRejectedCommands { get; private set; }
     
     public bool BuildCommandBuffer(GameScenario scenario)
     {
@@ -49,7 +65,15 @@ public class CommandBufferScheduler
         _currentTroop = null;
         _safetyCounter = 0;
         _queueEndedPassCompleted = false;
+        _buildIssuedTick = scenario.DaySince;
+        _executionCursor = 0;
+        _executionFrameModeActive = false;
         HasValidBuffer = false;
+        _executionFrame.Begin(_buildIssuedTick);
+        _executionProposals.Clear();
+        _executionBatch.Clear();
+        _arbitrationAccepted.Clear();
+        _arbitrationRejected.Clear();
         
         ProcessedMoveCommands = 0;
         ProcessedEnterCommands = 0;
@@ -59,6 +83,7 @@ public class CommandBufferScheduler
         ProcessedDirectAttacks = 0;
         ProcessedCombatMethodAttacks = 0;
         ProcessedStratagemAttacks = 0;
+        ArbitrationRejectedCommands = 0;
         
         int totalTroops = 0;
         int validCommands = 0;
@@ -112,7 +137,20 @@ public class CommandBufferScheduler
             }
             
             validCommands = _commandBuffer.TotalCommandCount;
+            _executionProposals.Sort(static (left, right) =>
+            {
+                int commitCompare = left.CommitTick.CompareTo(right.CommitTick);
+                if (commitCompare != 0) return commitCompare;
+
+                int priorityCompare = right.Priority.CompareTo(left.Priority);
+                if (priorityCompare != 0) return priorityCompare;
+
+                return left.TroopId.CompareTo(right.TroopId);
+            });
+            _executionCursor = 0;
+            _executionFrameModeActive = _executionProposals.Count > 0;
             HasValidBuffer = true;
+            System.Diagnostics.Debug.WriteLine($"[CommandBufferScheduler] Build Summary: proposals={_executionProposals.Count}, mode={(_executionFrameModeActive ? "ExecutionFrame" : "LegacyQueue")}");
             System.Diagnostics.Debug.WriteLine($"[CommandBufferScheduler] 构建完成: 总部队={totalTroops}(玩家={playerTroops}, AI={aiTroops}), 有效指令={validCommands}, 总指令={_commandBuffer.TotalCommandCount}");
             return true;
         }
@@ -125,7 +163,14 @@ public class CommandBufferScheduler
             _queueCount = 0;
             _currentTroop = null;
             _queueEndedPassCompleted = false;
+            _executionCursor = 0;
+            _executionFrameModeActive = false;
             HasValidBuffer = false;
+            _executionFrame.Clear();
+            _executionProposals.Clear();
+            _executionBatch.Clear();
+            _arbitrationAccepted.Clear();
+            _arbitrationRejected.Clear();
             
             System.Diagnostics.Debug.WriteLine($"[CommandBufferScheduler] ❌ 构建失败，已清空缓冲并回退旧调度器: {ex.Message}");
             return false;
@@ -197,6 +242,17 @@ public class CommandBufferScheduler
             {
                 _currentTroop = null;
                 continue;
+            }
+
+            if (Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1)
+            {
+                AIAuthorityContext authorityContext = scenario.EnsureAIAuthorityContext();
+                if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, _currentTroop, IntentCheckpointKind.QueuePickup))
+                {
+                    _currentTroop.OperationDone = true;
+                    _currentTroop = null;
+                    continue;
+                }
             }
             
             QueueAction action = TroopStateMachineRouter.DetermineQueueAction(_currentTroop);
@@ -374,16 +430,34 @@ public class CommandBufferScheduler
     
     private void EnterMovementPipeline(GameTime gameTime)
     {
+        GameScenario scenario = Session.Current?.Scenario;
+        AIAuthorityContext authorityContext = null;
+        if (scenario != null &&
+            Session.GlobalVariables != null &&
+            Session.GlobalVariables.EnableAIAuthorityPhase1)
+        {
+            authorityContext = scenario.EnsureAIAuthorityContext();
+            if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, _currentTroop, IntentCheckpointKind.BeforeProjection))
+            {
+                _currentTroop.OperationDone = true;
+                return;
+            }
+        }
+
         TroopListWithQueue troopList = Session.Current.Scenario.Troops;
         troopList.TroopChangeRealDestination(_currentTroop);
-        
-        if (_currentTroop.Command == TroopCommand.Enter)
+
+        bool projectedByAuthority = authorityContext != null && authorityContext.ApplyIntentProjection(scenario, _currentTroop);
+        if (!projectedByAuthority)
         {
-            _currentTroop.CurrentAIState = TroopAIState.EnterCity;
-        }
-        else if (_currentTroop.Command != TroopCommand.None)
-        {
-            _currentTroop.CurrentAIState = TroopAIState.Marching;
+            if (_currentTroop.Command == TroopCommand.Enter)
+            {
+                _currentTroop.CurrentAIState = TroopAIState.EnterCity;
+            }
+            else if (_currentTroop.Command != TroopCommand.None)
+            {
+                _currentTroop.CurrentAIState = TroopAIState.Marching;
+            }
         }
         
         _currentTroop.UpdateMovementLogic(gameTime);
@@ -464,8 +538,143 @@ public class CommandBufferScheduler
         
         return false;
     }
-    
+
     private bool RefillQueue()
+    {
+        if (_executionFrameModeActive)
+        {
+            try
+            {
+                return RefillQueueFromExecutionFrame();
+            }
+            catch (Exception ex)
+            {
+                _executionFrameModeActive = false;
+                System.Diagnostics.Debug.WriteLine($"[CommandBufferScheduler] ExecutionFrame refill failed, fallback to legacy queues: {ex.Message}");
+            }
+        }
+
+        return RefillQueueLegacy();
+    }
+
+    private bool RefillQueueFromExecutionFrame()
+    {
+        if (_executionCursor >= _executionProposals.Count)
+        {
+            return false;
+        }
+
+        _executionBatch.Clear();
+        _arbitrationAccepted.Clear();
+        _arbitrationRejected.Clear();
+
+        int commitTick = _executionProposals[_executionCursor].CommitTick;
+        while (_executionCursor < _executionProposals.Count)
+        {
+            ExecutionCommand proposal = _executionProposals[_executionCursor];
+            if (proposal.CommitTick != commitTick) break;
+
+            _executionBatch.Add(proposal);
+            _executionCursor++;
+        }
+
+        _arbitrator.ResolveBatch(_executionBatch, _arbitrationAccepted, _arbitrationRejected);
+        EnqueueArbitrationWinners();
+        ProcessArbitrationRejected();
+
+        return _queueCount > 0 || _executionCursor < _executionProposals.Count;
+    }
+
+    private void EnqueueArbitrationWinners()
+    {
+        for (int i = 0; i < _arbitrationAccepted.Count; i++)
+        {
+            ExecutionCommand command = _arbitrationAccepted[i];
+            Troop troop = Session.Current.GetTroopByGuid(command.TroopId);
+            if (troop == null)
+                throw new InvalidOperationException($"ExecutionCommand references missing troop: GUID={command.TroopId}");
+
+            if (troop.Destroyed)
+            {
+                continue;
+            }
+
+            EnqueueTroop(troop);
+            TrackProcessedCommand(troop, command.ActionKind);
+        }
+    }
+
+    private void ProcessArbitrationRejected()
+    {
+        if (_arbitrationRejected.Count == 0)
+        {
+            return;
+        }
+
+        ArbitrationRejectedCommands += _arbitrationRejected.Count;
+
+        GameScenario scenario = Session.Current?.Scenario;
+        if (scenario == null)
+        {
+            return;
+        }
+
+        bool authorityEnabled = Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1;
+        AIAuthorityContext authorityContext = authorityEnabled ? scenario.EnsureAIAuthorityContext() : null;
+
+        for (int i = 0; i < _arbitrationRejected.Count; i++)
+        {
+            ExecutionCommand rejected = _arbitrationRejected[i];
+            Troop troop = Session.Current.GetTroopByGuid(rejected.TroopId);
+            if (troop == null || troop.Destroyed)
+            {
+                continue;
+            }
+
+            if (authorityContext != null)
+            {
+                Point failedAt = rejected.ResolveSpatialPosition();
+                authorityContext.HandleExecutorFailure(
+                    scenario,
+                    troop,
+                    TroopIntentFailureReason.ArbitrationLost,
+                    failedAt.X >= 0 && failedAt.Y >= 0 ? failedAt : troop.Position,
+                    ResolveRelatedWinnerObjectId(rejected),
+                    IntentCheckpointKind.AfterBlocked,
+                    shouldReplanNow: false);
+            }
+            else
+            {
+                troop.CurrentAIState = TroopAIState.Waiting;
+                troop.SetCommand(TroopCommand.None);
+            }
+
+            troop.OperationDone = true;
+        }
+    }
+
+    private int ResolveRelatedWinnerObjectId(ExecutionCommand rejected)
+    {
+        if (!rejected.IsSpatialConflictAction || !rejected.HasTargetPosition)
+        {
+            return -1;
+        }
+
+        int key = rejected.ResolveCellKey();
+        for (int i = 0; i < _arbitrationAccepted.Count; i++)
+        {
+            ExecutionCommand winner = _arbitrationAccepted[i];
+            if (!winner.IsSpatialConflictAction || !winner.HasTargetPosition) continue;
+            if (winner.ResolveCellKey() != key) continue;
+
+            Troop winnerTroop = Session.Current.GetTroopByGuid(winner.TroopId);
+            return winnerTroop?.ID ?? -1;
+        }
+
+        return -1;
+    }
+    
+    private bool RefillQueueLegacy()
     {
         if (_commandBuffer.EnterQueue.TryDequeue(out EnterCommand enterCmd))
         {
@@ -548,6 +757,90 @@ public class CommandBufferScheduler
         
         return false;
     }
+
+    private void TrackProcessedCommand(Troop troop, ExecutionActionKind actionKind)
+    {
+        switch (actionKind)
+        {
+            case ExecutionActionKind.Enter:
+                ProcessedEnterCommands++;
+                break;
+            case ExecutionActionKind.Move:
+                ProcessedMoveCommands++;
+                break;
+            case ExecutionActionKind.AttackTroop:
+                ProcessedAttackTroopCommands++;
+                if (troop.CurrentStratagem != null)
+                    ProcessedStratagemAttacks++;
+                else if (troop.CurrentCombatMethod != null)
+                    ProcessedCombatMethodAttacks++;
+                else
+                    ProcessedDirectAttacks++;
+                break;
+            case ExecutionActionKind.AttackArchitecture:
+                ProcessedAttackArchCommands++;
+                break;
+            case ExecutionActionKind.Stratagem:
+                ProcessedStratagemCommands++;
+                break;
+        }
+    }
+
+    private void RecordExecutionCommand(
+        Troop troop,
+        ExecutionActionKind actionKind,
+        Point targetPosition,
+        Point conflictPosition,
+        Guid targetTroopId,
+        int targetArchitectureId,
+        int priorityTier,
+        int riskBudget = 0)
+    {
+        if (troop == null) throw new ArgumentNullException(nameof(troop));
+
+        int priority = ResolveExecutionPriority(troop, priorityTier);
+        int commitTick = ResolveCommitTick(actionKind, _buildIssuedTick);
+        int sourceFactionId = troop.BelongedFaction?.ID ?? -1;
+        int sourceLegionId = troop.BelongedLegion?.ID ?? -1;
+
+        ExecutionCommand command = new(
+            troop.Id,
+            actionKind,
+            targetPosition,
+            conflictPosition,
+            targetTroopId,
+            targetArchitectureId,
+            priority,
+            _buildIssuedTick,
+            commitTick,
+            Math.Max(0, riskBudget),
+            sourceFactionId,
+            sourceLegionId);
+
+        _executionProposals.Add(command);
+        _executionFrame.Add(command);
+    }
+
+    private static int ResolveCommitTick(ExecutionActionKind actionKind, int issuedTick)
+    {
+        return actionKind switch
+        {
+            ExecutionActionKind.Enter => issuedTick,
+            ExecutionActionKind.AttackTroop => issuedTick + 1,
+            ExecutionActionKind.AttackArchitecture => issuedTick + 1,
+            ExecutionActionKind.Stratagem => issuedTick + 1,
+            ExecutionActionKind.Move => issuedTick + 2,
+            _ => issuedTick + 2
+        };
+    }
+
+    private static int ResolveExecutionPriority(Troop troop, int priorityTier)
+    {
+        int mobilityScore = Math.Clamp(troop.RealMovability, 0, 255);
+        int commandScore = troop.Leader?.Command ?? 0;
+        int moraleScore = Math.Clamp(troop.Morale / 2, 0, 100);
+        return priorityTier + mobilityScore * 4 + commandScore * 2 + moraleScore;
+    }
     
     private void GenerateMoveCommand(Troop troop)
     {
@@ -557,6 +850,16 @@ public class CommandBufferScheduler
                 troop.Id, 
                 troop.RealDestination, 
                 MoveCommand.PriorityNormalMove));
+
+            RecordExecutionCommand(
+                troop,
+                ExecutionActionKind.Move,
+                troop.RealDestination,
+                troop.ResolveImmediateConflictPosition(troop.RealDestination),
+                Guid.Empty,
+                -1,
+                PriorityTierMove,
+                troop.stuckedFor);
         }
     }
     
@@ -576,6 +879,15 @@ public class CommandBufferScheduler
             troop.Id,
             troop.TargetArchitecture.ID,
             troop.RealDestination));
+
+        RecordExecutionCommand(
+            troop,
+            ExecutionActionKind.Enter,
+            troop.RealDestination,
+            troop.ResolveImmediateConflictPosition(troop.RealDestination),
+            Guid.Empty,
+            troop.TargetArchitecture.ID,
+            PriorityTierEnter);
     }
     
     private void GenerateAttackTroopCommand(Troop troop)
@@ -606,6 +918,15 @@ public class CommandBufferScheduler
             troop.Id,
             troop.TargetTroop.Id,
             troop.RealDestination));
+
+        RecordExecutionCommand(
+            troop,
+            ExecutionActionKind.AttackTroop,
+            troop.RealDestination,
+            troop.ResolveImmediateConflictPosition(troop.RealDestination),
+            troop.TargetTroop.Id,
+            -1,
+            PriorityTierAttackTroop);
     }
     
     private void GenerateAttackArchCommand(Troop troop)
@@ -641,6 +962,15 @@ public class CommandBufferScheduler
             troop.Id,
             troop.TargetArchitecture.ID,
             troop.RealDestination));
+
+        RecordExecutionCommand(
+            troop,
+            ExecutionActionKind.AttackArchitecture,
+            troop.RealDestination,
+            troop.ResolveImmediateConflictPosition(troop.RealDestination),
+            Guid.Empty,
+            troop.TargetArchitecture.ID,
+            PriorityTierAttackArchitecture);
     }
     
     private void GenerateLegacyAttackCommand(Troop troop)
@@ -670,6 +1000,16 @@ public class CommandBufferScheduler
             troop.Id,
             fallbackTarget,
             MoveCommand.PriorityNormalMove));
+
+        RecordExecutionCommand(
+            troop,
+            ExecutionActionKind.Move,
+            fallbackTarget,
+            troop.ResolveImmediateConflictPosition(fallbackTarget),
+            Guid.Empty,
+            -1,
+            PriorityTierMove,
+            troop.stuckedFor);
     }
     
     private void GenerateStratagemCommand(Troop troop)
@@ -683,6 +1023,15 @@ public class CommandBufferScheduler
             troop.Id,
             targetId,
             troop.CurrentStratagem.ID));
+
+        RecordExecutionCommand(
+            troop,
+            ExecutionActionKind.Stratagem,
+            troop.Position,
+            new Point(-1, -1),
+            targetId,
+            -1,
+            PriorityTierStratagem);
     }
     
     /// <summary>

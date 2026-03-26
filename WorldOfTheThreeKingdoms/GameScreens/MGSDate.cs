@@ -35,10 +35,20 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private bool AfterDayStarting(GameTime gameTime)
         {
+            bool enableAIAuthorityPhase1 =
+                Session.GlobalVariables != null &&
+                Session.GlobalVariables.EnableAIAuthorityPhase1;
+
+            if (enableAIAuthorityPhase1 && Session.Current?.Scenario != null)
+            {
+                var authorityContext = Session.Current.Scenario.EnsureAIAuthorityContext();
+                authorityContext.BeginLogicFrame(Session.Current.Scenario);
+            }
+
             // 🔥 2026-03-23 灰度开关：CommandBufferScheduler vs 旧系统
             // 策略：同一帧只允许一个调度器落盘，避免双写
             bool useCommandBufferScheduler =
-                Session.GlobalVariables.EnableCommandBufferScheduler &&
+                (enableAIAuthorityPhase1 || Session.GlobalVariables.EnableCommandBufferScheduler) &&
                 Session.Current?.CommandBufferScheduler != null &&
                 Session.Current.CommandBufferScheduler.HasValidBuffer;
             

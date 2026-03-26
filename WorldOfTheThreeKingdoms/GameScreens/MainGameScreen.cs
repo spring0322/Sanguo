@@ -11659,7 +11659,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             }
             
             // 初始化AI管理器（如果尚未初始化且场景可用）
-            if (_aiManager == null && Session.Current?.Scenario?.Troops != null)
+            bool enableAIAuthorityPhase1 = Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1;
+            if (!enableAIAuthorityPhase1 && _aiManager == null && Session.Current?.Scenario?.Troops != null)
             {
                 // 缓存列表
                 var troopList = Session.Current.Scenario.Troops.GetList().Cast<Troop>().ToList();
@@ -11735,14 +11736,14 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             
             // 🧠 更新AI决策系统 - 基于记忆驱动的三步式AI逻辑
             // 🔥 关键修复：只在回合引擎未运行时更新AI，避免线程冲突
-            if (this.Plugins.DateRunnerPlugin != null && !this.Plugins.DateRunnerPlugin.IsRunning)
+            if (!enableAIAuthorityPhase1 && this.Plugins.DateRunnerPlugin != null && !this.Plugins.DateRunnerPlugin.IsRunning)
             {
                 UpdateAIDecisionSystem(gameTime);
             }
             
             // 更新AI系统 - 性能优化：减少GetList()调用频率
             // 🔥 关键修复：只在回合引擎未运行时更新AI，避免线程冲突
-            if (_aiManager != null && Session.Current?.Scenario?.Troops != null && 
+            if (!enableAIAuthorityPhase1 && _aiManager != null && Session.Current?.Scenario?.Troops != null && 
                 this.Plugins.DateRunnerPlugin != null && !this.Plugins.DateRunnerPlugin.IsRunning)
             {
                 // 只在必要时更新部队列表（每60帧更新一次，约1秒）

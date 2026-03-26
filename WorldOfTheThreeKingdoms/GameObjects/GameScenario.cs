@@ -107,6 +107,13 @@ namespace GameObjects
         //public Dictionary<Event, Architecture> NoArchiEventsToApply = new Dictionary<Event, Architecture>();
 
         public bool EnableLoadAndSave = true;
+        public global::GameObjects.AI.AIAuthorityContext AIAuthorityContext { get; private set; }
+
+        public global::GameObjects.AI.AIAuthorityContext EnsureAIAuthorityContext()
+        {
+            AIAuthorityContext ??= new global::GameObjects.AI.AIAuthorityContext();
+            return AIAuthorityContext;
+        }
 
         // public OngoingBattleList AllOngoingBattles = new OngoingBattleList();
 
@@ -2191,24 +2198,47 @@ namespace GameObjects
             // ------------------------------------------------------------------------------------------------
             // AI Integration Hook: Process High-Level Tactical Decisions
             // ------------------------------------------------------------------------------------------------
-            try
+            bool enableAIAuthorityPhase1 = Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1;
+            if (enableAIAuthorityPhase1)
             {
-                if (GameManager.AIManager.Instance != null)
+                try
                 {
-                    // Update troop list if needed (optional, ensures AI sees current troops)
-                    // GameManager.AIManager.Instance.UpdateTroopList(this.Troops.GetList());
+                    var authorityContext = EnsureAIAuthorityContext();
+                    authorityContext.BeginTurn(this);
 
-                    foreach (Faction faction in this.Factions)
+                    foreach (GameObject obj in this.Troops.GetList())
                     {
-                        if (faction == null || faction.Destroyed) continue;
-                        GameManager.AIManager.Instance.ProcessAllTroopDecisions(faction);
+                        Troop troop = obj is Troop t ? t : null;
+                        if (troop == null || troop.Destroyed) continue;
+                        authorityContext.ApplyIntentProjection(this, troop);
                     }
-                    // System.Diagnostics.Debug.WriteLine("[DayStartingEvent] AI Tactical Decisions Processed");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DayStartingEvent] AI Authority Phase1 Error: {ex.Message}");
                 }
             }
-            catch (Exception ex)
+            else
             {
-                System.Diagnostics.Debug.WriteLine($"[DayStartingEvent] AI Decision Error: {ex.Message}");
+                try
+                {
+                    if (GameManager.AIManager.Instance != null)
+                    {
+                        // Update troop list if needed (optional, ensures AI sees current troops)
+                        // GameManager.AIManager.Instance.UpdateTroopList(this.Troops.GetList());
+
+                        foreach (Faction faction in this.Factions)
+                        {
+                            if (faction == null || faction.Destroyed) continue;
+                            GameManager.AIManager.Instance.ProcessAllTroopDecisions(faction);
+                        }
+                        // System.Diagnostics.Debug.WriteLine("[DayStartingEvent] AI Tactical Decisions Processed");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DayStartingEvent] AI Decision Error: {ex.Message}");
+                }
             }
             // ------------------------------------------------------------------------------------------------
 
@@ -2228,7 +2258,7 @@ namespace GameObjects
             // 🔥 2026-03-23 新增：构建 CommandBuffer（在 BuildQueue 之后）
             // 原因：BuildQueue 包含回合初始化副作用（InitializeInQueue、标志复位等）
             // 顺序：必须先执行 BuildQueue 的副作用，再生成 CommandBuffer
-            if (Session.GlobalVariables.EnableCommandBufferScheduler && Session.Current?.CommandBufferScheduler != null)
+            if ((enableAIAuthorityPhase1 || Session.GlobalVariables.EnableCommandBufferScheduler) && Session.Current?.CommandBufferScheduler != null)
             {
                 try
                 {
@@ -4155,6 +4185,12 @@ namespace GameObjects
             if (this.PlayerFactions.Count > 0)
             {
                 return this.PlayerFactions.GetGameObject(faction.ID) != null;
+            }
+
+            // 观察模式硬闸：PlayerFactions 为空且 CurrentPlayerID=-1 时，任何势力都不是玩家势力
+            if (this.CurrentPlayerID == "-1")
+            {
+                return false;
             }
             
             // 🔥 修复：如果 PlayerFactions 为空，使用 CurrentPlayer 判断
@@ -11132,14 +11168,10 @@ namespace GameObjects
 
         public void SetPlayerFactionList(GameObjectList factions)
         {
-            // 🔥 防御性检查：如果传入空列表，保持原有 PlayerFactions 不变
-            // 🔥 修复：允许传入空列表（实现 AI 接管所有势力的观察者模式）
+            // 统一将 null 视为“空玩家势力列表”，避免切换观察模式时保留旧玩家身份
             if (factions == null)
             {
-                #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[SetPlayerFactionList] Factions arg is null.");
-                #endif
-                return;
+                factions = new GameObjectList();
             }
             
             this.PlayerFactions.Clear();
@@ -11147,9 +11179,24 @@ namespace GameObjects
             {
                 this.PlayerFactions.Add(faction);
             }
+
+            if (this.PlayerFactions.Count == 0)
+            {
+                this.CurrentPlayer = null;
+                this.CurrentPlayerID = "-1";
+            }
+            else
+            {
+                if (this.CurrentPlayer == null || this.PlayerFactions.GetGameObject(this.CurrentPlayer.ID) == null)
+                {
+                    this.CurrentPlayer = this.PlayerFactions[0] as Faction;
+                }
+                this.CurrentPlayerID = this.CurrentPlayer.ID.ToString();
+            }
             
             #if DEBUG
             System.Diagnostics.Debug.WriteLine($"[SetPlayerFactionList] PlayerFactions 已更新: {this.PlayerFactions.Count} 个势力");
+            System.Diagnostics.Debug.WriteLine($"[SetPlayerFactionList] CurrentPlayer: {this.CurrentPlayer?.Name ?? "null"}, CurrentPlayerID: {this.CurrentPlayerID ?? "null"}");
             #endif
         }
 

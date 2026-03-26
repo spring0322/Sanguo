@@ -1,6 +1,7 @@
 #nullable disable
 
 using WorldOfTheThreeKingdoms.GameGlobal;
+using GameObjects.AI;
 using GameObjects.Animations;
 using GameObjects.ArchitectureDetail;
 using GameObjects.Conditions;
@@ -6587,7 +6588,7 @@ namespace GameObjects
                     (military.Merit > 0)
                     )) //do not use transport teams to attack
                 {
-                    TroopList candidates = this.AISelectPersonIntoTroop(this, military, true);
+                    TroopList candidates = this.AISelectPersonIntoTroop(this, military, true, destination);
                     foreach (Troop t in candidates)
                     {
                         // 🔥 AI Dispatch Capability Check
@@ -9392,7 +9393,7 @@ namespace GameObjects
             return r;
         }
 
-        private TroopList AISelectPersonIntoTroop(Architecture from, Military military, bool offensive)
+        private TroopList AISelectPersonIntoTroop(Architecture from, Military military, bool offensive, Architecture targetArchitecture = null)
         {
             TroopList result = new TroopList();
             if (military.FollowedLeader != null && from.PersonsExcludeNvGuan.HasGameObject(military.FollowedLeader) && military.FollowedLeader.LocationTroop == null
@@ -9433,7 +9434,63 @@ namespace GameObjects
                     }
                 }
             }
+
+            RankTroopCandidatesByCommanderEnergy(result, offensive, from, targetArchitecture);
             return result;
+        }
+
+        private static void RankTroopCandidatesByCommanderEnergy(
+            TroopList candidates,
+            bool offensive,
+            Architecture sourceArchitecture,
+            Architecture targetArchitecture)
+        {
+            if (candidates == null || candidates.Count < 2) return;
+            if (candidates.GameObjects == null || candidates.GameObjects.Count < 2) return;
+
+            List<GameObject> candidateObjects = candidates.GameObjects;
+            for (int i = 1; i < candidateObjects.Count; i++)
+            {
+                GameObject key = candidateObjects[i];
+                Troop keyTroop = key as Troop;
+                if (keyTroop == null)
+                {
+                    throw new InvalidOperationException(
+                        $"[RankTroopCandidatesByCommanderEnergy] 候选列表存在非 Troop 对象：{key?.GetType().Name ?? "null"}");
+                }
+
+                int keyScore = CommanderEnergyScoring.CalculateCandidateScore(
+                    keyTroop,
+                    offensive,
+                    sourceArchitecture,
+                    targetArchitecture);
+
+                int j = i - 1;
+                while (j >= 0)
+                {
+                    Troop currentTroop = candidateObjects[j] as Troop;
+                    if (currentTroop == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"[RankTroopCandidatesByCommanderEnergy] 候选列表存在非 Troop 对象：{candidateObjects[j]?.GetType().Name ?? "null"}");
+                    }
+
+                    int currentScore = CommanderEnergyScoring.CalculateCandidateScore(
+                        currentTroop,
+                        offensive,
+                        sourceArchitecture,
+                        targetArchitecture);
+                    if (currentScore >= keyScore)
+                    {
+                        break;
+                    }
+
+                    candidateObjects[j + 1] = candidateObjects[j];
+                    j--;
+                }
+
+                candidateObjects[j + 1] = key;
+            }
         }
 
         private void DefensiveCampaign(TroopList quickBattleList)

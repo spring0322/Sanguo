@@ -7229,6 +7229,11 @@ namespace GameObjects
 
         public void DoCombatAction()
         {
+            if (!this.ValidateIntentCheckpoint(IntentCheckpointKind.BeforeAttackCommit))
+            {
+                return;
+            }
+
             #if DEBUG
             if (this.ManualControl)
             {
@@ -16453,6 +16458,11 @@ namespace GameObjects
 
         public bool ToDoCombatAction()
         {
+            if (!this.ValidateIntentCheckpoint(IntentCheckpointKind.BeforeCombatCheck))
+            {
+                return false;
+            }
+
             // 1. 委托给纯函数路由层进行真值判定
             bool canExecute = TroopStateMachineRouter.CanExecuteCombatAction(this);
 
@@ -16463,6 +16473,88 @@ namespace GameObjects
             }
 
             return canExecute;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool ValidateIntentCheckpoint(IntentCheckpointKind checkpoint)
+        {
+            if (Session.GlobalVariables == null || !Session.GlobalVariables.EnableAIAuthorityPhase1) return true;
+
+            GameScenario scenario = Session.Current?.Scenario;
+            if (scenario == null) return true;
+
+            AIAuthorityContext authorityContext = scenario.EnsureAIAuthorityContext();
+            return authorityContext.ValidateAndHandleIntentCheckpoint(scenario, this, checkpoint);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool TryGetAuthorityContext(out GameScenario scenario, out AIAuthorityContext authorityContext)
+        {
+            scenario = Session.Current?.Scenario;
+            authorityContext = null;
+            if (Session.GlobalVariables == null || !Session.GlobalVariables.EnableAIAuthorityPhase1 || scenario == null) return false;
+            authorityContext = scenario.EnsureAIAuthorityContext();
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int GetCompatWaitCount()
+        {
+            if (TryGetAuthorityContext(out _, out AIAuthorityContext authorityContext))
+            {
+                return authorityContext.GetFriendlyBlockEscalation(this);
+            }
+
+            return this.WaitCount;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void SetCompatWaitCount(int value)
+        {
+            int normalized = value < 0 ? 0 : value;
+            this.WaitCount = normalized;
+            if (TryGetAuthorityContext(out _, out AIAuthorityContext authorityContext))
+            {
+                authorityContext.SetFriendlyBlockEscalation(this, normalized);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void IncrementCompatWaitCount()
+        {
+            SetCompatWaitCount(GetCompatWaitCount() + 1);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ResetCompatWaitCount()
+        {
+            SetCompatWaitCount(0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void SyncCompatStuckCounter(bool pathFailEvent = false)
+        {
+            if (TryGetAuthorityContext(out _, out AIAuthorityContext authorityContext))
+            {
+                authorityContext.SyncStuckCounter(this, this.stuckedFor, pathFailEvent);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ClearCompatStuckCounter()
+        {
+            if (TryGetAuthorityContext(out _, out AIAuthorityContext authorityContext))
+            {
+                authorityContext.ClearStuckCounter(this);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool ReportBlockedIntentFailure()
+        {
+            SyncCompatStuckCounter();
+            ValidateIntentCheckpoint(IntentCheckpointKind.AfterBlocked);
+            return false;
         }
 
         public override string ToString()
@@ -21851,6 +21943,11 @@ namespace GameObjects
                 return;
             }
 
+            if (!this.ValidateIntentCheckpoint(IntentCheckpointKind.BeforeStepMove))
+            {
+                return;
+            }
+
             // 2. 更新移动冷却
             if (gameTime != null && _moveStepCooldown > 0)
             {
@@ -22014,7 +22111,9 @@ namespace GameObjects
                 //       导致 _isPathfinding 一直为 true，IsAnimationPlaying 返回 true
                 //       CurrentQueueTroopMove 每帧调用 UpdateMovementLogic，陷入死循环
                 // 解决：在调用 RequestPathAsync 之前，检查是否已经在寻路中
-                if (!_isPathfinding && HasValidDestination())
+                if (!_isPathfinding &&
+                    HasValidDestination() &&
+                    this.ValidateIntentCheckpoint(IntentCheckpointKind.BeforePathRequest))
                 {
                     RequestPathAsync(gameTime);
                     // 🔥 根本修复：不要设置 Action = Move
@@ -22309,6 +22408,7 @@ namespace GameObjects
                 {
                     this.HasPath = true;
                     this.stuckedFor = 0; // 成功算路，清零卡顿计数
+                    ClearCompatStuckCounter();
                     
                     // [关键] 把新路径转换一下，方便第二步读取
                     if (pathPoints != null && pathPoints.Count > 0)
@@ -22355,6 +22455,7 @@ namespace GameObjects
                 
                 // 直接增加卡顿计数，让下一帧的 AIResetDestination 触发"熔断机制"（撤退或随机移动）
                 this.stuckedFor += 10;
+                SyncCompatStuckCounter(pathFailEvent: true);
             }
         }
 
@@ -22861,7 +22962,8 @@ namespace GameObjects
                 System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 军团{this.BelongedLegion.Name}已完成");
                 
                 // 解散军团
-                this.BelongedLegion = null;
+                Legion completedLegion = this.BelongedLegion;
+                completedLegion.RemoveTroop(this);
                 
                 // 🔥 关键修复：根据 RealDestination 和 WillArchitecture 决定下一步状态
                 if (this.WillArchitecture != null && 
@@ -24076,6 +24178,46 @@ namespace GameObjects
             return null;
         }
 
+        internal Point ResolveImmediateConflictPosition(Point fallbackTarget)
+        {
+            Point? nextPoint = GetNextPathPoint();
+            if (nextPoint.HasValue)
+            {
+                Point candidate = nextPoint.Value;
+                int dx = Math.Abs(candidate.X - this.Position.X);
+                int dy = Math.Abs(candidate.Y - this.Position.Y);
+                if (candidate != this.Position && dx <= 1 && dy <= 1)
+                {
+                    return candidate;
+                }
+            }
+
+            Point expected = this.NextExpectedPosition;
+            if (expected.X >= 0 && expected.Y >= 0)
+            {
+                int dx = Math.Abs(expected.X - this.Position.X);
+                int dy = Math.Abs(expected.Y - this.Position.Y);
+                if (expected != this.Position && dx <= 1 && dy <= 1)
+                {
+                    return expected;
+                }
+            }
+
+            if (fallbackTarget.X < 0 || fallbackTarget.Y < 0)
+            {
+                return this.Position;
+            }
+
+            if (fallbackTarget == this.Position)
+            {
+                return fallbackTarget;
+            }
+
+            int stepX = Math.Sign(fallbackTarget.X - this.Position.X);
+            int stepY = Math.Sign(fallbackTarget.Y - this.Position.Y);
+            return new Point(this.Position.X + stepX, this.Position.Y + stepY);
+        }
+
         /// <summary>
         /// 检查部队是否在当前屏幕视野内(且被玩家势力可见)
         /// </summary>
@@ -24202,7 +24344,7 @@ namespace GameObjects
                         }
                         
                         // 如果让路失败，尝试换位
-                        if (this.WaitCount >= 1 && CanSwapWith(blocker))
+                        if (GetCompatWaitCount() >= 1 && CanSwapWith(blocker))
                         {
                             ExecuteSwap(blocker);
                             return true;
@@ -24241,8 +24383,8 @@ namespace GameObjects
                     }
                     
                     // 所有策略都失败，记录等待次数，下次尝试换位
-                    this.WaitCount++;
-                    return false;
+                    IncrementCompatWaitCount();
+                    return this.ReportBlockedIntentFailure();
                 }
             }
 
@@ -24253,14 +24395,14 @@ namespace GameObjects
             if (chain.Contains(this.ID))
             {
                 System.Diagnostics.Debug.WriteLine($"[协同] {this.DisplayName} 检测到循环推动链，中止推动");
-                return false;
+                return this.ReportBlockedIntentFailure();
             }
             
             // 限制推动链长度，防止过长的连锁推动
             if (chain.Count >= 3)
             {
                 System.Diagnostics.Debug.WriteLine($"[协同] {this.DisplayName} 推动链长度已达{chain.Count}，防止过度连锁");
-                return false;
+                return this.ReportBlockedIntentFailure();
             }
 
             // 1. 【让路逻辑 Yield】: 请求前方友军让路
@@ -24268,7 +24410,7 @@ namespace GameObjects
             // 优先级：撤退 > 攻城 > 普通移动
             bool isHighPriority = this.CurrentAIState == TroopAIState.Retreating || 
                                   this.CurrentAIState == TroopAIState.Sieging ||
-                                  this.WaitCount >= 1; // 已经等待过1次的部队优先级提升
+                                  GetCompatWaitCount() >= 1; // 已经等待过1次的部队优先级提升
             
             if (isHighPriority)
             {
@@ -24318,13 +24460,13 @@ namespace GameObjects
             // 3. 【换位逻辑 Swap】: 死锁终极解决方案
             // 只有在我和他相邻，且我实在无路可走（已触发多次等待/绕路失败）时调用
             // 限定条件：只有非战斗状态才能换位，只有堵路的时候才可以换，而且发生换位的部队要冷却3回合
-            if (this.WaitCount >= 2 && CanSwapWith(blocker))
+            if (GetCompatWaitCount() >= 2 && CanSwapWith(blocker))
             {
                 ExecuteSwap(blocker);
                 return true;
             }
 
-            return false;
+            return this.ReportBlockedIntentFailure();
         }
 
         /// <summary>
@@ -24524,11 +24666,21 @@ namespace GameObjects
             int currentTurn = Session.Current?.Scenario?.DaySince ?? 0;
             this.LastSwapTurn = currentTurn;
             friendly.LastSwapTurn = currentTurn;
+            int cooldownUntilTick = currentTurn + 3;
+            if (TryGetAuthorityContext(out _, out AIAuthorityContext authorityContext))
+            {
+                authorityContext.SetSwapCooldown(this, cooldownUntilTick);
+                authorityContext.SetSwapCooldown(friendly, cooldownUntilTick);
+                authorityContext.SetFriendlyBlockEscalation(this, 0);
+                authorityContext.SetFriendlyBlockEscalation(friendly, 0);
+            }
 
             // 重置状态：换位后通常视为由于堵塞而采取的特殊行动，本回合可能无法再移动太远
             // 迫使双方重新评估路径（因为起点变了）
             this.ClearFirstTierPath();
             friendly.ClearFirstTierPath();
+            this.ResetCompatWaitCount();
+            friendly.ResetCompatWaitCount();
 
             System.Diagnostics.Debug.WriteLine($"[Swap] ⚡ 触发死锁换位: {this.DisplayName} <-> {friendly.DisplayName}");
         }
@@ -24867,6 +25019,12 @@ namespace GameObjects
         {
             get
             {
+                if (TryGetAuthorityContext(out GameScenario scenario, out AIAuthorityContext authorityContext) &&
+                    authorityContext.IsSwapCooldownActive(this, scenario.DaySince))
+                {
+                    return true;
+                }
+
                 if (LastSwapTurn == -1) return false;
                 int currentTurn = Session.Current?.Scenario?.DaySince ?? 0;
                 return (currentTurn - LastSwapTurn) < 3;
@@ -24940,6 +25098,12 @@ namespace GameObjects
                 }
             }
 
+            // D. 战区空间语义加权（能量/视野/补给）
+            cost += TheaterSpatialCosting.EvaluateAdditionalTacticalCost(this, neighbor);
+            if (cost < 1)
+            {
+                cost = 1;
+            }
 
             return cost;
         }
@@ -25010,7 +25174,7 @@ namespace GameObjects
                 // MoveToPosition(nextTile); // 方法缺失，使用原有移动逻辑
                 this.Position = nextTile;
                 this._firstTierPath.RemoveAt(0);
-                this.WaitCount = 0; // 重置等待计数
+                ResetCompatWaitCount(); // 重置等待计数
             }
         }
 
@@ -25047,8 +25211,9 @@ namespace GameObjects
 
                 // 3. 加上ZOC风险分（如果这个点被另外三个敌人包围，分数要很低）
                 int dangerScore = GetSurroundingEnemyCount(tile) * 10;
+                int theaterBonus = TheaterSpatialCosting.EvaluatePositionBonus(this, tile);
 
-                float totalScore = distCost + dangerScore;
+                float totalScore = distCost + dangerScore - theaterBonus;
                 if (totalScore < minCost)
                 {
                     minCost = totalScore;
