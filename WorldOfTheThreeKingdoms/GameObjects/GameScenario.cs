@@ -199,6 +199,62 @@ namespace GameObjects
             }
         }
 
+        public void InvalidateInfluenceEnergyCache()
+        {
+            _influenceEnergyCache.Clear();
+        }
+
+        private void EnsureCurrentFactionInfluenceMapsInitialized()
+        {
+            if (this.ScenarioMap == null)
+            {
+                throw new InvalidOperationException(
+                    "[GameScenario] ScenarioMap is null while syncing influence topology.");
+            }
+
+            int mapWidth = this.ScenarioMap.MapDimensions.X;
+            int mapHeight = this.ScenarioMap.MapDimensions.Y;
+            if (mapWidth <= 0 || mapHeight <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"[GameScenario] Invalid map size while syncing influence topology: {mapWidth}x{mapHeight}");
+            }
+
+            int expectedLength = mapWidth * mapHeight;
+            var factions = this.Factions.GetList();
+            int factionCount = factions.Count;
+
+            for (int i = 0; i < factionCount; i++)
+            {
+                if (factions[i] is not Faction faction)
+                {
+                    throw new InvalidOperationException(
+                        $"[GameScenario] Factions contains invalid entry at index {i} while syncing influence topology.");
+                }
+
+                if (faction.GlobalInfluenceMap == null || faction.GlobalInfluenceMap.Length != expectedLength)
+                {
+                    faction.InitializeInfluenceMap(mapWidth, mapHeight);
+                }
+            }
+        }
+
+        private void SyncInfluenceAfterFactionTopologyChange(string reason)
+        {
+            this.InvalidateInfluenceEnergyCache();
+            this.EnsureCurrentFactionInfluenceMapsInitialized();
+
+            var influenceUpdateManager = Session.MainGame?.mainGameScreen?._influenceUpdateManager;
+            if (influenceUpdateManager == null)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[GameScenario] InfluenceUpdateManager not ready, only initialized maps for topology change: {reason}");
+                return;
+            }
+
+            influenceUpdateManager.SyncAfterFactionTopologyChange(reason);
+        }
+
         [DataMember]
         public FactionListWithQueue Factions = new FactionListWithQueue();
 
@@ -1450,6 +1506,8 @@ namespace GameObjects
                     }
                 }
             }
+
+            this.SyncInfluenceAfterFactionTopologyChange($"CreateNewFaction:{newFaction.ID}");
             ScenarioEvents.RaiseNewFactionCreated(this, oldFaction, newFaction, newFactionCapital);
 
             this.YearTable.addNewFactionEntry(this.Date, oldFaction, newFaction, newFactionCapital);
@@ -8125,6 +8183,8 @@ namespace GameObjects
                     {
                         // Session.MainGame?.ShowVictoryScreen(this.Factions[0]);
                     }
+
+                    this.SyncInfluenceAfterFactionTopologyChange($"FactionDestroyed:{faction.ID}");
                 }
                 catch (Exception ex)
                 {

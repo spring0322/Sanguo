@@ -75,6 +75,74 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         MarkAllFactionsDirty();
     }
 
+    public void SyncAfterFactionTopologyChange(string reason)
+    {
+        var scenario = Session.Current.Scenario;
+        if (scenario == null)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceUpdateManager] Session.Current.Scenario is null while syncing faction topology.");
+        }
+
+        if (scenario.ScenarioMap == null)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceUpdateManager] ScenarioMap is null while syncing faction topology.");
+        }
+
+        int mapWidth = scenario.ScenarioMap.MapDimensions.X;
+        int mapHeight = scenario.ScenarioMap.MapDimensions.Y;
+        if (mapWidth <= 0 || mapHeight <= 0)
+        {
+            throw new InvalidOperationException(
+                $"[InfluenceUpdateManager] Invalid map size while syncing faction topology: {mapWidth}x{mapHeight}");
+        }
+
+        if (TerrainCostCache.MapWidth != mapWidth || TerrainCostCache.MapHeight != mapHeight)
+        {
+            TerrainCostCache.Initialize(mapWidth, mapHeight);
+        }
+
+        EnsureAllFactionInfluenceMapsInitialized(scenario, mapWidth, mapHeight);
+        scenario.InvalidateInfluenceEnergyCache();
+
+        var factions = scenario.Factions.GetList();
+        int factionCount = factions.Count;
+
+        for (int i = 0; i < factionCount; i++)
+        {
+            if (factions[i] is not Faction faction)
+            {
+                throw new InvalidOperationException(
+                    $"[InfluenceUpdateManager] Factions contains invalid entry at index {i} while syncing faction topology.");
+            }
+
+            RecalculateFactionInfluence(faction);
+        }
+
+        for (int i = 0; i < factionCount; i++)
+        {
+            if (factions[i] is not Faction faction)
+            {
+                throw new InvalidOperationException(
+                    $"[InfluenceUpdateManager] Factions contains invalid entry at index {i} while syncing faction topology.");
+            }
+
+            faction.ClearEnergyBasedIntelligence();
+        }
+
+        OnBeforeEnergyCompetition?.Invoke();
+        ApplyGlobalEnergyCompetition();
+
+        _needsFullRecalculation = false;
+        _factionCalculationIndex = 0;
+        _factionsToRecalculate = [];
+        _currentBatchIndex = 0;
+
+        System.Diagnostics.Debug.WriteLine(
+            $"[InfluenceUpdateManager] Completed immediate sync after faction topology change: {reason}");
+    }
+
     /// <summary>
     /// 🔥 新增：暂停分帧重算（回合切换时调用）
     /// </summary>
@@ -89,6 +157,33 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
     public void Resume()
     {
         _isPaused = false;
+    }
+
+    private static void EnsureAllFactionInfluenceMapsInitialized(GameScenario scenario, int mapWidth, int mapHeight)
+    {
+        if (scenario.Factions == null)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceUpdateManager] Scenario.Factions is null while ensuring faction influence maps.");
+        }
+
+        int expectedLength = mapWidth * mapHeight;
+        var factions = scenario.Factions.GetList();
+        int factionCount = factions.Count;
+
+        for (int i = 0; i < factionCount; i++)
+        {
+            if (factions[i] is not Faction faction)
+            {
+                throw new InvalidOperationException(
+                    $"[InfluenceUpdateManager] Factions contains invalid entry at index {i} while ensuring influence maps.");
+            }
+
+            if (faction.GlobalInfluenceMap == null || faction.GlobalInfluenceMap.Length != expectedLength)
+            {
+                faction.InitializeInfluenceMap(mapWidth, mapHeight);
+            }
+        }
     }
 
     /// <summary>
