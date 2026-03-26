@@ -244,6 +244,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 OfficerMerit = person.OfficerMerit,
                 WorkKind = (int)person.WorkKind,
                 OutsideTask = (int)person.OutsideTask,
+                OutsideDestination = person.OutsideDestination,
                 TaskDays = person.TaskDays,
                 Immortal = person.Immortal,
                 NvGuan = person.NvGuan,

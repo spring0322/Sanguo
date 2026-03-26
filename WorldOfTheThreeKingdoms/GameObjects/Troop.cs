@@ -217,7 +217,54 @@ namespace GameObjects
         {
             return AIRoleConfigManager.TryGetStuntCategory(stuntID, out var category)
                 ? category
-                : ActiveAbilityCategory.Utility;
+                : ActiveAbilityCategory.EnemyTargetedOffense;
+        }
+
+        private static int GetCombatActionPriority(CombatActionType actionType)
+        {
+            return actionType switch
+            {
+                CombatActionType.UseStunt => 500,
+                CombatActionType.CastCombatMethod => 490,
+                CombatActionType.UseSkill => 480,
+                CombatActionType.CastStratagem => 470,
+                CombatActionType.BasicAttack => 300,
+                CombatActionType.AttackArchitecture => 200,
+                CombatActionType.Move => 100,
+                CombatActionType.Defend => 50,
+                CombatActionType.Wait => 0,
+                _ => 0
+            };
+        }
+
+        private static bool IsOccupyArchitecturePlan(in CombatPlan plan)
+        {
+            return plan.ActionType == CombatActionType.Move &&
+                   plan.TargetArchitecture != null &&
+                   plan.TargetArchitecture.Endurance <= 0 &&
+                   plan.MoveDestination == plan.TargetArchitecture.Position;
+        }
+
+        private static int GetCombatPlanPriority(in CombatPlan plan)
+        {
+            if (IsOccupyArchitecturePlan(plan))
+            {
+                return 350;
+            }
+
+            return GetCombatActionPriority(plan.ActionType);
+        }
+
+        private static bool IsBetterCombatPlan(in CombatPlan candidate, in CombatPlan current)
+        {
+            int candidatePriority = GetCombatPlanPriority(candidate);
+            int currentPriority = GetCombatPlanPriority(current);
+            if (candidatePriority != currentPriority)
+            {
+                return candidatePriority > currentPriority;
+            }
+
+            return candidate.Score > current.Score;
         }
 
         /// <summary>
@@ -2087,10 +2134,11 @@ namespace GameObjects
                 else
                 {
                     // AI 控制部队：执行原有的自动分配逻辑
+                    Faction belongedFaction = this.BelongedFaction;
                     Architecture targetArch = this.WillArchitecture ?? this.StartingArchitecture;
                     if (targetArch != null)
                     {
-                        this.BelongedLegion = this.BelongedFaction.GetLegion(targetArch);
+                        this.BelongedLegion = belongedFaction.GetLegion(targetArch);
                     
                     // 🔥 双向检测：如果GetLegion返回null，说明没有合适的军团
                     if (this.BelongedLegion == null)
@@ -2108,40 +2156,16 @@ namespace GameObjects
                             // 如果当前状态是撤退（可能刚从军团里掉出来），优先找撤退军团
                             if (this.CurrentAIState == TroopAIState.Retreating)
                             {
-                                Architecture retreatTarget = this.WillArchitecture ?? this.StartingArchitecture;
+                                Architecture retreatTarget = targetArch;
                                 if (retreatTarget != null)
                                 {
-                                    this.BelongedLegion = this.BelongedFaction.GetOrCreateLegion(retreatTarget, LegionKind.AI, LegionMission.Retreat);
+                                    this.BelongedLegion = belongedFaction.GetOrCreateLegion(retreatTarget, LegionKind.AI, LegionMission.Retreat);
                                     this.IsRetreating = true; // 🔥 修复：必须设置撤退标志，否则军团会被CleanupCompletedLegions立即解散
                                 }
                             }
                             else 
                             {
-                                // 下面是原有的分配逻辑
-                                // ✅ 修复：根据目标归属决定军团类型
-                                // 如果目标建筑存在且不是己方势力（或者是敌对关系），则应分配进攻军团
-                                if (targetArch != null && !this.IsFriendly(targetArch.BelongedFaction))
-                                {
-                                    // 进攻敌方 -> 进攻军团
-                                    this.BelongedLegion = this.BelongedFaction.GetOrCreateLegion(targetArch, LegionKind.AI, LegionMission.Attack);
-                                    // System.Diagnostics.Debug.WriteLine($"[TroopAI] 自动纠正：目标为敌方 {targetArch.Name}，分配进攻军团");
-                                }
-                                else
-                                {
-                                    // 🔥 修复：玩家控制的部队不自动分配到 AI 军团
-                                    // 日期：2026-02-26
-                                    // 原因：玩家控制部队被分配到 Defensive 军团，AI 自动解散/重建导致失控
-                                    if (this.ManualControl)
-                                    {
-                                        // 玩家控制部队：分配到玩家专用军团
-                                        this.BelongedLegion = this.BelongedFaction.GetOrCreatePlayerLegion(targetArch);
-                                    }
-                                    else
-                                    {
-                                        // AI 控制部队：分配到默认军团
-                                        this.BelongedLegion = this.BelongedFaction.GetOrCreateDefaultLegion(targetArch);
-                                    }
-                                }
+                                this.BelongedLegion = belongedFaction.GetOrCreateDefaultLegion(targetArch);
                             }
                         }
                         
@@ -7584,13 +7608,24 @@ namespace GameObjects
             }
             if (!this.Moved)
             {
-                // 🔥 根本修复：同时重置 RealDestination 和 Destination，保持数据一致性
-                // 日期：2026-03-04
-                // 原因：只重置 Destination 会导致 RealDestination 和 Destination 不一致
-                //       下回合部队会因为 RealDestination={0,0} 而无法移动
-                // 解决：同时重置两个字段，确保数据一致
-                this.realDestination = this.Position;
-                this.destination = this.Position;
+                bool hasPendingArchitectureTarget = this.WillArchitecture != null && !this.ArrivedAtWillArchitecture();
+                bool hasPendingMoveTarget = IsValidDestination(this.RealDestination) && this.RealDestination != this.Position;
+                bool shouldPreserveDestination =
+                    this.IsRetreating ||
+                    this.CurrentAIState is TroopAIState.Marching or TroopAIState.Retreating or TroopAIState.EnterCity or TroopAIState.Waiting ||
+                    hasPendingArchitectureTarget ||
+                    hasPendingMoveTarget;
+
+                if (!shouldPreserveDestination)
+                {
+                    // 🔥 根本修复：同时重置 RealDestination 和 Destination，保持数据一致性
+                    // 日期：2026-03-04
+                    // 原因：只重置 Destination 会导致 RealDestination 和 Destination 不一致
+                    //       下回合部队会因为 RealDestination={0,0} 而无法移动
+                    // 解决：同时重置两个字段，确保数据一致
+                    this.realDestination = this.Position;
+                    this.destination = this.Position;
+                }
                 this.ClearFirstTierPath();
                 this.ClearSecondTierPath();
                 this.ClearThirdTierPath();
@@ -9719,17 +9754,6 @@ namespace GameObjects
                 }
             }
             
-            // 🔥 临时调试：输出关键数值
-            #if DEBUG
-            if (this.DisplayName.Contains("皇甫嵩"))
-            {
-                System.Diagnostics.Debug.WriteLine($"[GetPossibleMoveByPosition] {this.DisplayName} 检查位置 {position}:");
-                System.Diagnostics.Debug.WriteLine($"   距离: {distance}");
-                System.Diagnostics.Debug.WriteLine($"   战术成本: {tacticalCost}");
-                System.Diagnostics.Debug.WriteLine($"   当前移动力: {this.Movability}");
-                System.Diagnostics.Debug.WriteLine($"   检查结果: {(this.Movability >= tacticalCost ? "通过" : "失败")}");
-            }
-            #endif
             
             // 🔥 修复：移除 * 5，因为 tacticalCost 已经包含了地形成本（在 NextPositionCost 中已经乘过 5）
             // 日期：2026-03-12
@@ -10494,6 +10518,13 @@ namespace GameObjects
                     return bestArch;
                 }
 
+        private Point GetClosestFriendlyEntryPoint(Architecture architecture)
+        {
+            return Session.Current.Scenario.GetClosestPoint(
+                architecture.GetTroopEnterableArea(this),
+                this.Position);
+        }
+
 
         private void GoIntoArchitecture()
         {
@@ -10529,12 +10560,12 @@ namespace GameObjects
                     }
                     else
                     {
-                        this.RealDestination = Session.Current.Scenario.GetClosestPoint(this.WillArchitecture.ArchitectureArea, this.Position);
+                        this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                     }
                 }
                 else if (this.WillArchitecture.BelongedFaction == this.BelongedFaction)
                 {
-                    this.RealDestination = Session.Current.Scenario.GetClosestPoint(this.WillArchitecture.ArchitectureArea, this.Position);
+                    this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                 }
                 else if (!this.IsBaseViewingArchitecture(this.WillArchitecture))
                 {
@@ -12229,15 +12260,18 @@ namespace GameObjects
                             // 解决：使用较小的成本（min），而不是较大的（max）
                             num = this.GetCostByPosition(new Point(currentPosition.X - 1, currentPosition.Y), false, -1, kind);
                             num2 = this.GetCostByPosition(new Point(currentPosition.X, currentPosition.Y - 1), false, -1, kind);
-                            return (this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind) * 7);
+                            num = this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind);
+                            return num >= num3 ? num3 : (num * 7);
 
                         case 0:
-                            return (this.GetCostByPosition(nextPosition, false, -1, kind) * 5);
+                            num = this.GetCostByPosition(nextPosition, false, -1, kind);
+                            return num >= num3 ? num3 : (num * 5);
 
                         case 1:
                             num = this.GetCostByPosition(new Point(currentPosition.X - 1, currentPosition.Y), false, -1, kind);
                             num2 = this.GetCostByPosition(new Point(currentPosition.X, currentPosition.Y + 1), false, -1, kind);
-                            return (this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind) * 7);
+                            num = this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind);
+                            return num >= num3 ? num3 : (num * 7);
                     }
                     return num3;
 
@@ -12245,13 +12279,15 @@ namespace GameObjects
                     switch ((nextPosition.Y - currentPosition.Y))
                     {
                         case -1:
-                            return (this.GetCostByPosition(nextPosition, false, -1, kind) * 5);
+                            num = this.GetCostByPosition(nextPosition, false, -1, kind);
+                            return num >= num3 ? num3 : (num * 5);
 
                         case 0:
                             return 0xdac;
 
                         case 1:
-                            return (this.GetCostByPosition(nextPosition, false, -1, kind) * 5);
+                            num = this.GetCostByPosition(nextPosition, false, -1, kind);
+                            return num >= num3 ? num3 : (num * 5);
                     }
                     return num3;
 
@@ -12261,15 +12297,18 @@ namespace GameObjects
                         case -1:
                             num = this.GetCostByPosition(new Point(currentPosition.X + 1, currentPosition.Y), false, -1, kind);
                             num2 = this.GetCostByPosition(new Point(currentPosition.X, currentPosition.Y - 1), false, -1, kind);
-                            return (this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind) * 7);
+                            num = this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind);
+                            return num >= num3 ? num3 : (num * 7);
 
                         case 0:
-                            return (this.GetCostByPosition(nextPosition, false, -1, kind) * 5);
+                            num = this.GetCostByPosition(nextPosition, false, -1, kind);
+                            return num >= num3 ? num3 : (num * 5);
 
                         case 1:
                             num = this.GetCostByPosition(new Point(currentPosition.X + 1, currentPosition.Y), false, -1, kind);
                             num2 = this.GetCostByPosition(new Point(currentPosition.X, currentPosition.Y + 1), false, -1, kind);
-                            return (this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind) * 7);
+                            num = this.GetCostByPosition(nextPosition, true, (num < num2) ? num : num2, kind);
+                            return num >= num3 ? num3 : (num * 7);
                     }
                     return num3;
             }
@@ -14442,6 +14481,10 @@ namespace GameObjects
         {
             // 1. 状态检查（保留你原有的）
             if (Destroyed || !Controllable) return;
+            if (this.Status == TroopStatus.混乱 ||
+                this.Status == TroopStatus.挑衅 ||
+                this.Status == TroopStatus.伪报 ||
+                this.Status == TroopStatus.埋伏) return;
 
             // 2. 【频率锁】如果冷却未到，直接跳过
             // 这能减少 98% 的 CPU 开销
@@ -16266,6 +16309,15 @@ namespace GameObjects
             // 原因：如果 troop 为 null，说明调用方传入了错误数据，应该在调用方修复
             // 解决：使用断言验证调用方责任
             System.Diagnostics.Debug.Assert(troop != null, "[StartCastTroop] troop 不应为 null，检查调用方");
+
+            // 目标计略结算以 StartCastTroop 的参数为准。
+            // 某些 AI/执行路径会直接传入目标，但不会提前同步 OrientationTroop，
+            // 390-399/720/721 这类依赖施法者上下文的计略会因此读取到 null。
+            if (this.OrientationTroop != troop)
+            {
+                this.OrientationTroop = troop;
+                this.OrientationArchitecture = null;
+            }
             
             this.operationDone = true;
             
@@ -16292,9 +16344,25 @@ namespace GameObjects
                 #if DEBUG
                 int targetQuantityBefore = troop.Quantity;
                 #endif
-                
-                // 对主目标应用计略效果
-                this.CurrentStratagem.Apply(troop);
+
+                int areaCount = this.AreaStratagemTroops.Count;
+                #if DEBUG
+                int[] areaQuantitiesBefore = areaCount > 0 ? new int[areaCount] : [];
+                #endif
+
+                for (int i = 0; i < areaCount; i++)
+                {
+                    Troop areaTarget = (Troop)this.AreaStratagemTroops[i];
+                    System.Diagnostics.Debug.Assert(areaTarget != null && !areaTarget.Destroyed,
+                        "[StartCastTroop] AreaStratagemTroops 包含无效目标，检查添加逻辑");
+                    #if DEBUG
+                    areaQuantitiesBefore[i] = areaTarget.Quantity;
+                    #endif
+                }
+
+                // 对依赖施法者上下文的计略影响按施法者结算，
+                // 其余影响仍按主目标与范围目标逐个结算
+                this.CurrentStratagem.ApplyToTargetCast(this, troop, this.AreaStratagemTroops);
                 
                 #if DEBUG
                 int targetQuantityAfter = troop.Quantity;
@@ -16302,33 +16370,16 @@ namespace GameObjects
                 System.Diagnostics.Debug.WriteLine(
                     $"[StartCastTroop] {this.DisplayName} 立即结算计略 {this.CurrentStratagem.Name} → {troop.DisplayName}，" +
                     $"伤害={damage}，剩余兵力={targetQuantityAfter}");
-                #endif
-                
-                // 🔥 性能优化：使用 for 循环替代 foreach（Hot Path）
-                // 对范围内的其他目标应用效果
-                int areaCount = this.AreaStratagemTroops.Count;
                 for (int i = 0; i < areaCount; i++)
                 {
                     Troop areaTarget = (Troop)this.AreaStratagemTroops[i];
-                    // 🔥 Anti-Band-Aid：AreaStratagemTroops 应该在添加时保证有效性
-                    // 如果这里出现 null 或 Destroyed，说明数据源有问题
-                    System.Diagnostics.Debug.Assert(areaTarget != null && !areaTarget.Destroyed, 
-                        "[StartCastTroop] AreaStratagemTroops 包含无效目标，检查添加逻辑");
-                    
-                    #if DEBUG
-                    int areaQuantityBefore = areaTarget.Quantity;
-                    #endif
-                    
-                    this.CurrentStratagem.Apply(areaTarget);
-                    
-                    #if DEBUG
                     int areaQuantityAfter = areaTarget.Quantity;
-                    int areaDamage = areaQuantityBefore - areaQuantityAfter;
+                    int areaDamage = areaQuantitiesBefore[i] - areaQuantityAfter;
                     System.Diagnostics.Debug.WriteLine(
                         $"[StartCastTroop] {this.DisplayName} 范围结算 → {areaTarget.DisplayName}，" +
                         $"伤害={areaDamage}，剩余兵力={areaQuantityAfter}");
-                    #endif
                 }
+                #endif
             }
 
             if (Session.Current.Scenario.IsKnownToAnyPlayer(this) || Session.Current.Scenario.IsKnownToAnyPlayer(troop))
@@ -20824,7 +20875,7 @@ namespace GameObjects
                     {
                          if (this.BelongedLegion.WillArchitecture != null)
                          {
-                             this.RealDestination = this.BelongedLegion.WillArchitecture.ArchitectureArea.Centre;
+                             this.RealDestination = GetClosestFriendlyEntryPoint(this.BelongedLegion.WillArchitecture);
                          }
                     }
                 }
@@ -22467,73 +22518,28 @@ namespace GameObjects
         /// </summary>
         public bool GetPathDataOnly(Point start, Point end, MilitaryKind kind, out List<Point> resultPath)
         {
-            #if DEBUG
-            int threadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
-            bool isHuangfusong = this.DisplayName.Contains("皇甫嵩");
-            if (isHuangfusong)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 线程ID={threadId}, {this.DisplayName} 开始寻路: {start} → {end}");
-                System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 部队状态:");
-                System.Diagnostics.Debug.WriteLine($"   位置: {this.Position}");
-                System.Diagnostics.Debug.WriteLine($"   兵种: {this.Army.Kind.Name}");
-                System.Diagnostics.Debug.WriteLine($"   移动力: {this.Movability}");
-                System.Diagnostics.Debug.WriteLine($"   目标: {this.RealDestination}");
-                System.Diagnostics.Debug.WriteLine($"   Command: {this.Command}");
-                System.Diagnostics.Debug.WriteLine($"   CurrentAIState: {this.CurrentAIState}");
-            }
-            #endif
             
             // 临时实现：使用现有的寻路系统
             try
             {
                 bool success = this.pathFinder.GetFirstTierPath(start, end, kind);
                 
-                #if DEBUG
-                if (isHuangfusong)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 线程ID={threadId}, {this.DisplayName} 寻路结果={success}, _firstTierPath.Count={this._firstTierPath?.Count ?? -1}");
-                }
-                #endif
                 
                 if (success && this._firstTierPath != null && this._firstTierPath.Count > 0)
                 {
                     resultPath = new List<Point>(this._firstTierPath);
                     
-                    #if DEBUG
-                    if (isHuangfusong)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 线程ID={threadId}, {this.DisplayName} 复制路径成功, Count={resultPath.Count}");
-                        for (int i = 0; i < Math.Min(resultPath.Count, 3); i++)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly]   路径点 {i}: {resultPath[i]}");
-                        }
-                    }
-                    #endif
                     
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                #if DEBUG
-                if (isHuangfusong)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 线程ID={threadId}, {this.DisplayName} 异常: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 堆栈跟踪:\n{ex.StackTrace}");
-                }
-                #else
-                System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 异常: {ex.Message}");
-                #endif
+                System.Diagnostics.Debug.WriteLine($"异常: {ex.Message}");
             }
             
             resultPath = [];
             
-            #if DEBUG
-            if (isHuangfusong)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GetPathDataOnly] 线程ID={threadId}, {this.DisplayName} 返回空路径");
-            }
-            #endif
             
             return false;
         }
@@ -22915,7 +22921,7 @@ namespace GameObjects
                     {
                         this.WillArchitecture = retreatTarget;
                         // 🔥 数据验证：如果 ArchitectureArea 无效，让它崩溃，暴露数据源问题
-                        this.RealDestination = retreatTarget.ArchitectureArea.Centre;
+                        this.RealDestination = GetClosestFriendlyEntryPoint(retreatTarget);
                         System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 重新设置撤退目标: {retreatTarget.Name}");
                     }
                     else
@@ -22926,12 +22932,14 @@ namespace GameObjects
                         return;
                     }
                 }
-                else if (this.RealDestination == Point.Zero || this.RealDestination.X == -1)
+                else if (this.RealDestination == Point.Zero || this.RealDestination.X == -1 ||
+                         (this.RealDestination == this.Position &&
+                          !this.WillArchitecture.GetTroopEnterableArea(this).HasPoint(this.Position)))
                 {
                     // 🔥 修复：有目标但 RealDestination 无效，重新计算
                     // 不做防御性检查，如果 ArchitectureArea 无效，让 GetClosestPoint 抛出异常
                     System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 撤退目标有效但RealDest无效({this.RealDestination})，重新计算");
-                    this.RealDestination = Session.Current.Scenario.GetClosestPoint(this.WillArchitecture.ArchitectureArea, this.Position);
+                    this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                     System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 重新计算RealDest: {this.RealDestination}");
                 }
                 // 撤退军团有自己的目标，继续处理
@@ -22960,7 +22968,9 @@ namespace GameObjects
                         if (this.WillArchitecture.ArchitectureArea != null && 
                            (this.RealDestination.X == -1 || this.RealDestination == Point.Zero))
                         {
-                            this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                            this.RealDestination = this.WillArchitecture.BelongedFaction == this.BelongedFaction
+                                ? GetClosestFriendlyEntryPoint(this.WillArchitecture)
+                                : this.WillArchitecture.ArchitectureArea.Centre;
                         }
                     }
                     // 🔥 修复：如果WillArchitecture没变，但RealDestination无效，也要设置
@@ -22968,7 +22978,9 @@ namespace GameObjects
                     // 🔥 数据验证：如果ArchitectureArea为null，让它崩溃暴露数据源问题
                     else if (this.RealDestination.X == -1 || this.RealDestination == Point.Zero)
                     {
-                        this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                        this.RealDestination = this.WillArchitecture.BelongedFaction == this.BelongedFaction
+                            ? GetClosestFriendlyEntryPoint(this.WillArchitecture)
+                            : this.WillArchitecture.ArchitectureArea.Centre;
                         System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} RealDest无效，重新设置为目标中心: {this.RealDestination}");
                     }
                     // 如果WillArchitecture没变且RealDestination有效，就不要重新设置，保留SmartSiege分配的坐标
@@ -23032,9 +23044,9 @@ namespace GameObjects
 
                     if (this.CurrentAIState == TroopAIState.EnterCity)
                     {
-                        if (this.WillArchitecture != null && this.WillArchitecture.ArchitectureArea != null)
+                        if (this.WillArchitecture != null)
                         {
-                            this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                            this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                         }
                     }
                     else if (this.CurrentAIState == TroopAIState.Marching && 
@@ -23254,9 +23266,9 @@ namespace GameObjects
                         }
                         else if (this.CurrentAIState == TroopAIState.EnterCity)
                         {
-                            if (this.WillArchitecture != null && this.WillArchitecture.ArchitectureArea != null)
+                            if (this.WillArchitecture != null)
                             {
-                                this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                                this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                             }
                             System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 防守完毕无敌人，进城休整 RealDest:{this.RealDestination}");
                         }
@@ -23264,9 +23276,9 @@ namespace GameObjects
                         {
                             if (inDefenseRange)
                             {
-                                if (this.WillArchitecture != null && this.WillArchitecture.ArchitectureArea != null)
+                                if (this.WillArchitecture != null)
                                 {
-                                    this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                                    this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                                 }
                                 System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 防守完毕，返回城池 RealDest:{this.RealDestination}");
                             }
@@ -23288,9 +23300,9 @@ namespace GameObjects
                 else
                 {
                     // ✅ 目标是友方，直接设置RealDestination
-                    if (this.WillArchitecture != null && this.WillArchitecture.ArchitectureArea != null)
+                    if (this.WillArchitecture != null)
                     {
-                        this.RealDestination = this.WillArchitecture.ArchitectureArea.Centre;
+                        this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                     }
                 }
             }
@@ -23358,7 +23370,7 @@ namespace GameObjects
             
             // 🔥 修复：移除防御性检查，如果ArchitectureArea为null，让它崩溃暴露数据源问题
             // 遵循 Anti-Band-Aid Protocol：不掩盖数据错误
-            this.RealDestination = target.ArchitectureArea.Centre;
+            this.RealDestination = GetClosestFriendlyEntryPoint(target);
             
             // 🔥 修复：清空旧路径，让ExecuteMoveTurnAsync重新寻路
             if (this._firstTierPath != null) this.ClearFirstTierPath();
@@ -23492,6 +23504,15 @@ namespace GameObjects
             {
                 case TroopAIState.Retreating:
                 case TroopAIState.EnterCity:
+                    if (IsTargetFriendly())
+                    {
+                        this.GoIntoArchitecture();
+                        if (this.Destroyed)
+                        {
+                            return;
+                        }
+                    }
+
                     // 🔥 NEW: 使用异步移动系统
                     if (_currentMoveTask == null || _currentMoveTask.IsCompleted)
                     {
@@ -23507,8 +23528,6 @@ namespace GameObjects
                         
                         // 注意：IsAtTargetArchitecture检查将在下一次ExecuteTactics调用时（移动完成后）生效
                     }
-                    
-                    if (IsAtTargetArchitecture()) this.Enter(this.WillArchitecture);
                     break;
 
                 case TroopAIState.Marching:
@@ -24861,25 +24880,6 @@ namespace GameObjects
         {
             int cost = 1; // 基础移动消耗
 
-            // 🔥 临时调试：输出详细计算过程
-            #if DEBUG
-            bool isHuangfusong = this.DisplayName.Contains("皇甫嵩");
-            if (isHuangfusong)
-            {
-                int dx = Math.Abs(current.X - neighbor.X);
-                int dy = Math.Abs(current.Y - neighbor.Y);
-                int distance = Math.Max(dx, dy);
-                
-                System.Diagnostics.Debug.WriteLine($"[CalculateTacticalCost] {this.DisplayName} 计算 {current} → {neighbor}:");
-                System.Diagnostics.Debug.WriteLine($"   基础消耗: {cost}");
-                System.Diagnostics.Debug.WriteLine($"   距离: dx={dx}, dy={dy}, 切比雪夫距离={distance}");
-                
-                if (distance > 1)
-                {
-                    System.Diagnostics.Debug.WriteLine($"   ⚠️ 警告：距离 > 1，NextPositionCost 会返回 0xdac！");
-                }
-            }
-            #endif
 
             // A. 地形消耗
             try
@@ -24887,33 +24887,15 @@ namespace GameObjects
                 int terrainCost = Session.Current.Scenario.GetMoveCost(current, neighbor, this);
                 if (terrainCost >= 1000) 
                 {
-                    #if DEBUG
-                    if (isHuangfusong)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"   地形消耗: {terrainCost} (不可通行)");
-                    }
-                    #endif
                     return 9999; // 不可通行
                 }
                 cost += terrainCost;
                 
-                #if DEBUG
-                if (isHuangfusong)
-                {
-                    System.Diagnostics.Debug.WriteLine($"   地形消耗: {terrainCost}, 累计: {cost}");
-                }
-                #endif
             }
             catch
             {
                 cost += 5; // 默认地形消耗
                 
-                #if DEBUG
-                if (isHuangfusong)
-                {
-                    System.Diagnostics.Debug.WriteLine($"   地形消耗: 5 (异常默认), 累计: {cost}");
-                }
-                #endif
             }
 
             // B. 敌军 ZOC (Zone of Control) 威慑
@@ -24938,12 +24920,6 @@ namespace GameObjects
             {
                 cost += 15; // 惩罚值：相当于多走15格平地
                 
-                #if DEBUG
-                if (isHuangfusong)
-                {
-                    System.Diagnostics.Debug.WriteLine($"   敌军ZOC惩罚: 15, 累计: {cost}");
-                }
-                #endif
             }
 
             // C. 友军拥堵预测
@@ -24955,33 +24931,15 @@ namespace GameObjects
                 {
                     cost += 999;
                     
-                    #if DEBUG
-                    if (isHuangfusong)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"   友军阻挡({blockingAlly.DisplayName}, Stop): 999, 累计: {cost}");
-                    }
-                    #endif
                 }
                 // 如果友军也在移动，只是临时重叠，加一点消耗让AI稍微想办法绕一下
                 else
                 {
                     cost += 5;
                     
-                    #if DEBUG
-                    if (isHuangfusong)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"   友军拥堵({blockingAlly.DisplayName}, {blockingAlly.Action}): 5, 累计: {cost}");
-                    }
-                    #endif
                 }
             }
 
-            #if DEBUG
-            if (isHuangfusong)
-            {
-                System.Diagnostics.Debug.WriteLine($"   最终战术成本: {cost}");
-            }
-            #endif
 
             return cost;
         }
@@ -25617,6 +25575,20 @@ namespace GameObjects
                 }
                 
                 int cost = Session.Current.Scenario.GetMoveCost(this.Position, destination, this);
+                if (cost >= 0xdac)
+                {
+                    Troop blocker = Session.Current.Scenario.GetTroopByPosition(destination);
+                    if (blocker != null && blocker != this)
+                    {
+                        string relation = blocker.IsFriendly(this.BelongedFaction) ? "友军" : "敌军";
+                        System.Diagnostics.Debug.WriteLine($"[MoveTo_Logic] {this.DisplayName} 目标位置 {destination} 在移动结算前已被{relation} {blocker.DisplayName} 占用，取消移动");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MoveTo_Logic] {this.DisplayName} 目标位置 {destination} 不可通行，Cost={cost}");
+                    }
+                    return;
+                }
                 System.Diagnostics.Debug.WriteLine($"[MoveTo_Logic] {this.DisplayName} 尝试移动: {this.Position} → {destination}, Cost={cost}, MovLeft={this.MovabilityLeft}");
                 
                 if (this.MovabilityLeft >= cost)
@@ -25770,7 +25742,7 @@ namespace GameObjects
                 // 🔥 热路径优化：使用 for 循环替代 foreach
                 for (int i = 0; i < combatMethodCandidates.Count; i++)
                 {
-                    if (combatMethodCandidates[i].Score > bestPlanForTile.Score)
+                    if (IsBetterCombatPlan(combatMethodCandidates[i], bestPlanForTile))
                     {
                         bestPlanForTile = combatMethodCandidates[i];
                     }
@@ -25787,7 +25759,7 @@ namespace GameObjects
                 // 🔥 热路径优化：使用 for 循环替代 foreach
                 for (int i = 0; i < stratagemCandidates.Count; i++)
                 {
-                    if (stratagemCandidates[i].Score > bestPlanForTile.Score)
+                    if (IsBetterCombatPlan(stratagemCandidates[i], bestPlanForTile))
                     {
                         bestPlanForTile = stratagemCandidates[i];
                     }
@@ -25826,7 +25798,11 @@ namespace GameObjects
             }
 
             // 排序找最高分 (降序)
-            candidates.Sort((a, b) => b.Score.CompareTo(a.Score));
+            candidates.Sort((a, b) =>
+            {
+                int priorityCompare = GetCombatPlanPriority(b).CompareTo(GetCombatPlanPriority(a));
+                return priorityCompare != 0 ? priorityCompare : b.Score.CompareTo(a.Score);
+            });
             CombatPlan bestCandidate = candidates[0];
             
             // 🔍 调试输出：显示最终选择的方案
@@ -25913,7 +25889,7 @@ namespace GameObjects
             EvaluateSkills(tile, temps, true);
             foreach (var p in temps)
             {
-                if (p.Score > bestPlan.Score)
+                if (IsBetterCombatPlan(p, bestPlan))
                 {
                     bestPlan.ActionType = p.ActionType;
                     bestPlan.Score = p.Score;
@@ -25934,7 +25910,7 @@ namespace GameObjects
             EvaluateStunts(tile, temps, true);
             foreach (var p in temps)
             {
-                if (p.Score > bestPlan.Score)
+                if (IsBetterCombatPlan(p, bestPlan))
                 {
                     bestPlan.ActionType = p.ActionType;
                     bestPlan.Score = p.Score;
@@ -25970,19 +25946,24 @@ namespace GameObjects
                 // 计算评分
                 float attackScore = CalculateTroopAttackScoreEnhanced(enemy, tile);
 
-                if (attackScore > bestPlan.Score)
+                // 保持阵型奖励：如果不需要移动就能攻击，加分
+                if (tile == this.Position)
                 {
-                    // 保持阵型奖励：如果不需要移动就能攻击，加分
-                    if (tile == this.Position)
-                    {
-                        attackScore += 5.0f;
-                    }
+                    attackScore += 5.0f;
+                }
 
-                    bestPlan.MoveDestination = tile;
-                    bestPlan.Target = enemy;
-                    bestPlan.TargetArchitecture = null;
-                    bestPlan.Score = attackScore;
-                    bestPlan.ActionType = CombatActionType.BasicAttack;
+                CombatPlan candidatePlan = new CombatPlan
+                {
+                    MoveDestination = tile,
+                    Target = enemy,
+                    TargetArchitecture = null,
+                    Score = attackScore,
+                    ActionType = CombatActionType.BasicAttack
+                };
+
+                if (IsBetterCombatPlan(candidatePlan, bestPlan))
+                {
+                    bestPlan = candidatePlan;
                 }
             }
         }
@@ -26008,20 +25989,26 @@ namespace GameObjects
 
                 // 🔥 修复：如果建筑耐久为0且无守军，评估为移动占领
                 bool canOccupy = arch.Endurance <= 0 && !arch.HasContactHostileTroop(this.BelongedFaction);
+                bool isArchitectureCenter = tile == arch.Position;
                 bool isOnArchitecture = IsTileInArchitectureArea(tile, arch);
                 
-                if (canOccupy && isOnArchitecture)
+                if (canOccupy && isArchitectureCenter)
                 {
                     // 建筑可占领且在建筑位置上，评估为移动占领
                     float occupyScore = 1000f; // 占领优先级极高
-                    
-                    if (occupyScore > bestPlan.Score)
+
+                    CombatPlan candidatePlan = new CombatPlan
                     {
-                        bestPlan.MoveDestination = tile;
-                        bestPlan.Target = null;
-                        bestPlan.TargetArchitecture = arch;
-                        bestPlan.Score = occupyScore;
-                        bestPlan.ActionType = CombatActionType.Move; // 移动到建筑位置占领
+                        MoveDestination = tile,
+                        Target = null,
+                        TargetArchitecture = arch,
+                        Score = occupyScore,
+                        ActionType = CombatActionType.Move // 移动到建筑位置占领
+                    };
+
+                    if (IsBetterCombatPlan(candidatePlan, bestPlan))
+                    {
+                        bestPlan = candidatePlan;
                         System.Diagnostics.Debug.WriteLine($"[EvaluateArchitectureTargetsEnhanced] {this.DisplayName} 评估占领 {arch.Name} 分数={occupyScore}");
                     }
                 }
@@ -26029,14 +26016,19 @@ namespace GameObjects
                 {
                     // 不在建筑位置上，评估攻击
                     float archScore = CalculateArchitectureAttackScore(arch, tile);
-                    
-                    if (archScore > bestPlan.Score)
+
+                    CombatPlan candidatePlan = new CombatPlan
                     {
-                        bestPlan.MoveDestination = tile;
-                        bestPlan.Target = null;
-                        bestPlan.TargetArchitecture = arch;
-                        bestPlan.Score = archScore;
-                        bestPlan.ActionType = CombatActionType.AttackArchitecture;
+                        MoveDestination = tile,
+                        Target = null,
+                        TargetArchitecture = arch,
+                        Score = archScore,
+                        ActionType = CombatActionType.AttackArchitecture
+                    };
+
+                    if (IsBetterCombatPlan(candidatePlan, bestPlan))
+                    {
+                        bestPlan = candidatePlan;
                     }
                 }
                 // 如果在建筑位置上但不能占领（有守军或耐久>0），跳过
@@ -26309,15 +26301,10 @@ namespace GameObjects
                 {
                     availableStratagems.Add(stratagem);
                 }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 跳过计略 {stratagem.Name}(ID:{stratagem.ID})：不可用或未持有");
-                }
             }
 
             if (availableStratagems.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 无可用计略，跳过");
                 return;
             }
 
@@ -26331,7 +26318,6 @@ namespace GameObjects
             // 如果没有任何目标（敌人和友军都没有），直接返回
             if (enemies.Count == 0 && friends.Count == 0)
             {
-                System.Diagnostics.Debug.WriteLine($"[EvaluateStratagems] {this.DisplayName} 范围内无目标，跳过计略评估");
                 return;
             }
 
@@ -26493,7 +26479,7 @@ namespace GameObjects
             float roleCategoryModifier = 1f;
             if (IsOffensiveAbilityCategory(methodCategory))
             {
-                followUpAttackScore = CalculateTroopAttackScore(target, tile) * categoryModifier;
+                followUpAttackScore = CalculateTroopAttackScoreEnhanced(target, tile) * categoryModifier;
                 if (config.RoleCategoryModifiers.TryGetValue(roleKey, out var followUpRoleCategoryModifiers) &&
                     followUpRoleCategoryModifiers.TryGetValue(methodCategoryKey, out var followUpRoleCategoryModifier))
                 {
@@ -26512,13 +26498,20 @@ namespace GameObjects
                 }
             }
 
+            float successRate = GetCombatMethodSuccessRate(method, target);
+            if (successRate <= 0f)
+            {
+                return 0f;
+            }
+
             // 1. 使用 GetCredit 评估战法收益
             int baseCredit = method.GetCredit(this, target);
 
             // 如果底层影响没有提供显式收益，则回退到战法+后续普攻的战斗计划分
             if (baseCredit == 0)
             {
-                float fallbackScore = followUpAttackScore + influenceValueScore * config.BaseScoreMultiplier * categoryModifier * roleCategoryModifier;
+                float fallbackScore = followUpAttackScore
+                    + influenceValueScore * config.BaseScoreMultiplier * categoryModifier * roleCategoryModifier * successRate;
 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[CalculateCombatMethodScore] {this.DisplayName} method={method.Name}(ID:{method.ID}) target={target.DisplayName} baseCredit=0 fallbackScore={fallbackScore:F1} followUp={followUpAttackScore:F1} influenceValue={influenceValueScore:F1}");
 #endif
@@ -26530,6 +26523,7 @@ namespace GameObjects
 
             // 2. 转换为浮点评分（从配置读取乘数）
             float baseScore = baseCredit * config.BaseScoreMultiplier;
+            baseScore *= successRate;
 
             // 3. 引入环境修正（天时地利人和）
             baseScore *= terrainMultiplier;
@@ -27511,15 +27505,10 @@ namespace GameObjects
                 }
                 string evaluationModeSource = hasConfiguredEvaluationMode ? "AIRoleConfig" : "Fallback(CategoryBased)";
 
-#if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) category={skillCategory} source={skillCategorySource} evalMode={evaluationMode} evalSource={evaluationModeSource}");
-#endif
+
 
                 if (evaluationMode == ActiveAbilityEvaluationMode.Disabled)
                 {
-#if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) skip-offense-eval(skills-disabled)");
-#endif
                     continue;
                 }
 
@@ -27544,9 +27533,6 @@ namespace GameObjects
 
                     if (!this.HasCombatMethod(linkedMethod.ID))
                     {
-#if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) linkedMethod={linkedMethod.Name}(ID:{linkedMethod.ID}) skip-offense-eval(linked-method-not-usable)");
-#endif
                         continue;
                     }
 
@@ -27593,9 +27579,6 @@ namespace GameObjects
 
                 if (!IsOffensiveAbilityCategory(skillCategory))
                 {
-#if DEBUG
-                    System.Diagnostics.Debug.WriteLine($"[EvaluateSkills] {this.DisplayName} skill={skill.Name}(ID:{skill.ID}) category={skillCategory} source={skillCategorySource} skip-offense-eval(non-offensive-category)");
-#endif
                     continue;
                 }
 
@@ -27688,7 +27671,7 @@ namespace GameObjects
         {
             var config = WorldOfTheThreeKingdoms.GameGlobal.AITacticalConfigManager.GetSkillScoringConfig();
 
-            float baseScore = CalculateTroopAttackScore(target, tile) * (1.0f + skill.Level * config.LevelMultiplier);
+            float baseScore = CalculateTroopAttackScoreEnhanced(target, tile) * (1.0f + skill.Level * config.LevelMultiplier);
 
             string roleKey = this.CurrentRole.ToString();
             System.Diagnostics.Debug.Assert(config.RoleModifiers.ContainsKey(roleKey),
@@ -27769,9 +27752,9 @@ namespace GameObjects
                 bool hasConfiguredCategory = AIRoleConfigManager.TryGetStuntCategory(stunt.ID, out var stuntCategory);
                 if (!hasConfiguredCategory)
                 {
-                    stuntCategory = ActiveAbilityCategory.Utility;
+                    stuntCategory = GetEffectiveStuntCategory(stunt.ID);
                 }
-                string stuntCategorySource = hasConfiguredCategory ? "AIRoleConfig" : "Fallback(Utility)";
+                string stuntCategorySource = hasConfiguredCategory ? "AIRoleConfig" : "Fallback(EnemyTargetedOffense)";
 
                 if (!IsOffensiveAbilityCategory(stuntCategory))
                 {
@@ -27878,7 +27861,7 @@ namespace GameObjects
                 - stunt.Combativity * config.PowerMultiplierCombativityPenalty
             );
             
-            float baseScore = CalculateTroopAttackScore(target, tile) * powerMultiplier;
+            float baseScore = CalculateTroopAttackScoreEnhanced(target, tile) * powerMultiplier;
 
             // 战术角色修正（从配置读取）
             // 🔥 性能优化：使用 switch 表达式避免 ToString 分配

@@ -305,6 +305,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             person.OfficerMerit = dto.OfficerMerit;
             person.WorkKind = (ArchitectureWorkKind)dto.WorkKind;
             person.OutsideTask = (OutsideTaskKind)dto.OutsideTask;
+            person.OutsideDestination = dto.OutsideDestination;
             person.TaskDays = dto.TaskDays;
             person.Immortal = dto.Immortal;
             person.NvGuan = dto.NvGuan;
@@ -363,6 +364,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             person.LocationArchitectureID = dto.LocationArchitectureID;
             person.LocationTroopID = dto.LocationTroopID;
             person.ConvincingPersonID = dto.ConvincingPersonID;
+            RepairLegacyOutsideTaskState(person, enableDebugOutput);
             // LocationArchitecture、LocationTroop 和 ConvincingPerson 将在 Link Phase 中设置
             
             // Store collection IDs for later linking
@@ -455,6 +457,48 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // 原因：Init() 会清空 Skills、Stunts、RealTitles 集合
             
             return person;
+        }
+
+        private static void RepairLegacyOutsideTaskState(Person person, bool enableDebugOutput)
+        {
+            if (!RequiresOutsideDestination(person.OutsideTask) || person.OutsideDestination.HasValue)
+            {
+                return;
+            }
+
+            #if DEBUG
+            if (enableDebugOutput)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[LoadPersonFromDTO] Detected legacy outside task without destination for {person.Name}(ID:{person.ID}), " +
+                    $"task={person.OutsideTask}. Resetting the invalid task state.");
+            }
+            #endif
+
+            person.OutsideTask = OutsideTaskKind.无;
+            person.LastOutsideTask = OutsideTaskKind.无;
+            person.OutsideDestination = null;
+            person.TaskDays = 0;
+            person.ArrivingDays = 0;
+            person.WorkKind = ArchitectureWorkKind.无;
+            person.Status = PersonStatus.Normal;
+            person.ConvincingPersonID = -1;
+        }
+
+        private static bool RequiresOutsideDestination(OutsideTaskKind task)
+        {
+            return task is OutsideTaskKind.说服
+                or OutsideTaskKind.情报
+                or OutsideTaskKind.破坏
+                or OutsideTaskKind.煽动
+                or OutsideTaskKind.流言
+                or OutsideTaskKind.劫狱
+                or OutsideTaskKind.暗杀
+                or OutsideTaskKind.劝降
+                or OutsideTaskKind.割地
+                or OutsideTaskKind.亲善
+                or OutsideTaskKind.结盟
+                or OutsideTaskKind.停战;
         }
         
         /// <summary>

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Microsoft.Xna.Framework;
 
 namespace WorldOfTheThreeKingdoms.Serialization.DTOs
 {
@@ -106,6 +107,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
         public int OfficerMerit { get; set; }
         public int WorkKind { get; set; }
         public int OutsideTask { get; set; }
+        public Point? OutsideDestination { get; set; }
         public int TaskDays { get; set; }
         public bool Immortal { get; set; }
         public bool NvGuan { get; set; }

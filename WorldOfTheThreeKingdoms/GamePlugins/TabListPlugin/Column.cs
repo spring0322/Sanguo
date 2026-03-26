@@ -229,6 +229,10 @@ namespace TabListPlugin
             {
                 rowColor = GetTitleColor(fullText);
             }
+            else if (this.Name == "ConvinceExecutingMark")
+            {
+                rowColor = fullText == "○" ? Color.LightGreen : Color.IndianRed;
+            }
             else
             {
                 // 🔥 修复：强制统一为白色（移除三色轮换）
@@ -245,7 +249,7 @@ namespace TabListPlugin
             bool shouldDrawHoneymoon = isHoneymoon && (this.DisplayName == "姓名" || this.Name == "Name");
             
             // 🎯 忠诚度居中对齐
-            bool shouldCenter = (this.DisplayName == "忠诚度" || this.Name == "Loyalty");
+            bool shouldCenter = (this.DisplayName == "忠诚度" || this.Name == "Loyalty" || this.Name == "ConvinceExecutingMark");
             
             for (int lineIdx = 0; lineIdx < linesToDraw; lineIdx++)
             {
@@ -518,6 +522,9 @@ namespace TabListPlugin
             if (this.Name.Equals("Calmness"))
                 return (this.tabList.gameObjectList[index] is Person p) ? p.Calmness.ToString() : "";
 
+            if (this.Name.Equals("ConvinceExecutingMark"))
+                return this.GetConvinceExecutingMark(index);
+
             // 🔥 默认处理：使用源生成器的属性/方法访问
             object obj = StaticMethods.GetPropertyValue(this.tabList.gameObjectList[index], this.Name);
             
@@ -527,6 +534,50 @@ namespace TabListPlugin
                 return b ? "○" : "×";
             
             return obj.ToString();
+        }
+
+        private string GetConvinceExecutingMark(int index)
+        {
+            if (index < 0 || index >= this.tabList.gameObjectList.Count)
+            {
+                return "×";
+            }
+
+            if (this.tabList.gameObjectList[index] is not Person targetPerson)
+            {
+                return "×";
+            }
+
+            Faction currentPlayer = Session.Current?.Scenario?.CurrentPlayer;
+            if (currentPlayer?.Persons == null)
+            {
+                return "×";
+            }
+
+            for (int i = 0; i < currentPlayer.Persons.Count; i++)
+            {
+                if (currentPlayer.Persons[i] is not Person executor)
+                {
+                    continue;
+                }
+
+                if (executor.Status != GameObjects.PersonDetail.PersonStatus.Moving)
+                {
+                    continue;
+                }
+
+                if (executor.OutsideTask != OutsideTaskKind.说服)
+                {
+                    continue;
+                }
+
+                if (executor.ConvincingPerson == targetPerson)
+                {
+                    return "○";
+                }
+            }
+
+            return "×";
         }
 
         public void ReCalculate(int top, ref int previousRight)

@@ -7942,6 +7942,11 @@ namespace GameObjects
             {
                 if (p.OutsideTask == OutsideTaskKind.情报)
                 {
+                    if (!p.OutsideDestination.HasValue)
+                    {
+                        throw new InvalidOperationException(
+                            $"数据损坏：人物 {p.Name}(ID={p.ID}) 正在执行 {p.OutsideTask}，但 OutsideDestination 为空。");
+                    }
                     Architecture a = Session.Current.Scenario.GetArchitectureByPositionNoCheck(p.OutsideDestination.Value);
                     result.Add(a);
                 }

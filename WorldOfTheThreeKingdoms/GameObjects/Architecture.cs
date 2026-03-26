@@ -3783,7 +3783,7 @@ namespace GameObjects
         private void AIRecruitMilitary()
         {
             // 0. 基础门槛：如果连补兵的资格都没有（没钱/没人口），直接不谈
-            if (!this.RecruitmentAvail()) return;
+            if (!this.NewMilitaryAvail()) return;
 
             // =========================================================
             // 🎲 软上限概率控制系统 (Soft Cap System)
@@ -12845,39 +12845,15 @@ namespace GameObjects
                 viewArea = this.LongViewArea;
             }
             
-            #if DEBUG
-            // 🔥 诊断日志：只记录阳翟(ID:203)
-            // 日期：2026-03-22
-            if (this.ID == 203)
-            {
-                System.Diagnostics.Debug.WriteLine($"[HasHostileTroopsInView] 建筑:{this.Name}(ID:{this.ID})");
-                System.Diagnostics.Debug.WriteLine($"  - ViewArea点数: {viewArea.Area.Count}");
-                System.Diagnostics.Debug.WriteLine($"  - RecentlyAttacked: {this.RecentlyAttacked}");
-                System.Diagnostics.Debug.WriteLine($"  - 使用视野: {(this.RecentlyAttacked > 0 || this.ArmyScale > this.NormalArmyScale ? "LongViewArea" : "ViewArea")}");
-            }
-            #endif
-            
             foreach (Point point in viewArea.Area)
             {
                 Troop troopByPosition = Session.Current.Scenario.GetTroopByPosition(point);
                 if ((troopByPosition != null) && (!troopByPosition.IsFriendly(this.BelongedFaction) && (troopByPosition.Status != TroopStatus.埋伏)))
                 {
-                    #if DEBUG
-                    if (this.ID == 203)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"  - 发现敌军: {troopByPosition.Name}(ID:{troopByPosition.ID}) 位置:{troopByPosition.Position}");
-                    }
-                    #endif
                     return true;
                 }
             }
             
-            #if DEBUG
-            if (this.ID == 203)
-            {
-                System.Diagnostics.Debug.WriteLine($"  - 视野内无敌军");
-            }
-            #endif
             return false;
         }
 
@@ -16043,10 +16019,10 @@ namespace GameObjects
         {
 
             if ((((this.MilitaryPopulation != 0) && (this.Population != 0) && (!Session.GlobalVariables.PopulationRecruitmentLimit
-                || (this.ArmyQuantity <= this.Population)))  && ((this.Fund >= (Session.Parameters.RecruitmentFundCost * this.AreaCount * (this.CanRecruitMilitary(military.Kind) ? 1 : 10))))
-                && (this.Domination >= Session.Parameters.RecruitmentDomination) && ((this.Morale >= Session.Parameters.RecruitmentMorale)
+                || (this.ArmyQuantity <= this.Population))) && ((this.Fund >= (Session.Parameters.RecruitmentFundCost * this.AreaCount * (this.CanRecruitMilitary(military.Kind) ? 1 : 10))))
+                && (this.Domination >= Session.Parameters.RecruitmentDomination)
                 && ((military.RecruitmentPerson != null) && (military.RecruitmentPerson.BelongedFaction != null)
-                && (military.Quantity < military.Kind.MaxScale)) && (military.BelongedFaction != null))))
+                && (military.Quantity < military.Kind.MaxScale)) && (military.BelongedFaction != null)))
             {
 
                 int randomValue = StaticMethods.GetRandomValue((int)((military.RecruitmentPerson.RecruitmentAbility * military.Kind.MinScale) * Session.Parameters.RecruitmentRate), 0x7d0);
@@ -16131,7 +16107,7 @@ namespace GameObjects
         public void RecruitmentMilitary(Military military, float scale)
         {
 
-            if ((((this.MilitaryPopulation != 0) && (this.Population != 0) && (!Session.GlobalVariables.PopulationRecruitmentLimit || (this.ArmyQuantity <= this.Population))) && ((this.Domination >= Session.Parameters.RecruitmentDomination) && (this.Morale >= Session.Parameters.RecruitmentMorale))) && (military.Quantity < military.Kind.MaxScale))
+            if ((((this.MilitaryPopulation != 0) && (this.Population != 0) && (!Session.GlobalVariables.PopulationRecruitmentLimit || (this.ArmyQuantity <= this.Population))) && (this.Domination >= Session.Parameters.RecruitmentDomination)) && (military.Quantity < military.Kind.MaxScale))
             {
                 int decrement = (int)(military.Kind.MinScale * scale);
                 int populationDecrement;

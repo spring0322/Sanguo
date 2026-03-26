@@ -433,9 +433,11 @@ namespace WorldOfTheThreeKingdoms.Serialization
                         $"存档数据损坏：CurrentPlayerID '{scenario.CurrentPlayerID}' 无法解析为整数。");
                 }
                 
-                scenario.CurrentPlayer = scenario.Factions.GetGameObject(currentPlayerId) as Faction;
+                if (currentPlayerId >= 0)
+                {
+                    scenario.CurrentPlayer = scenario.Factions.GetGameObject(currentPlayerId) as Faction;
                 
-                if (scenario.CurrentPlayer == null)
+                    if (scenario.CurrentPlayer == null)
                 {
                     throw new InvalidOperationException(
                         $"存档数据损坏：CurrentPlayerID={currentPlayerId} 对应的势力不存在。" +
@@ -446,6 +448,8 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 DebugLogger.Info(DebugLogger.LogCategory.Serialization, 
                     $"CurrentPlayer 初始化成功: {scenario.CurrentPlayer.Name} (ID={currentPlayerId})");
                 
+                }
+
                 // Phase 4: Link references phase
                 swStep.Restart();
                 var lookupTables = _linkPhase.BuildLookupTables(scenario);

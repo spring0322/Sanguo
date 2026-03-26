@@ -83,6 +83,31 @@ namespace GameObjects.TroopDetail
             }
         }
 
+        public void ApplyToTargetCast(Troop caster, Troop target, TroopList areaTargets)
+        {
+            foreach (Influence influence in this.Influences.Influences.Values)
+            {
+                if (UsesCasterContextOnTargetCast(influence.Kind.ID))
+                {
+                    influence.ApplyInfluence(caster, Applier.Stratagem, 0);
+                    continue;
+                }
+
+                influence.ApplyInfluence(target, Applier.Stratagem, 0);
+
+                int areaCount = areaTargets.Count;
+                for (int i = 0; i < areaCount; i++)
+                {
+                    influence.ApplyInfluence((Troop)areaTargets[i], Applier.Stratagem, 0);
+                }
+            }
+        }
+
+        private static bool UsesCasterContextOnTargetCast(int influenceKindId)
+        {
+            return (influenceKindId >= 390 && influenceKindId <= 399) || influenceKindId == 720 || influenceKindId == 721;
+        }
+
         public int GetCredit(Troop source, Troop destination)
         {
             if (!source.HasStratagem(this.ID)) { return 0; }

@@ -1441,7 +1441,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             if (scenario.CurrentPlayer == null && scenario.Factions.Count > 0)
             {
                 scenario.CurrentPlayer = scenario.Factions[0] as Faction;
-                System.Diagnostics.Debug.WriteLine($"[LoadScenarioData] 🔧 强制设置当前玩家: {scenario.CurrentPlayer?.Name}");
             }
 
             System.Diagnostics.Debug.WriteLine("[LoadScenarioData] ✅ Nuclear Option 完整初始化完成!");
@@ -2097,7 +2096,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 if (scenario.CurrentPlayer == null && scenario.Factions != null && scenario.Factions.Count > 0)
                 {
                     scenario.CurrentPlayer = scenario.Factions[0] as Faction;
-                    System.Diagnostics.Debug.WriteLine($"[RestoreObjectReferences] 紧急设置当前玩家: {scenario.CurrentPlayer?.Name}");
+                    if (scenario.CurrentPlayer != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[RestoreObjectReferences] 紧急设置当前玩家: {scenario.CurrentPlayer?.Name}");
+                    }
                 }
             }
         }

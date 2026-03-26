@@ -490,7 +490,9 @@ namespace GameObjects
                         }
                         if (t.RealDestination.X < 0 || t.RealDestination.Y < 0)
                         {
-                            t.RealDestination = targetArch.ArchitectureArea.Centre;
+                            t.RealDestination = Session.Current.Scenario.GetClosestPoint(
+                                targetArch.GetTroopEnterableArea(t),
+                                t.Position);
                         }
                         t.CurrentAIState = TroopAIState.EnterCity;
                         
@@ -630,7 +632,7 @@ namespace GameObjects
                         #if DEBUG
                         // 🔥 诊断日志：只记录阳翟(ID:203)的防守军团
                         // 日期：2026-03-22
-                        if (this.WillArchitecture.ID == 203)
+                        if (false /* this.WillArchitecture.ID == 203 */)
                         {
                             int recentlyAttacked = this.WillArchitecture.RecentlyAttacked;
                             
@@ -645,7 +647,7 @@ namespace GameObjects
                         if (hasHostile)
                         {
                             #if DEBUG
-                            if (this.WillArchitecture.ID == 203)
+                            if (false /* this.WillArchitecture.ID == 203 */)
                             {
                                 System.Diagnostics.Debug.WriteLine($"  → 判定结果: 未完成（视野内有敌军）");
                             }
@@ -657,7 +659,7 @@ namespace GameObjects
                         if (this.WillArchitecture.RecentlyAttacked > 0)
                         {
                             #if DEBUG
-                            if (this.WillArchitecture.ID == 203)
+                            if (false /* this.WillArchitecture.ID == 203 */)
                             {
                                 System.Diagnostics.Debug.WriteLine($"  → 判定结果: 未完成（最近被攻击）");
                             }
@@ -671,7 +673,7 @@ namespace GameObjects
                             this.WillArchitecture.RecentlyAttacked > -5)
                         {
                             #if DEBUG
-                            if (this.WillArchitecture.ID == 203)
+                            if (false /* this.WillArchitecture.ID == 203 */)
                             {
                                 System.Diagnostics.Debug.WriteLine($"  → 判定结果: 未完成（前线城市冷却时间，RecentlyAttacked={this.WillArchitecture.RecentlyAttacked}）");
                             }
@@ -680,7 +682,7 @@ namespace GameObjects
                         }
                         
                         #if DEBUG
-                        if (this.WillArchitecture.ID == 203)
+                        if (false /* this.WillArchitecture.ID == 203 */)
                         {
                             System.Diagnostics.Debug.WriteLine($"  → 判定结果: 已完成（所有条件都不满足）");
                         }

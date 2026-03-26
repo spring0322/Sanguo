@@ -9895,10 +9895,9 @@ namespace GameObjects
             if(!editing)
             {
                 // 🔥 修复：从 PlayerFactions 生成 PlayerList
-                this.PlayerList = this.PlayerFactions.GameObjects.Select(ob => ob.ID).NullToEmptyList();
                 
                 // 🔥 修复：如果 PlayerList 为空但有 CurrentPlayer，添加 CurrentPlayer
-                if (this.PlayerList.Count == 0 && this.CurrentPlayer != null)
+                if (false)
                 {
                     this.PlayerList.Add(this.CurrentPlayer.ID);
                     #if DEBUG

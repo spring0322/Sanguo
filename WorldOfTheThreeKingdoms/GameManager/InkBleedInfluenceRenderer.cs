@@ -375,8 +375,7 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
             throw new InvalidOperationException("InkBleedInfluenceRenderer.UpdateRenderTarget: Session.Current.Scenario 为 null");
         
         var currentPlayer = scenario.CurrentPlayer;
-        if (currentPlayer == null)
-            throw new InvalidOperationException("InkBleedInfluenceRenderer.UpdateRenderTarget: Scenario.CurrentPlayer 为 null");
+        bool isSkyEyeMode = global::GameManager.Session.GlobalVariables.SkyEye || currentPlayer == null;
         
         // ============================================================
         // 🔥 关键：先结束外层的 SpriteBatch
@@ -417,8 +416,11 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
             {
                 int index = y * _mapWidth + x;
                 
-                var infoLevel = currentPlayer.GetInformationLevel(new Point(x, y));
-                if (infoLevel == InformationLevel.无) continue;
+                if (!isSkyEyeMode)
+                {
+                    var infoLevel = currentPlayer.GetInformationLevel(new Point(x, y));
+                    if (infoLevel == InformationLevel.无) continue;
+                }
                 
                 int factionID = _targetInfluenceMap[index];
                 if (factionID < 0) continue;  // 🔥 ID < 0 无势力，ID=0 是有效势力

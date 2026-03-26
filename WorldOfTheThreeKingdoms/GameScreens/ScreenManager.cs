@@ -42,6 +42,31 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
         }
 
+        private static bool IsIntelligentManualHireOperation(MainGameScreen.IntelligentOperationType operationType)
+        {
+            return operationType == MainGameScreen.IntelligentOperationType.Convince
+                || operationType == MainGameScreen.IntelligentOperationType.Destroy
+                || operationType == MainGameScreen.IntelligentOperationType.Instigate
+                || operationType == MainGameScreen.IntelligentOperationType.Gossip
+                || operationType == MainGameScreen.IntelligentOperationType.JailBreak
+                || operationType == MainGameScreen.IntelligentOperationType.Assassinate;
+        }
+
+        private void ResetIntelligentOperationState()
+        {
+            MainGameScreen mainGameScreen = Session.MainGame.mainGameScreen;
+            if (mainGameScreen != null)
+            {
+                mainGameScreen.CurrentPerson = null;
+                mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
+                mainGameScreen.CurrentSourceArchitecture = null;
+                mainGameScreen.CurrentTargetArchitecture = null;
+            }
+
+            this.CurrentGameObjects = null;
+            this.CurrentPersons = null;
+        }
+
         private void FrameFunction_Architecture_Afterxuanzemeinv() // 纳妃
         {
             // AOT修复: 原 as Person 转换
@@ -528,8 +553,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     
                     if (targetPerson != null)
                     {
+                        Architecture sourceArchitecture = this.CurrentArchitecture ?? Session.MainGame.mainGameScreen.CurrentArchitecture;
+                        Architecture targetArchitecture = targetPerson.BelongedArchitecture;
+
+                        if (sourceArchitecture == null)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[智能说服调试] 源建筑为空，取消本次说服分析");
+                            return;
+                        }
+
                         // 设置当前目标人物
                         Session.MainGame.mainGameScreen.CurrentPerson = targetPerson;
+                        Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.Convince;
+                        Session.MainGame.mainGameScreen.CurrentArchitecture = sourceArchitecture;
+                        Session.MainGame.mainGameScreen.CurrentSourceArchitecture = sourceArchitecture;
+                        Session.MainGame.mainGameScreen.CurrentTargetArchitecture = targetArchitecture;
                         
                         System.Diagnostics.Debug.WriteLine("[智能说服调试] 调用MainGameScreen的复杂对话系统");
                         
@@ -752,6 +790,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                     else
                     {
+                        ResetIntelligentOperationState();
                         System.Diagnostics.Debug.WriteLine("[智能劫牢调试] 选择的不是Architecture对象");
                     }
                 }
@@ -1096,6 +1135,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 确定从哪个建筑获取人员列表
                 Architecture listOwner = this.CurrentArchitecture;
                 var opType = Session.MainGame.mainGameScreen.CurrentOperationType;
+                bool isIntelligentManualHireOperation = IsIntelligentManualHireOperation(opType);
                 if ((opType == MainGameScreen.IntelligentOperationType.Destroy || 
                      opType == MainGameScreen.IntelligentOperationType.Instigate || 
                      opType == MainGameScreen.IntelligentOperationType.Convince ||
@@ -1111,11 +1151,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 安全检查
                 if (listOwner == null || listOwner.PersonsExcludeNvGuan == null)
                 {
+                    if (isIntelligentManualHireOperation)
+                    {
+                        ResetIntelligentOperationState();
+                    }
                     System.Diagnostics.Debug.WriteLine("[FrameFunction_Architecture_AfterPersonManualHire] listOwner 或 PersonsExcludeNvGuan 为 null，退出");
                     return;
                 }
                 
                 this.CurrentGameObjects = listOwner.PersonsExcludeNvGuan.GetSelectedList();
+                if ((this.CurrentGameObjects == null || this.CurrentGameObjects.Count == 0) && isIntelligentManualHireOperation)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
                 if (this.CurrentGameObjects != null && this.CurrentGameObjects.Count > 0)
                 {
                     this.CurrentPersons = this.CurrentGameObjects.GetList();
@@ -1139,17 +1189,28 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             System.Diagnostics.Debug.WriteLine($"[FrameFunction_Architecture_AfterPersonManualHire] 开始执行说服: {executor.Name} → {targetPerson.Name}");
                             try
                             {
+                                Architecture convinceTargetArchitecture = targetArchitecture ?? targetPerson.BelongedArchitecture;
+                                if (convinceTargetArchitecture == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[FrameFunction_Architecture_AfterPersonManualHire] 说服目标无归属建筑，无法执行说服");
+                                    return;
+                                }
+
+                                executor.OutsideDestination = convinceTargetArchitecture.Position;
+                                Session.MainGame.mainGameScreen.CurrentTargetArchitecture = convinceTargetArchitecture;
                                 executor.GoForConvince(targetPerson);
                                 Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
-                                Session.MainGame.mainGameScreen.CurrentPerson = null;
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                Session.MainGame.mainGameScreen.CurrentTargetArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
-                                return; 
                             }
-                            catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.Message); }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[说服执行错误] {ex.Message}");
+                                System.Diagnostics.Debug.WriteLine($"[说服执行堆栈] {ex.StackTrace}");
+                            }
+                            finally
+                            {
+                                ResetIntelligentOperationState();
+                            }
+                            return; 
                         }
                         else if (isDestroyOperation)
                         {
@@ -1158,13 +1219,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             {
                                 executor.GoForDestroy(targetArchitecture.Position);
                                 Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
                                 return;
                             }
                             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.Message); }
+                            finally
+                            {
+                                ResetIntelligentOperationState();
+                            }
                         }
                         else if (isInstigateOperation)
                         {
@@ -1173,13 +1234,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             {
                                 executor.GoForInstigate(targetArchitecture.Position);
                                 Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
                                 return;
                             }
                             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.Message); }
+                            finally
+                            {
+                                ResetIntelligentOperationState();
+                            }
                         }
                         else if (operationType == MainGameScreen.IntelligentOperationType.Gossip && targetArchitecture != null)
                         {
@@ -1192,10 +1253,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.Message); }
                             finally
                             {
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
+                                ResetIntelligentOperationState();
                             }
                             return;
                         }
@@ -1210,10 +1268,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex.Message); }
                             finally
                             {
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
+                                ResetIntelligentOperationState();
                             }
                             return;
                         }
@@ -1244,14 +1299,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             }
                             finally
                             {
-                                Session.MainGame.mainGameScreen.CurrentPerson = null;
-                                Session.MainGame.mainGameScreen.CurrentOperationType = MainGameScreen.IntelligentOperationType.None;
-                                Session.MainGame.mainGameScreen.CurrentSourceArchitecture = null;
-                                this.CurrentGameObjects = null;
-                                this.CurrentPersons = null;
+                                ResetIntelligentOperationState();
                             }
                             return;
                         }
+                    }
+                    if (isIntelligentManualHireOperation)
+                    {
+                        ResetIntelligentOperationState();
+                        return;
                     }
                     
                     System.Diagnostics.Debug.WriteLine("[FrameFunction_Architecture_AfterPersonManualHire] 非智能系统操作，继续原始流程");

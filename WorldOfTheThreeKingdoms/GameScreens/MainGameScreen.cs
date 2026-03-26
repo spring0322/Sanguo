@@ -404,6 +404,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// </summary>
         private WorldOfTheThreeKingdoms.GameManager.InkBleedInfluenceRenderer? _inkRenderer;
         
+        // 🔥 避免初始化阶段每帧重复刷同一条日志
+        private bool _hasLoggedPendingInfluenceRender = false;
+        
         #region 选中部队能量覆盖范围高亮显示 (2026-03-21)
         
         /// <summary>
@@ -1496,6 +1499,55 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             }
         }
         
+        private bool IsInfluenceRendererReady()
+        {
+            var scenario = Session.Current.Scenario;
+            if (scenario == null || scenario.Factions == null || scenario.Factions.Count == 0)
+            {
+#if DEBUG
+                if (!_hasLoggedPendingInfluenceRender)
+                {
+                    System.Diagnostics.Debug.WriteLine("[MainGameScreen] ⏸️ 跳过势力范围绘制：Scenario.Factions 尚未就绪");
+                    _hasLoggedPendingInfluenceRender = true;
+                }
+#endif
+                return false;
+            }
+
+            Faction currentPlayer = scenario.CurrentPlayer;
+            if (currentPlayer != null && currentPlayer.GlobalInfluenceMap is not { Length: > 0 })
+            {
+#if DEBUG
+                if (!_hasLoggedPendingInfluenceRender)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[MainGameScreen] ⏸️ 跳过势力范围绘制：当前玩家 {currentPlayer.Name} 的 GlobalInfluenceMap 尚未初始化");
+                    _hasLoggedPendingInfluenceRender = true;
+                }
+#endif
+                return false;
+            }
+
+            var factions = scenario.Factions.GetList();
+            for (int i = 0; i < factions.Count; i++)
+            {
+                if (factions[i] is Faction faction && faction.GlobalInfluenceMap is not { Length: > 0 })
+                {
+#if DEBUG
+                    if (!_hasLoggedPendingInfluenceRender)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[MainGameScreen] ⏸️ 跳过势力范围绘制：势力 {faction.Name} 的 GlobalInfluenceMap 尚未初始化");
+                        _hasLoggedPendingInfluenceRender = true;
+                    }
+#endif
+                    return false;
+                }
+            }
+
+            _hasLoggedPendingInfluenceRender = false;
+            return true;
+        }
 
         private void Drawing(GameTime gameTime)            //绘制游戏屏幕
         {
@@ -1504,13 +1556,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 return; 
             }
 
+            var scenario = Session.Current.Scenario;
             var spriteBatch = Session.MainGame.SpriteBatch;
+            bool canUseInkRenderer = _inkRenderer != null && scenario.CurrentPlayer != null;
 
             // ==========================================
             // 阶段 0：Pre-pass - 更新水墨渲染器的离屏缓冲区
             // 🔥 关键：在主画面渲染之前，将势力范围绘制到 _lowResTarget
             // ==========================================
-            if (_inkRenderer != null)
+            if (canUseInkRenderer)
             {
                 Rectangle viewport = new(
                     base.TopLeftPosition.X,
@@ -1534,12 +1588,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // 🗺️ 绘制势力范围（在地形层之后、建筑层之前）
             // 日期：2026-03-11
             // 🔥 关键修复：使用独立的 SpriteBatch 块，明确指定半透明混合模式
-            if (_influenceRenderer != null && _influenceRenderer.IsEnabled)
+            if (_influenceRenderer != null && _influenceRenderer.IsEnabled && IsInfluenceRendererReady())
             {
+                bool shouldRestoreMainBatch = false;
+                bool influenceBatchStarted = false;
                 try
                 {
                     // 🔥 步骤 1：结束当前批次
                     spriteBatch.End();
+                    shouldRestoreMainBatch = true;
                     
                     // 🔥 步骤 2：使用半透明混合模式重新开始
                     spriteBatch.Begin(
@@ -1549,6 +1606,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         DepthStencilState.None,
                         RasterizerState.CullNone
                     );
+                    influenceBatchStarted = true;
                     
                     // 计算当前视口（Grid坐标）
                     int tileWidth = this.mainMapLayer.TileWidth;
@@ -1567,12 +1625,31 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     
                     // 🔥 步骤 3：结束势力范围批次
                     spriteBatch.End();
+                    influenceBatchStarted = false;
                 }
                 finally
                 {
+                    if (influenceBatchStarted)
+                    {
+                        try
+                        {
+                            spriteBatch.End();
+                        }
+                        catch (InvalidOperationException cleanupEx)
+                        {
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine(
+                                $"[MainGameScreen] 势力范围批次清理失败：{cleanupEx.Message}");
+#endif
+                        }
+                    }
+
                     // 🔥 步骤 4：恢复外层的 SpriteBatch 状态（使用与 MainGame.Draw 相同的参数）
                     // 注意：这里必须与 MainGame.Draw() 中的 Begin() 参数完全一致
-                    spriteBatch.Begin(SpriteSortMode.BackToFront, BlendState.AlphaBlend, SamplerState.LinearClamp, null, null, null);
+                    if (shouldRestoreMainBatch)
+                    {
+                        spriteBatch.Begin(SpriteSortMode.BackToFront, BlendState.AlphaBlend, SamplerState.LinearClamp, null, null, null);
+                    }
                 }
             }
             
@@ -1617,7 +1694,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // 阶段 3：Post-Overlay 水墨叠加
             // 🔥 关键：DrawOverlay 会结束外层批次，之后需要重新 Begin
             // ==========================================
-            if (_inkRenderer != null)
+            if (canUseInkRenderer)
             {
                 spriteBatch.End();
                 _inkRenderer.DrawOverlay(spriteBatch, gameTime);
@@ -2356,7 +2433,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                 }
                                 else
                                 {
-                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "说服", "Personal");
+                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "说服", "ConvinceTarget");
                                 }
                             }
                             else
@@ -4550,7 +4627,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     convinceTargets, 
                     null, 
                     "选择说服目标", 
-                    "Personal"
+                    "ConvinceTarget"
                 );
             }
             catch (Exception ex)
@@ -4756,10 +4833,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 var targetPerson = this.CurrentPerson; // 玩家选择的目标人物（要被说服的人）
                 
                 // 获取执行说服的建筑（玩家的建筑，有执行人员的地方）
-                Architecture sourceArchitecture = null;
-                if (faction.Architectures.Count > 0)
+                Architecture sourceArchitecture = this.CurrentSourceArchitecture ?? this.CurrentArchitecture;
+                if (sourceArchitecture == null)
                 {
-                    sourceArchitecture = faction.Architectures[0] as Architecture; // 使用第一个建筑
+                    System.Diagnostics.Debug.WriteLine("[PerformAdvisorAnalysisAndRecommendation] 源建筑为null，终止流程避免错误回退到首城");
+                    ResetConvinceOperationState();
+                    return;
+                }
+
+                if (this.CurrentTargetArchitecture == null && targetPerson != null)
+                {
+                    this.CurrentTargetArchitecture = targetPerson.BelongedArchitecture;
                 }
                 
                 if (targetPerson == null || sourceArchitecture == null)
@@ -4791,17 +4875,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 根据分析结果决定下一步
                 if (analysisResult.BestScore >= 67) // 成功率很高（67%以上）
                 {
-                    if (analysisResult.BestCandidate != null)
-                    {
-                        // 成功率很高且有推荐人员，显示支持对话并自动执行
-                        System.Diagnostics.Debug.WriteLine($"[PerformAdvisorAnalysisAndRecommendation] 成功率很高({analysisResult.BestScore}%)，显示支持对话并自动执行");
-                        ShowAdvisorSupportDialogWithAutoExecution(analysisResult, sourceArchitecture);
-                    }
-                    else
-                    {
-                        // 成功率很高但没有推荐人员，显示支持对话
-                        ShowAdvisorSupportDialogWithRecommendation(analysisResult, sourceArchitecture);
-                    }
+                    // 高成功率也进入执行人员选择，保持与其它分支一致
+                    ShowAdvisorSupportDialogWithRecommendation(analysisResult, sourceArchitecture);
                 }
                 else if (analysisResult.BestScore >= 34) // 成功率中等（34-66%）
                 {
@@ -4995,6 +5070,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// </summary>
         private void ShowAdvisorSupportDialogWithAutoExecution(ConvinceAnalysisResult analysis, Architecture sourceArchitecture)
         {
+            if (analysis != null)
+            {
+                // 兼容旧调用入口：统一改为先选执行人员，不再直接派遣
+                ShowAdvisorSupportDialogWithRecommendation(analysis, sourceArchitecture);
+                return;
+            }
+
             try
             {
                 System.Diagnostics.Debug.WriteLine("[ShowAdvisorSupportDialogWithAutoExecution] 显示军师支持对话并准备自动执行");
@@ -5034,6 +5116,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         // 先关闭当前对话框
                         this.Plugins.tupianwenziPlugin.IsShowing = false;
                         this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+                        ResetConvinceOperationState();
                         
                         // 选择否直接结束
                     })
@@ -5068,6 +5151,44 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// <summary>
         /// 直接执行说服（无需用户选择执行人员）
         /// </summary>
+        private bool PrepareConvinceExecution(Person executor, Person target)
+        {
+            if (executor == null || target == null)
+            {
+                return false;
+            }
+
+            Architecture targetArchitecture = this.CurrentTargetArchitecture;
+            if (targetArchitecture == null)
+            {
+                targetArchitecture = target.BelongedArchitecture;
+                this.CurrentTargetArchitecture = targetArchitecture;
+            }
+
+            if (targetArchitecture == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[PrepareConvinceExecution] 说服目标无归属建筑，无法设置 OutsideDestination");
+                return false;
+            }
+
+            executor.OutsideDestination = targetArchitecture.Position;
+            return true;
+        }
+
+        private void ResetIntelligentOperationState()
+        {
+            this.CurrentPerson = null;
+            this.CurrentOperationType = IntelligentOperationType.None;
+            this.CurrentSourceArchitecture = null;
+            this.CurrentTargetArchitecture = null;
+        }
+
+        private void ResetConvinceOperationState()
+        {
+            ResetIntelligentOperationState();
+            this.ConvinceTargetPerson = null;
+        }
+
         private void ExecuteConvinceDirectly(Person executor, Person target)
         {
             try
@@ -5076,6 +5197,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 
                 if (executor != null && target != null)
                 {
+                    if (!PrepareConvinceExecution(executor, target))
+                    {
+                        return;
+                    }
+
                     // 直接执行说服
                     executor.GoForConvince(target);
                     Session.MainGame.mainGameScreen.PlayNormalSound("Content/Sound/Tactics/Outside");
@@ -5090,6 +5216,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[ExecuteConvinceDirectly] 执行说服时发生错误: {ex.Message}");
+            }
+            finally
+            {
+                ResetConvinceOperationState();
             }
         }
 
@@ -5243,7 +5373,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         this.Plugins.tupianwenziPlugin.IsShowing = false;
                         this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
                         
-                        // 选择否直接结束
+                        // 选择否直接结束并清理状态
+                        ResetConvinceOperationState();
                     })
                 );
 
@@ -5302,8 +5433,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     new GameDelegates.VoidFunction(() =>
                     {
                         System.Diagnostics.Debug.WriteLine("[AdvisorSupport] 玩家选择是");
-                        // 直接显示执行人员选择界面
-                        ShowExecutorSelectionForConvince(sourceArchitecture);
+
+                        // 先关闭当前对话框，避免在确认框的 MouseLeftDown 回调里直接压入新 Frame 导致栈错乱
+                        this.Plugins.tupianwenziPlugin.IsShowing = false;
+                        this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+
+                        if (analysis.BestCandidate != null)
+                        {
+                            ShowExecutorSelectionWithRecommendation(sourceArchitecture, analysis.BestCandidate);
+                        }
+                        else
+                        {
+                            ShowExecutorSelectionForConvince(sourceArchitecture);
+                        }
                     }),
                     new GameDelegates.VoidFunction(() =>
                     {
@@ -5312,6 +5454,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         // 先关闭当前对话框
                         this.Plugins.tupianwenziPlugin.IsShowing = false;
                         this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+                        ResetConvinceOperationState();
                         
                         // 选择否直接结束，不显示额外对话框
                     })
@@ -5352,12 +5495,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 // 第四步：在这里进行所有的限制检查
                 var faction = Session.Current.Scenario.CurrentPlayer;
-                var targetArchitecture = this.CurrentArchitecture;
                 var targetPerson = analysis.TargetPerson;
+                var targetArchitecture = this.CurrentTargetArchitecture ?? targetPerson.BelongedArchitecture;
                 
                 // 检查情报等级限制
-                bool hasEnoughInformation = targetArchitecture.BelongedFaction == faction || 
-                                          faction.GetKnownAreaData(targetArchitecture.Position) >= InformationLevel.低;
+                bool hasEnoughInformation = targetArchitecture != null &&
+                                          (targetArchitecture.BelongedFaction == faction ||
+                                           faction.GetKnownAreaData(targetArchitecture.Position) >= InformationLevel.低);
                 
                 string additionalWarning = "";
                 if (!hasEnoughInformation)
@@ -5462,6 +5606,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
                         
                         // 选择否直接结束，不显示额外对话框
+                        ResetConvinceOperationState();
                     })
                 );
 
@@ -5587,6 +5732,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         private void ShowExecutorSelectionForConvince(Architecture sourceArchitecture)
         {
             System.Diagnostics.Debug.WriteLine("[ShowExecutorSelectionForConvince] 显示执行人员选择界面");
+
+            if (sourceArchitecture == null || sourceArchitecture.PersonsExcludeNvGuan == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[ShowExecutorSelectionForConvince] sourceArchitecture 或 PersonsExcludeNvGuan 为 null，无法显示界面");
+                return;
+            }
+
+            sourceArchitecture.PersonsExcludeNvGuan.ClearSelected();
             
             this.ShowTabListInFrame(
                 UndoneWorkKind.Frame, 
@@ -6673,7 +6826,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 获取执行破坏的建筑（玩家的建筑，有执行人员的地方）
                 // 修复：优先使用已设置的CurrentSourceArchitecture，而不是默认取第一个建筑
                 Architecture sourceArchitecture = this.CurrentSourceArchitecture;
-                if (sourceArchitecture == null && faction.Architectures.Count > 0)
+                if (sourceArchitecture == null && this.CurrentOperationType != IntelligentOperationType.None)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (targetArchitecture == null)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (sourceArchitecture == null && this.CurrentOperationType == IntelligentOperationType.None && faction.Architectures.Count > 0)
                 {
                     sourceArchitecture = faction.Architectures[0] as Architecture; // 回退方案
                 }
@@ -7207,7 +7372,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 获取执行煽动的建筑
                 // 修复：优先使用已设置的CurrentSourceArchitecture
                 Architecture sourceArchitecture = this.CurrentSourceArchitecture;
-                if (sourceArchitecture == null && faction.Architectures.Count > 0)
+                if (sourceArchitecture == null && this.CurrentOperationType != IntelligentOperationType.None)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (targetArchitecture == null)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (sourceArchitecture == null && this.CurrentOperationType == IntelligentOperationType.None && faction.Architectures.Count > 0)
                 {
                     sourceArchitecture = faction.Architectures[0] as Architecture;
                 }
@@ -7952,7 +8129,19 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 // 获取执行流言的建筑
                 // 修复：优先使用已设置的CurrentSourceArchitecture
                 Architecture sourceArchitecture = this.CurrentSourceArchitecture;
-                if (sourceArchitecture == null && faction.Architectures.Count > 0)
+                if (sourceArchitecture == null && this.CurrentOperationType != IntelligentOperationType.None)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (targetArchitecture == null)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
+                if (sourceArchitecture == null && this.CurrentOperationType == IntelligentOperationType.None && faction.Architectures.Count > 0)
                 {
                     sourceArchitecture = faction.Architectures[0] as Architecture;
                 }
@@ -8363,8 +8552,25 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
             {
                 Architecture source = this.CurrentSourceArchitecture;
                 Architecture target = this.CurrentTargetArchitecture;
+                if (source == null || target == null)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
                 Faction faction = source.BelongedFaction;
+                if (faction == null)
+                {
+                    ResetIntelligentOperationState();
+                    return;
+                }
+
                 Person advisor = faction.Advisor ?? faction.Leader;
+                if (advisor == null)
+                {
+                    ShowExecutorSelectionForJailBreak(source, target);
+                    return;
+                }
 
                 System.Diagnostics.Debug.WriteLine($"[PerformJailBreakAnalysis] 分析源: {source.Name}, 目标: {target.Name}, 军师: {advisor.Name}");
 
@@ -10888,7 +11094,6 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] DateGo完成, Date.IsRunning={dateIsRunning}, playing={this.Plugins.DateRunnerPlugin?.IsPlaying}");
                 
                 bool troopsMovementDone = this.AfterDayStarting(gameTime);
-                
                 if (shouldLog) System.Diagnostics.Debug.WriteLine($"[GameGo] MoveTheTroops返回={troopsMovementDone} (false=全部移完, true=还在移动), TotallyEmpty={Session.Current?.Scenario?.Troops?.TotallyEmpty}, CurrentTroop={Session.Current?.Scenario?.Troops?.CurrentTroop?.DisplayName ?? "null"}");
                 
                 // 🔥 修复：MoveTheTroops (AfterDayStarting) 的返回值语义：
