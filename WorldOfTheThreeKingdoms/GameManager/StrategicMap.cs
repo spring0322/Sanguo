@@ -50,24 +50,146 @@ namespace WorldOfTheThreeKingdoms.GameManager
             try
             {
                 if (faction == null) return;
+                var influenceConfig = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
+                influenceConfig.ValidateLegacyEnergyFormulaMirror();
+                var aiConfig = influenceConfig.GetValidatedAIStrategicConfig();
 
-                // 清空地图
-                Clear();
-
-                // 计算所有势力的影响力
-                foreach (var obj in Session.Current.Scenario.Factions.GetList())
+                if (aiConfig.UseEnergyMapForStrategicMap)
                 {
-                    if (!(obj is Faction otherFaction) || otherFaction.Destroyed) continue;
-
-                    CalculateFactionInfluence(faction, otherFaction);
+                    RefreshFromEnergyMap(faction, aiConfig);
                 }
-
-                _lastUpdate = DateTime.Now;
+                else
+                {
+                    RefreshLegacyModel(faction);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // 配置或数据源错误必须 Fail Fast，避免 AI 在错误口径下继续决策
+                throw;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[StrategicMap] 刷新失败: {ex.Message}");
             }
+        }
+
+        private void RefreshFromEnergyMap(Faction viewerFaction, WorldOfTheThreeKingdoms.GameData.AIStrategicConfig aiConfig)
+        {
+            if (Session.Current?.Scenario?.ScenarioMap == null)
+            {
+                throw new InvalidOperationException("[StrategicMap] ScenarioMap 未初始化，无法刷新能量战略图。");
+            }
+
+            if (Session.Current.Scenario.Factions == null)
+            {
+                throw new InvalidOperationException("[StrategicMap] Scenario.Factions 为 null。");
+            }
+
+            int mapWidth = Session.Current.Scenario.ScenarioMap.MapDimensions.X;
+            int mapHeight = Session.Current.Scenario.ScenarioMap.MapDimensions.Y;
+            if (mapWidth <= 0 || mapHeight <= 0)
+            {
+                throw new InvalidOperationException($"[StrategicMap] 地图尺寸无效: {mapWidth}x{mapHeight}");
+            }
+
+            int expectedLength = mapWidth * mapHeight;
+            if (viewerFaction.GlobalInfluenceMap == null || viewerFaction.GlobalInfluenceMap.Length != expectedLength)
+            {
+                if (!aiConfig.FallbackToLegacyModel)
+                {
+                    throw new InvalidOperationException(
+                        $"[StrategicMap] 势力 {viewerFaction.Name} 的 GlobalInfluenceMap 无效，长度={viewerFaction.GlobalInfluenceMap?.Length ?? -1}，期望={expectedLength}");
+                }
+
+                RefreshLegacyModel(viewerFaction);
+                return;
+            }
+
+            if (_width != mapWidth || _height != mapHeight)
+            {
+                Initialize(mapWidth, mapHeight);
+            }
+            else
+            {
+                Clear();
+            }
+
+            GameObjectList factionObjects = Session.Current.Scenario.Factions.GetList();
+            int factionCount = factionObjects.Count;
+            Faction[] allFactions = new Faction[factionCount];
+
+            for (int i = 0; i < factionCount; i++)
+            {
+                if (factionObjects[i] is not Faction faction)
+                {
+                    throw new InvalidOperationException($"[StrategicMap] Factions 列表存在无效项，索引={i}");
+                }
+
+                if (faction.GlobalInfluenceMap == null || faction.GlobalInfluenceMap.Length != expectedLength)
+                {
+                    if (!aiConfig.FallbackToLegacyModel)
+                    {
+                        throw new InvalidOperationException(
+                            $"[StrategicMap] 势力 {faction.Name} 的 GlobalInfluenceMap 无效，长度={faction.GlobalInfluenceMap?.Length ?? -1}，期望={expectedLength}");
+                    }
+
+                    RefreshLegacyModel(viewerFaction);
+                    return;
+                }
+
+                allFactions[i] = faction;
+            }
+
+            float influenceScale = aiConfig.NetEnergyToInfluenceScale;
+            float threatScale = aiConfig.NetEnergyToThreatScale;
+            float threatClamp = aiConfig.ThreatClamp;
+
+            for (int y = 0; y < mapHeight; y++)
+            {
+                int rowOffset = y * mapWidth;
+                for (int x = 0; x < mapWidth; x++)
+                {
+                    int index = rowOffset + x;
+                    int ownEnergy = viewerFaction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
+
+                    int maxEnemyEnergy = 0;
+                    for (int i = 0; i < factionCount; i++)
+                    {
+                        Faction otherFaction = allFactions[i];
+                        if (otherFaction == viewerFaction) continue;
+
+                        int otherEnergy = otherFaction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
+                        if (otherEnergy > maxEnemyEnergy)
+                        {
+                            maxEnemyEnergy = otherEnergy;
+                        }
+                    }
+
+                    int netEnergy = ownEnergy - maxEnemyEnergy;
+                    float influence = netEnergy * influenceScale;
+                    float threat = netEnergy < 0 ? Math.Min((-netEnergy) * threatScale, threatClamp) : 0f;
+
+                    _influenceMap[x, y] = influence;
+                    _threatMap[x, y] = threat;
+                }
+            }
+
+            _lastUpdate = DateTime.Now;
+        }
+
+        private void RefreshLegacyModel(Faction faction)
+        {
+            Clear();
+
+            // Legacy 模型：基于人口/兵力扩散估算势能
+            foreach (var obj in Session.Current.Scenario.Factions.GetList())
+            {
+                if (!(obj is Faction otherFaction) || otherFaction.Destroyed) continue;
+                CalculateFactionInfluence(faction, otherFaction);
+            }
+
+            _lastUpdate = DateTime.Now;
         }
 
         /// <summary>

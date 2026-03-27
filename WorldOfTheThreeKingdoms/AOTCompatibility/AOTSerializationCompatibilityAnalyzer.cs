@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
 
 namespace WorldOfTheThreeKingdoms.AOTCompatibility
 {
@@ -305,7 +306,7 @@ namespace WorldOfTheThreeKingdoms.AOTCompatibility
             try
             {
                 // 检查GameJsonContext是否存在
-                var contextType = Type.GetType("WorldOfTheThreeKingdoms.Serialization.GameJsonContext");
+                var contextType = typeof(WorldOfTheThreeKingdoms.Serialization.GameJsonContext);
                 if (contextType == null)
                 {
                     report.Issues.Add(new CompatibilityIssue
@@ -390,7 +391,13 @@ namespace WorldOfTheThreeKingdoms.AOTCompatibility
 
             foreach (var converterName in requiredConverters)
             {
-                var converterType = Type.GetType($"WorldOfTheThreeKingdoms.Serialization.SystemTextJson.{converterName}");
+                var converterType = converterName switch
+                {
+                    "GameObjectReferenceConverter" => typeof(GameObjectReferenceConverter),
+                    "FactionLeaderConverter" => typeof(FactionLeaderConverter),
+                    "PersonIdealTendencyConverter" => typeof(PersonIdealTendencyConverter),
+                    _ => null
+                };
                 if (converterType == null)
                 {
                     report.Issues.Add(new CompatibilityIssue

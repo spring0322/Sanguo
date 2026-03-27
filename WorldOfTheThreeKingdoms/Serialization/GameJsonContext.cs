@@ -357,6 +357,9 @@ namespace WorldOfTheThreeKingdoms.Serialization
     [JsonSerializable(typeof(List<global::GameObjects.PersonDetail.IdealTendencyKind>))]
     [JsonSerializable(typeof(Dictionary<int, int>))]
     [JsonSerializable(typeof(Dictionary<int, int[]>))]
+    [JsonSerializable(typeof(Dictionary<string, object>))]
+    [JsonSerializable(typeof(Dictionary<string, object>[]))]
+    [JsonSerializable(typeof(Dictionary<int, Dictionary<string, object>>))]
     [JsonSerializable(typeof(Dictionary<string, string>))]
     [JsonSerializable(typeof(Dictionary<string, float>))]
     [JsonSerializable(typeof(Dictionary<int, string>))] // 🔥 添加测试需要的类型

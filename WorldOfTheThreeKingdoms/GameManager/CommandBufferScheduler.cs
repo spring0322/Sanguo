@@ -502,7 +502,7 @@ public class CommandBufferScheduler
         }
 
         TroopListWithQueue troopList = Session.Current.Scenario.Troops;
-        troopList.TroopChangeRealDestination(_currentTroop);
+        troopList.TroopChangeRealDestination(_currentTroop, skipAuthorityProjection: true);
 
         bool projectedByAuthority = authorityContext != null && authorityContext.ApplyIntentProjection(scenario, _currentTroop);
         if (!projectedByAuthority)

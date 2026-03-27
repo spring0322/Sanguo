@@ -13,6 +13,7 @@ using GameManager;
 using GamePanels;
 using Tools;
 using Platforms;
+using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
 
 namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 {
@@ -51,7 +52,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     // 🔥 2026-03-09 AOT 序列化修复：使用 GameJsonContext
                     // Cold Path - 初始化阶段，可读性优先
                     var options = WorldOfTheThreeKingdoms.Serialization.GameJsonContext.GetDefaultOptions();
-                    Config = JsonSerializer.Deserialize<DantiaoConfigData>(jsonString, options);
+                    Config = JsonSerializer.Deserialize(
+                        jsonString,
+                        JsonTypeInfoHelper.Resolve<DantiaoConfigData>(options));
+                    if (Config == null)
+                    {
+                        throw new InvalidDataException("[LoadConfig] DantiaoConfigData 反序列化返回 null");
+                    }
                     
                     // ⚠️ 数据完整性断言：配置文件必须有效
                     // 如果反序列化失败（返回 null），说明 JSON 格式错误或类型未注册

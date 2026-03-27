@@ -299,11 +299,15 @@ namespace GameManager
             {
                 ImGui.Separator();
                 if (ImGui.Button("Close Inspector")) _inspectTarget = null;
+#if DEBUG
                 else DrawObjectInspector(_inspectTarget);
+#else
+                else ImGui.Text("Inspector unavailable in Release AOT build.");
+#endif
             }
         }
 
-        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Dev-only debug inspector")]
+#if DEBUG
         private void DrawObjectInspector(object obj)
         {
             if (obj == null) return;
@@ -330,6 +334,7 @@ namespace GameManager
                 }
             }
         }
+#endif
 
         private void DrawMilitaryManager()
         {

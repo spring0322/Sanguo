@@ -256,7 +256,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
             string allAdvice = $"=== {advisor.Name}的策略建议总览 ===\n\n";
 
             // 遍历所有策略类型
-            var strategies = Enum.GetValues(typeof(StrategyKind));
+            var strategies = Enum.GetValues<StrategyKind>();
             foreach (StrategyKind strategy in strategies)
             {
                 var advice = AdvisorStrategySystem.GetAdvice(advisor, faction, null, strategy);

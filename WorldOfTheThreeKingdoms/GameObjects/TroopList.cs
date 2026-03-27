@@ -639,10 +639,13 @@ namespace GameObjects
             // 🔥 使用 for 循环，避免 LINQ
             for (int i = 0; i < troopCount; i++)
             {
-                if (troops[i] is Troop troop)
+                if (troops[i] is not Troop troop)
                 {
-                    troop.ApplyInfluenceBuff();
+                    throw new InvalidOperationException(
+                        $"TroopList 中存在非 Troop 类型的对象：{troops[i]?.GetType().Name ?? "null"}");
                 }
+
+                troop.ApplyInfluenceBuff();
             }
         }
     }

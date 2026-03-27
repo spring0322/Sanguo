@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using GameObjects;
 
 namespace WorldOfTheThreeKingdoms.DataIntegrity
 {
@@ -7,7 +8,7 @@ namespace WorldOfTheThreeKingdoms.DataIntegrity
     /// Abstract base class for async validation rules providing common functionality
     /// </summary>
     /// <typeparam name="T">The type of object to validate</typeparam>
-    public abstract class AsyncValidationRuleBase<T> : IAsyncValidationRule<T>
+    public abstract class AsyncValidationRuleBase<T> : IAsyncValidationRule<T> where T : GameObject
     {
         public abstract string RuleName { get; }
         public abstract string Description { get; }
@@ -57,17 +58,7 @@ namespace WorldOfTheThreeKingdoms.DataIntegrity
         {
             // Extract object type and ID if the entity has these properties
             string objectType = entity?.GetType().Name ?? "Unknown";
-            int objectId = -1;
-
-            // Try to get ID property using reflection if available
-            if (entity != null)
-            {
-                var idProperty = entity.GetType().GetProperty("ID");
-                if (idProperty != null && idProperty.PropertyType == typeof(int))
-                {
-                    objectId = (int)idProperty.GetValue(entity);
-                }
-            }
+            int objectId = entity?.ID ?? -1;
 
             return ValidationResult.Failed(
                 objectType,

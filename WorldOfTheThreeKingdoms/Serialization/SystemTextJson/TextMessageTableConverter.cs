@@ -32,10 +32,14 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                                 if (item.TryGetProperty("Key", out var keyToken) && item.TryGetProperty("Value", out var valueToken))
                                 {
                                     // Serialize Key (KeyValuePair<int, TextMessageKind>)
-                                    var keyPair = JsonSerializer.Deserialize<KeyValuePair<int, TextMessageKind>>(keyToken.GetRawText(), options);
+                                    var keyPair = JsonSerializer.Deserialize(
+                                        keyToken.GetRawText(),
+                                        JsonTypeInfoHelper.Resolve<KeyValuePair<int, TextMessageKind>>(options));
                                     
                                     // Serialize Value (List<string>)
-                                    var valueList = JsonSerializer.Deserialize<List<string>>(valueToken.GetRawText(), options);
+                                    var valueList = JsonSerializer.Deserialize(
+                                        valueToken.GetRawText(),
+                                        JsonTypeInfoHelper.Resolve<List<string>>(options));
 
                                     if (valueList != null)
                                     {
@@ -66,10 +70,10 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 writer.WriteStartObject();
                 
                 writer.WritePropertyName("Key");
-                JsonSerializer.Serialize(writer, kvp.Key, options);
+                JsonSerializer.Serialize(writer, kvp.Key, JsonTypeInfoHelper.Resolve<KeyValuePair<int, TextMessageKind>>(options));
 
                 writer.WritePropertyName("Value");
-                JsonSerializer.Serialize(writer, kvp.Value, options);
+                JsonSerializer.Serialize(writer, kvp.Value, JsonTypeInfoHelper.Resolve<List<string>>(options));
 
                 writer.WriteEndObject();
             }

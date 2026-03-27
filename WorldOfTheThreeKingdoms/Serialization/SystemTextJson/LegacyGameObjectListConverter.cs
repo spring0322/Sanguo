@@ -237,7 +237,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             {
                 if (item != null)
                 {
-                    JsonSerializer.Serialize(writer, item, item.GetType(), options);
+                    JsonSerializer.Serialize(writer, item, JsonTypeInfoHelper.Resolve(options, item.GetType()));
                 }
             }
             writer.WriteEndArray();

@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using GameObjects;
 using GameManager;
 using WorldOfTheThreeKingdoms.Serialization.DTOs;
@@ -52,6 +53,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
             _loadPhase = loadPhase ?? throw new ArgumentNullException(nameof(loadPhase));
             _linkPhase = linkPhase ?? throw new ArgumentNullException(nameof(linkPhase));
             _validationPhase = validationPhase ?? throw new ArgumentNullException(nameof(validationPhase));
+        }
+
+        private static JsonTypeInfo<T> ResolveTypeInfo<T>(JsonSerializerOptions options)
+        {
+            JsonTypeInfo typeInfo = options.GetTypeInfo(typeof(T));
+            if (typeInfo is not JsonTypeInfo<T> typedTypeInfo)
+            {
+                throw new InvalidOperationException($"AOT metadata not registered for type: {typeof(T).FullName}");
+            }
+
+            return typedTypeInfo;
         }
         
         /// <summary>
@@ -112,7 +124,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     // 日期：2026-03-20
                     // 问题：JsonSerializer.Serialize(object, Type, options) 在 AOT 模式下需要反射
                     // 解决：使用泛型重载 JsonSerializer.Serialize<T>(T, options)，让 Source Generator 生成代码
-                    json = JsonSerializer.Serialize<GameScenarioDTO>(dto, options);
+                    json = JsonSerializer.Serialize(dto, ResolveTypeInfo<GameScenarioDTO>(options));
                     
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[SerializationManager.SaveGame] ✅ JSON 序列化完成，长度: {json.Length} 字符");
@@ -270,7 +282,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     using (GZipStream gzipStream = new GZipStream(fileStream, CompressionMode.Decompress))
                     {
                         JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
-                        dto = JsonSerializer.Deserialize<GameScenarioDTO>(gzipStream, options);
+                        dto = JsonSerializer.Deserialize(gzipStream, ResolveTypeInfo<GameScenarioDTO>(options));
                         
                         if (dto == null)
                         {
@@ -565,7 +577,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     {
                         // Deserialize the uncompressed JSON
                         JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
-                        GameScenarioDTO uncompressedDto = JsonSerializer.Deserialize<GameScenarioDTO>(json, options);
+                        GameScenarioDTO uncompressedDto = JsonSerializer.Deserialize(json, ResolveTypeInfo<GameScenarioDTO>(options));
                         
                         if (uncompressedDto != null)
                         {
@@ -633,7 +645,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 string json = File.ReadAllText(filePath);
                 
                 JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
-                GameScenarioDTO dto = JsonSerializer.Deserialize<GameScenarioDTO>(json, options);
+                GameScenarioDTO dto = JsonSerializer.Deserialize(json, ResolveTypeInfo<GameScenarioDTO>(options));
                 
                 if (dto == null)
                 {
@@ -943,7 +955,8 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 // 🔥 关键修复：使用 Source Generator 上下文（AOT 兼容）
                 // 日期：2026-03-21
                 // 原因：AOT 环境下禁用了反射序列化，必须使用 UnifiedSerializationContext
-                string metadataJson = JsonSerializer.Serialize(metadata, UnifiedSerializationContext.GetMetadataOptions());
+                JsonSerializerOptions metadataOptions = UnifiedSerializationContext.GetMetadataOptions();
+                string metadataJson = JsonSerializer.Serialize(metadata, ResolveTypeInfo<SaveMetadata>(metadataOptions));
                 
                 // Ensure the metadata is small (< 1KB as per requirement)
                 if (metadataJson.Length > 1024)
@@ -1025,7 +1038,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                             using (GZipStream gzipStream = new GZipStream(fileStream, CompressionMode.Decompress))
                             {
                                 JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
-                                dto = JsonSerializer.Deserialize<GameScenarioDTO>(gzipStream, options);
+                                dto = JsonSerializer.Deserialize(gzipStream, ResolveTypeInfo<GameScenarioDTO>(options));
                                 
                                 if (dto != null)
                                 {
@@ -1067,7 +1080,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 
                 // Validate that it's actually JSON by trying to parse it
                 JsonSerializerOptions options = GameJsonContext.GetDefaultOptions(indented: false);
-                GameScenarioDTO testDto = JsonSerializer.Deserialize<GameScenarioDTO>(json, options);
+                GameScenarioDTO testDto = JsonSerializer.Deserialize(json, ResolveTypeInfo<GameScenarioDTO>(options));
                 
                 if (testDto != null)
                 {
@@ -1162,7 +1175,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                     JsonSerializerOptions options = GameJsonContext.GetScenarioFileOptions(); // 使用剧本文件选项（无 ReferenceHandler.Preserve）
                     System.Diagnostics.Debug.WriteLine($"[EnsureCommonDataLoaded] 使用 GetScenarioFileOptions 进行反序列化");
                     
-                    CommonData.Current = JsonSerializer.Deserialize<CommonData>(json, options);
+                    CommonData.Current = JsonSerializer.Deserialize(json, ResolveTypeInfo<CommonData>(options));
                     
                     if (CommonData.Current == null)
                     {

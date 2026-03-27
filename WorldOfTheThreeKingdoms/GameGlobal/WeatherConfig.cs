@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameManager;
 
@@ -37,6 +38,12 @@ namespace WorldOfTheThreeKingdoms.GameGlobal;
 [JsonSerializable(typeof(SeasonType))]
 [JsonSerializable(typeof(WindDirection))]
 [JsonSerializable(typeof(WindForce))]
+[JsonSourceGenerationOptions(
+    GenerationMode = JsonSourceGenerationMode.Default,
+    PropertyNameCaseInsensitive = true,
+    AllowTrailingCommas = true,
+    ReadCommentHandling = JsonCommentHandling.Skip,
+    UseStringEnumConverter = true)]
 internal partial class EnvironmentConfigContext : JsonSerializerContext { }
 
 /// <summary>

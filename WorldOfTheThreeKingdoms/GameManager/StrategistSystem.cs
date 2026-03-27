@@ -386,9 +386,9 @@ namespace GameManager
                 // 使用影响力地图计算威胁等级
                 if (architecture.BelongedFaction?.StrategicMap != null)
                 {
-                    float influence = architecture.BelongedFaction.StrategicMap.GetInfluence(architecture.Position);
-                    // 将影响力值转换为0-1的威胁等级
-                    return Math.Max(0f, Math.Min(1f, influence / 100f));
+                    float threat = architecture.BelongedFaction.StrategicMap.GetThreat(architecture.Position);
+                    // 将威胁值转换为 0-1 的威胁等级
+                    return Math.Max(0f, Math.Min(1f, threat / 100f));
                 }
                 
                 // 备用方案：检查周围敌军

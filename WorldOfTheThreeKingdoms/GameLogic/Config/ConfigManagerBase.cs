@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using WorldOfTheThreeKingdoms.Serialization;
+using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
 
 namespace WorldOfTheThreeKingdoms.GameLogic.Config;
 
@@ -92,7 +93,7 @@ public abstract class ConfigManagerBase<T> where T : class, new()
                 TypeInfoResolver = GameJsonContext.Default
             };
             
-            var config = JsonSerializer.Deserialize<T>(jsonContent, options);
+            var config = JsonSerializer.Deserialize(jsonContent, JsonTypeInfoHelper.Resolve<T>(options));
 
             // ANTI-BAND-AID：配置反序列化失败时使用断言
             System.Diagnostics.Debug.Assert(config != null, 

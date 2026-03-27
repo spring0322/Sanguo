@@ -557,6 +557,11 @@ namespace GameObjects
             // 日期：2026-03-16
             var energyConfig = WorldOfTheThreeKingdoms.GameLogic.EnergyCalculationConfigLoader.LoadConfig();
             WorldOfTheThreeKingdoms.GameObjects.EnergyCalculator.Initialize(energyConfig);
+
+            // 🔥 配置收口：校验遗留公式字段与 AI 战略配置，避免无效调参
+            var influenceConfig = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
+            influenceConfig.ValidateLegacyEnergyFormulaMirror();
+            _ = influenceConfig.GetValidatedAIStrategicConfig();
             System.Diagnostics.Debug.WriteLine("[GameScenario] 能量计算系统初始化完成");
             
             // 初始化天气管理器（C# 12 目标类型 new）
@@ -6708,9 +6713,7 @@ namespace GameObjects
             
             this.Factions.ApplyInfluences();
             this.Architectures.ApplyInfluences();
-            this.Architectures.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             this.Persons.ApplyInfluences();
-            this.Troops.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             this.Preparing = false;
             this.InitialGameData();
             Session.Parameters.InitBaseRates();
@@ -7542,9 +7545,7 @@ namespace GameObjects
             swStep.Restart();
             this.Factions.ApplyInfluences();            
             this.Architectures.ApplyInfluences();
-            this.Architectures.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             this.Persons.ApplyInfluences();
-            this.Troops.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             swStep.Stop();
             System.Diagnostics.Debug.WriteLine($"[AfterLoadSaveFile] I. 应用影响力: {swStep.ElapsedMilliseconds} ms");
             
@@ -7667,9 +7668,7 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine("[AfterLoadSaveFile] 开始应用增益...");
             this.Factions.ApplyInfluences();
             this.Architectures.ApplyInfluences();
-            this.Architectures.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             this.Persons.ApplyInfluences();
-            this.Troops.ApplyInfluenceBuff();  // 🆕 2026-03-16：应用势力范围增益
             System.Diagnostics.Debug.WriteLine("[AfterLoadSaveFile] ✅ 增益应用完成");
             
             this.InitialGameData();

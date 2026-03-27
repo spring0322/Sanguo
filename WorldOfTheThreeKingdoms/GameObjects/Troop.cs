@@ -912,7 +912,7 @@ namespace GameObjects
                 {
                     var stackTrace = new System.Diagnostics.StackTrace(1, true);
                     var frame = stackTrace.GetFrame(0);
-                    var caller = frame?.GetMethod()?.Name ?? "Unknown";
+                    var caller = frame?.ToString()?.Trim() ?? "Unknown";
                     System.Diagnostics.Debug.WriteLine($"[BelongedLegionID设置] {this.DisplayName}(ID:{this.ID}) {belongedLegionID} -> {value}, 调用者: {caller}");
                 }
                 #endif
@@ -1008,6 +1008,12 @@ namespace GameObjects
         /// 日期：2026-03-16
         /// </summary>
         private int _cachedEffectiveViewRadius = -1;
+
+        // 记录上次应用的能量增益，确保每次刷新可逆且不会叠加
+        private float _appliedInfluenceOffenceDelta = 0f;
+        private float _appliedInfluenceDefenceDelta = 0f;
+        private int _appliedInfluenceVisionDelta = 0;
+        private bool _needsInfluenceBuffBootstrapFromSave = false;
 
         public int ViewingCliffFriendlyTroopCount;
         public int ViewingCliffHostileTroopCount;
@@ -2775,9 +2781,9 @@ namespace GameObjects
                 #if DEBUG
                 var stackTrace = new System.Diagnostics.StackTrace(1, true);
                 var callerFrame = stackTrace.GetFrame(0);
-                var callerMethod = callerFrame?.GetMethod();
+                var callerInfo = callerFrame?.ToString()?.Trim() ?? "Unknown";
                 System.Diagnostics.Debug.WriteLine($"[ApplyCurrentStunt] 部队 {this.ID} ({this.Name}) 触发特技: {this.CurrentStunt.Name}");
-                System.Diagnostics.Debug.WriteLine($"[ApplyCurrentStunt] 调用者: {callerMethod?.DeclaringType?.Name}.{callerMethod?.Name}()");
+                System.Diagnostics.Debug.WriteLine($"[ApplyCurrentStunt] 调用者: {callerInfo}");
                 System.Diagnostics.Debug.WriteLine($"[ApplyCurrentStunt] 是否玩家势力: {this.BelongedFaction != null && Session.Current.Scenario.IsPlayer(this.BelongedFaction)}");
                 #endif
                 
@@ -7095,12 +7101,10 @@ namespace GameObjects
                 // 添加调用栈信息，帮助追踪是谁调用了销毁
                 var stackTrace = new System.Diagnostics.StackTrace(1, true);
                 var callerFrame = stackTrace.GetFrame(0);
-                var callerMethod = callerFrame?.GetMethod();
-                var callerClass = callerMethod?.DeclaringType?.Name;
-                var callerMethodName = callerMethod?.Name;
+                var callerInfo = callerFrame?.ToString()?.Trim() ?? "Unknown";
                 
                 System.Diagnostics.Debug.WriteLine($"[Troop.Destroy] Destroying Troop ID:{this.ID} Name:{this.DisplayName} Position:{this.Position} RemoveRefs:{removeReferences}");
-                System.Diagnostics.Debug.WriteLine($"[Troop.Destroy] 调用者: {callerClass}.{callerMethodName}");
+                System.Diagnostics.Debug.WriteLine($"[Troop.Destroy] 调用者: {callerInfo}");
             }
             // [LOG CLEANUP] 仅在异常情况下记录销毁日志
             if (this.ID > 0 && this.PersonCount == 0)
@@ -12258,6 +12262,60 @@ namespace GameObjects
             this.RefreshDataOfAreaInfluence();
         }
 
+        /// <summary>
+        /// 在能量导致视野半径变化时，重建部队视野登记与相关区域影响。
+        /// </summary>
+        private void RefreshInfluenceViewArea()
+        {
+            if (this.viewArea == null)
+            {
+                return;
+            }
+
+            if (this.BelongedFaction == null)
+            {
+                throw new InvalidOperationException(
+                    $"[Troop.RefreshInfluenceViewArea] 部队 {this.DisplayName} 没有归属势力");
+            }
+
+            Faction belongedFaction = this.BelongedFaction;
+
+            foreach (Point point in this.viewArea.Area)
+            {
+                if (!Session.Current.Scenario.PositionOutOfRange(point))
+                {
+                    Session.Current.Scenario.RemovePositionViewingTroopNoCheck(this, point);
+                    this.RemoveAreaInfluences(point);
+                }
+            }
+
+            belongedFaction.RemoveTroopKnownAreaData(this);
+
+            this.ViewArea = null;
+            this.BaseViewArea = null;
+
+            belongedFaction.AddTroopKnownAreaData(this);
+
+            foreach (Point point in this.ViewArea.Area)
+            {
+                if (Session.Current.Scenario.PositionOutOfRange(point))
+                {
+                    continue;
+                }
+
+                Troop troopByPositionNoCheck = Session.Current.Scenario.GetTroopByPositionNoCheck(point);
+                if (((troopByPositionNoCheck != null) && !troopByPositionNoCheck.IsFriendly(belongedFaction)) && (troopByPositionNoCheck.Status == TroopStatus.埋伏))
+                {
+                    this.DetectAmbush(troopByPositionNoCheck);
+                }
+
+                Session.Current.Scenario.AddPositionViewingTroopNoCheck(this, point);
+                this.AddAreaInfluences(point);
+            }
+
+            this.RefreshDataOfAreaInfluence();
+        }
+
         public int NextPositionCost(Point currentPosition, Point nextPosition)
         {
             return this.NextPositionCost(currentPosition, nextPosition, this.Army.Kind);
@@ -13150,6 +13208,11 @@ namespace GameObjects
         /// 🧊 Cold Path：部队移动或势力范围更新时调用
         /// 日期：2026-03-16
         /// </summary>
+        public void MarkInfluenceBuffNeedsBootstrapFromSave()
+        {
+            _needsInfluenceBuffBootstrapFromSave = true;
+        }
+
         public void ApplyInfluenceBuff()
         {
             // 🔥 ANTI-BAND-AID：检查数据源
@@ -13173,44 +13236,52 @@ namespace GameObjects
                 this.Position, 
                 this.BelongedFaction);
             
-            // 2. 计算分级 Buff
-            var buffEffect = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateTieredBuffs(netEnergy);
-            
-            // 3. 应用 Buff 到部队属性
-            // 🔥 关键：使用加法而非乘法，因为 RateOfOffence 和 RateOfDefence 是倍率
-            // 例如：RateOfOffence = 1.0 表示 100%，攻击加成 = 0.02 表示 +2%
-            // 最终：RateOfOffence = 1.0 + 0.02 = 1.02（102%）
-            // 🔥 日期：2026-03-17
-            // 🔥 修复：使用统一的攻防加成计算（部队最高5%）
-            
-            // 攻击加成（部队最高5%）
+            // 2. 计算本次应应用的增量
             float attackMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateAttackBonus(netEnergy, isArchitecture: false);
-            if (attackMultiplier > 1.0f)
-            {
-                this.RateOfOffence += (attackMultiplier - 1.0f);
-            }
-            
-            // 防御加成（部队最高5%）
+            float newOffenceDelta = attackMultiplier > 1.0f ? attackMultiplier - 1.0f : 0f;
+
             float defenseMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateDefenseBonus(netEnergy, isArchitecture: false);
-            if (defenseMultiplier > 1.0f)
+            float newDefenceDelta = defenseMultiplier > 1.0f ? defenseMultiplier - 1.0f : 0f;
+
+            int newVisionDelta = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: false);
+            int oldVisionDelta = _appliedInfluenceVisionDelta;
+
+            // 3. 读档兼容：旧存档里的 RateOfOffence/RateOfDefence 可能已包含一次能量增量
+            if (_needsInfluenceBuffBootstrapFromSave)
             {
-                this.RateOfDefence += (defenseMultiplier - 1.0f);
+                this.RateOfOffence -= newOffenceDelta;
+                this.RateOfDefence -= newDefenceDelta;
+                _needsInfluenceBuffBootstrapFromSave = false;
             }
-            
-            // 4. 更新视野缓存
-            // 🔥 关键：在应用增益时更新缓存，避免 Hot Path 重复计算
-            // 🔥 核心保护：部队至少有 1 格视野（即使在敌方核心区域）
-            _cachedEffectiveViewRadius = this.ViewRadius + 
-                WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: false);
-            
-            // 5. 记录调试信息
+
+            // 4. 撤销旧增益，再应用新增益，保证幂等
+            this.RateOfOffence -= _appliedInfluenceOffenceDelta;
+            this.RateOfDefence -= _appliedInfluenceDefenceDelta;
+
+            _appliedInfluenceOffenceDelta = newOffenceDelta;
+            _appliedInfluenceDefenceDelta = newDefenceDelta;
+            _appliedInfluenceVisionDelta = newVisionDelta;
+
+            this.RateOfOffence += _appliedInfluenceOffenceDelta;
+            this.RateOfDefence += _appliedInfluenceDefenceDelta;
+
+            // 5. 更新视野缓存，并在半径变化时重建视野登记
+            int oldEffectiveViewRadius = this.ViewRadius + oldVisionDelta;
+            _cachedEffectiveViewRadius = this.ViewRadius + _appliedInfluenceVisionDelta;
+
+            if (this.viewArea != null && oldEffectiveViewRadius != _cachedEffectiveViewRadius)
+            {
+                RefreshInfluenceViewArea();
+            }
+
+            // 6. 记录调试信息
             #if DEBUG
-            if (attackMultiplier > 1.0f || defenseMultiplier > 1.0f)
+            if (_appliedInfluenceOffenceDelta > 0f || _appliedInfluenceDefenceDelta > 0f)
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[Troop.ApplyInfluenceBuff] 部队 {this.DisplayName} 获得增益：" +
-                    $"攻击+{(attackMultiplier - 1.0f) * 100:F1}%，" +
-                    $"防御+{(defenseMultiplier - 1.0f) * 100:F1}%，" +
+                    $"攻击+{_appliedInfluenceOffenceDelta * 100:F1}%，" +
+                    $"防御+{_appliedInfluenceDefenceDelta * 100:F1}%，" +
                     $"视野={_cachedEffectiveViewRadius}");
             }
             #endif
@@ -15060,39 +15131,144 @@ namespace GameObjects
             _pathTrackingId = Interlocked.Increment(ref _globalPathTrackingCounter);
             _moveCts = new CancellationTokenSource();
             _isWaitingForPath = true;
+            _isPathfinding = true;
 
             // 3. 获取地形适应性快照（避免后台线程访问主线程数据）
             // 🔥 反创可贴协议：如果 Army 或 Kind 为 null，说明数据初始化有问题
             // 这里崩溃是正确的，便于追踪数据源错误
-            int terrainAdaptability = this.Army.Kind.Movability;
-
-            // 4. 🔥 性能优化：收集动态障碍物快照（使用 ArrayPool）
-            // TODO: 实际实现需要遍历附近的部队和建筑，生成障碍物列表
-            // 当前是临时实现：空障碍物列表
-            var obstacles = System.Buffers.ArrayPool<GameObjects.AI.Pathfinding.DynamicObstacle>.Shared.Rent(100);
-            int obstacleCount = 0;
-
-            // 示例：添加障碍物（实际需要从场景中收集）
-            // obstacles[obstacleCount++] = new DynamicObstacle(x, y, penaltyScore);
-
-            // 5. 构建请求（纯值类型快照）
-            var request = new GameObjects.AI.Pathfinding.PathRequest(
-                this.ID,
-                _pathTrackingId,
-                this.Position,
-                target,
-                terrainAdaptability,
-                obstacles,
-                obstacleCount,
-                _moveCts.Token
+            var terrainCosts = new GameObjects.AI.Pathfinding.TerrainCostProfile(
+                this.GetTerrainAdaptability(TerrainKind.平原),
+                this.GetTerrainAdaptability(TerrainKind.草原),
+                this.GetTerrainAdaptability(TerrainKind.森林),
+                this.GetTerrainAdaptability(TerrainKind.湿地),
+                this.GetTerrainAdaptability(TerrainKind.山地),
+                this.GetTerrainAdaptability(TerrainKind.水域),
+                this.GetTerrainAdaptability(TerrainKind.峻岭),
+                this.GetTerrainAdaptability(TerrainKind.荒地),
+                this.GetTerrainAdaptability(TerrainKind.沙漠),
+                this.GetTerrainAdaptability(TerrainKind.栈道)
             );
 
-            // 6. 入队到全局管理器（非阻塞）
-            GameObjects.AI.Pathfinding.AsyncPathfindingManager.Instance.EnqueueRequest(request);
+            var scenario = Session.Current.Scenario;
+            GameObjects.AI.Pathfinding.AsyncPathfindingManager.Instance.EnsureTerrainSnapshot(scenario);
+            bool targetHasArchitecture = scenario.GetArchitectureByPosition(target) != null;
+            var mapData = scenario.ScenarioMap.MapData ?? throw new InvalidOperationException("ScenarioMap.MapData 为 null，无法构建异步寻路快照。");
+            var penalizedMapData = scenario.PenalizedMapData ?? throw new InvalidOperationException("Scenario.PenalizedMapData 为 null，无法构建异步寻路快照。");
+            int mapWidth = scenario.ScenarioMap.MapDimensions.X;
+            int mapHeight = scenario.ScenarioMap.MapDimensions.Y;
+            int nodeCount = mapWidth * mapHeight;
+            var traversalCosts = System.Buffers.ArrayPool<int>.Shared.Rent(nodeCount);
+            var traversalPenalties = System.Buffers.ArrayPool<int>.Shared.Rent(nodeCount);
+            var obstacles = System.Buffers.ArrayPool<GameObjects.AI.Pathfinding.DynamicObstacle>.Shared.Rent(1);
+            int obstacleCount = 0;
+            bool requestQueued = false;
 
-            #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[RequestMoveAsync] {this.DisplayName} 请求寻路: {this.Position} → {target}，TrackingId={_pathTrackingId}");
-            #endif
+            try
+            {
+                static int CombinePenalty(int currentPenalty, int addedPenalty, int unreachableCost)
+                {
+                    if (addedPenalty >= unreachableCost)
+                    {
+                        return unreachableCost;
+                    }
+
+                    int mergedPenalty = currentPenalty + addedPenalty;
+                    return mergedPenalty >= unreachableCost ? unreachableCost : mergedPenalty;
+                }
+
+                static GameManager.UnitType GetUnitType(MilitaryType militaryType) => militaryType switch
+                {
+                    MilitaryType.步兵 => GameManager.UnitType.步兵,
+                    MilitaryType.弩兵 => GameManager.UnitType.弓兵,
+                    MilitaryType.骑兵 => GameManager.UnitType.骑兵,
+                    MilitaryType.器械 => GameManager.UnitType.攻城器械,
+                    MilitaryType.水军 => GameManager.UnitType.水军,
+                    _ => GameManager.UnitType.步兵
+                };
+
+                static GameManager.TerrainType GetTerrainType(int terrainId) => terrainId switch
+                {
+                    1 or 2 => GameManager.TerrainType.Plain,
+                    3 => GameManager.TerrainType.Forest,
+                    4 or 6 => GameManager.TerrainType.River,
+                    5 or 7 => GameManager.TerrainType.Mountain,
+                    _ => GameManager.TerrainType.Other
+                };
+
+                const int unreachableCost = GameObjects.AI.Pathfinding.TerrainCostProfile.UnreachableTerrainCost;
+                MilitaryKind kind = this.Army.Kind;
+                var unitType = GetUnitType(kind.Type);
+
+                for (int y = 0; y < mapHeight; y++)
+                {
+                    int rowOffset = y * mapWidth;
+                    for (int x = 0; x < mapWidth; x++)
+                    {
+                        Point pos = new(x, y);
+                        int index = rowOffset + x;
+                        int cost = this.GetCostByPosition(pos, false, -1, kind);
+                        int traversalPenalty = 0;
+
+                        if (cost < unreachableCost)
+                        {
+                            var terrainType = GetTerrainType(mapData[x, y]);
+                            traversalPenalty = WorldOfTheThreeKingdoms.GameLogic.MovementCostCalculator.GetWeatherPenalty(
+                                pos,
+                                unitType,
+                                terrainType);
+
+                            int penalizedCost = penalizedMapData[x, y];
+                            if (penalizedCost > 0)
+                            {
+                                traversalPenalty = CombinePenalty(traversalPenalty, penalizedCost, unreachableCost);
+                            }
+
+                            int temporaryPenalty = scenario.GetTemporaryPenalty(pos);
+                            if (temporaryPenalty > 0)
+                            {
+                                traversalPenalty = CombinePenalty(traversalPenalty, temporaryPenalty, unreachableCost);
+                            }
+                        }
+
+                        traversalCosts[index] = cost;
+                        traversalPenalties[index] = traversalPenalty;
+                    }
+                }
+
+                // 5. 构建请求（纯值类型快照）
+                var request = new GameObjects.AI.Pathfinding.PathRequest(
+                    this.Id,
+                    _pathTrackingId,
+                    this.Position,
+                    target,
+                    terrainCosts,
+                    targetHasArchitecture,
+                    traversalCosts,
+                    nodeCount,
+                    traversalPenalties,
+                    nodeCount,
+                    obstacles,
+                    obstacleCount,
+                    _moveCts.Token
+                );
+
+                // 6. 入队到全局管理器（非阻塞）
+                GameObjects.AI.Pathfinding.AsyncPathfindingManager.Instance.EnqueueRequest(request);
+                requestQueued = true;
+
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[RequestMoveAsync] {this.DisplayName} 请求寻路: {this.Position} → {target}，TrackingId={_pathTrackingId}");
+                #endif
+            }
+            finally
+            {
+                if (!requestQueued)
+                {
+                    System.Buffers.ArrayPool<int>.Shared.Return(traversalCosts, clearArray: false);
+                    System.Buffers.ArrayPool<int>.Shared.Return(traversalPenalties, clearArray: false);
+                    System.Buffers.ArrayPool<GameObjects.AI.Pathfinding.DynamicObstacle>.Shared.Return(obstacles, clearArray: false);
+                }
+            }
         }
 
 
@@ -15112,6 +15288,7 @@ namespace GameObjects
             _moveCts.Dispose();
             _moveCts = null;
             _isWaitingForPath = false;
+            _isPathfinding = false;
 
             System.Diagnostics.Debug.WriteLine($"[Troop] {this.DisplayName} 取消寻路任务");
         }
@@ -15135,6 +15312,19 @@ namespace GameObjects
 
             // 解锁状态
             _isWaitingForPath = false;
+            _isPathfinding = false;
+
+            if (_moveCts != null)
+            {
+                _moveCts.Dispose();
+                _moveCts = null;
+            }
+
+            if (result.IsCancelled)
+            {
+                GameObjects.AI.Pathfinding.PathPool.Return(result.Path);
+                return;
+            }
 
             if (result.IsSuccess)
             {
@@ -18088,7 +18278,7 @@ namespace GameObjects
                 // 🔥 临时调试：追踪调用来源（性能开销大，仅用于问题定位）
                 var stackTrace = new System.Diagnostics.StackTrace(1, true);
                 var frame = stackTrace.GetFrame(0);
-                System.Diagnostics.Debug.WriteLine($"[Destination] 调用者: {frame?.GetMethod()?.Name ?? "Unknown"}");
+                System.Diagnostics.Debug.WriteLine($"[Destination] 调用者: {frame?.ToString()?.Trim() ?? "Unknown"}");
                 #endif
                 
                 // 🔥 根本修复：同步 realDestination 和 destination，确保数据一致性
@@ -19219,8 +19409,8 @@ namespace GameObjects
                                 if (stackTrace.FrameCount > 0)
                                 {
                                     var frame = stackTrace.GetFrame(0);
-                                    var method = frame?.GetMethod();
-                                    System.Diagnostics.Debug.WriteLine($"[Troop.Position] 调用者: {method?.DeclaringType?.Name}.{method?.Name}");
+                                    var frameInfo = frame?.ToString()?.Trim() ?? "Unknown";
+                                    System.Diagnostics.Debug.WriteLine($"[Troop.Position] 调用者: {frameInfo}");
                                 }
                             }
                         }
@@ -20493,8 +20683,8 @@ namespace GameObjects
                                     for (int i = 1; i < Math.Min(5, stackTrace.FrameCount); i++)
                                     {
                                         var frame = stackTrace.GetFrame(i);
-                                        var method = frame.GetMethod();
-                                        System.Diagnostics.Debug.WriteLine($"  [{i}] {method.DeclaringType?.Name}.{method.Name}() at line {frame.GetFileLineNumber()}");
+                                        var frameInfo = frame?.ToString()?.Trim() ?? "<unknown frame>";
+                                        System.Diagnostics.Debug.WriteLine($"  [{i}] {frameInfo}");
                                     }
                                     #endif
                                     
@@ -20550,8 +20740,8 @@ namespace GameObjects
                     for (int i = 1; i < Math.Min(5, stackTrace.FrameCount); i++)  // 跳过第0帧（当前方法）
                     {
                         var frame = stackTrace.GetFrame(i);
-                        var method = frame.GetMethod();
-                        System.Diagnostics.Debug.WriteLine($"  [{i}] {method.DeclaringType?.Name}.{method.Name}() at line {frame.GetFileLineNumber()}");
+                        var frameInfo = frame?.ToString()?.Trim() ?? "<unknown frame>";
+                        System.Diagnostics.Debug.WriteLine($"  [{i}] {frameInfo}");
                     }
                     #endif
                     
@@ -21353,11 +21543,13 @@ namespace GameObjects
         /// </summary>
         private Point FindSafestNearbyPosition()
         {
-            if (this.BelongedFaction?.StrategicMap == null)
+            StrategicMap strategicMap = this.BelongedFaction?.StrategicMap;
+            if (strategicMap == null)
                 return this.Position;
 
             Point bestPosition = this.Position;
-            float lowestThreat = this.BelongedFaction.StrategicMap.GetInfluence(this.Position);
+            float lowestThreat = strategicMap.GetThreat(this.Position);
+            float bestInfluence = strategicMap.GetInfluence(this.Position);
 
             // 搜索周围3x3区域
             for (int dx = -3; dx <= 3; dx++)
@@ -21371,10 +21563,12 @@ namespace GameObjects
                     // 检查位置是否有效且可通行
                     if (IsValidMovePosition(candidate))
                     {
-                        float threat = this.BelongedFaction.StrategicMap.GetInfluence(candidate);
-                        if (threat < lowestThreat)
+                        float threat = strategicMap.GetThreat(candidate);
+                        float influence = strategicMap.GetInfluence(candidate);
+                        if (threat < lowestThreat || (Math.Abs(threat - lowestThreat) < 0.001f && influence > bestInfluence))
                         {
                             lowestThreat = threat;
+                            bestInfluence = influence;
                             bestPosition = candidate;
                         }
                     }
@@ -21397,7 +21591,10 @@ namespace GameObjects
             }
 
             // 其次寻找威胁最大的区域（可能有敌军）
-            return this.BelongedFaction.StrategicMap.FindMostThreatenedPosition(this.BelongedFaction);
+            if (this.BelongedFaction?.StrategicMap != null)
+            {
+                return this.BelongedFaction.StrategicMap.FindMostThreatenedPosition(this.BelongedFaction);
+            }
 
             return Point.Zero;
         }
@@ -22154,7 +22351,7 @@ namespace GameObjects
                     HasValidDestination() &&
                     this.ValidateIntentCheckpoint(IntentCheckpointKind.BeforePathRequest))
                 {
-                    RequestPathAsync(gameTime);
+                    RequestMoveAsync(this.RealDestination);
                     // 🔥 根本修复：不要设置 Action = Move
                     // 原因：设置 Action=Move 会触发 Animating=true，导致 MoveTheTroops 跳过 CurrentQueueTroopMove()
                     // 解决：保持 Action=Stop，但通过 IsPathfinding 标志让 CurrentQueueTroopMove 知道部队正在寻路
@@ -22473,6 +22670,8 @@ namespace GameObjects
                 }
                 else
                 {
+                    GameObjects.AI.Pathfinding.PathPool.Return(pathPoints);
+
                     // 已在攻击范围内，不应用路径，停止移动
                     this.HasPath = false;
                     this.Action = TroopAction.Stop;

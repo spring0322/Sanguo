@@ -22,7 +22,6 @@ namespace WorldOfTheThreeKingdoms.GameManager
             // 尝试多个可能的路径
             string[] possiblePaths = {
                 "Content/Data/AdvisorDialogueConfig.xml",
-                "GameData/AdvisorDialogueConfig.xml",
                 "Content/Data/Plugins/AdvisorDialogueConfig.xml"
             };
             
@@ -39,26 +38,16 @@ namespace WorldOfTheThreeKingdoms.GameManager
             }
             
             // 如果还没找到，尝试使用Platform路径
-            if (filePath == null)
+            if (filePath == null && Platform.Current != null)
             {
-                try 
+                string baseDir = Platform.Current.DirectoryName(Platform.Current.Location);
+                foreach (string path in possiblePaths)
                 {
-                    string gameDataPath = PathHelper.GetGameDataPath();
-                    string testPath = Path.Combine(gameDataPath, "AdvisorDialogueConfig.xml");
+                    string testPath = Path.Combine(baseDir, path);
                     if (File.Exists(testPath))
                     {
                         filePath = testPath;
-                    }
-                }
-                catch 
-                { 
-                    if (Platform.Current != null)
-                    {
-                        string testPath = Platform.Current.DirectoryName(Platform.Current.Location) + "/Content/Data/AdvisorDialogueConfig.xml";
-                        if (File.Exists(testPath))
-                        {
-                            filePath = testPath;
-                        }
+                        break;
                     }
                 }
             }

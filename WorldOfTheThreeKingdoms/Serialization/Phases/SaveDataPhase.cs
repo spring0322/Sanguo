@@ -572,6 +572,8 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 dto = new ArchitectureDTO();
             }
             
+            dto = CreateArchitectureDto(architecture);
+
             // Fill common properties
             dto.ID = architecture.ID;
             dto.Name = architecture.Name;
@@ -582,7 +584,12 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             {
                 System.Diagnostics.Debug.WriteLine($"⚠️ [SaveDataPhase] Architecture {architecture.ID} ({architecture.Name}) Kind is NULL when saving! Will save KindID as -1");
             }
-            dto.KindID = architecture.Kind?.ID ?? -1;
+            if (architecture.Kind == null)
+            {
+                throw new InvalidOperationException(
+                    $"[SaveDataPhase] Architecture {architecture.ID} ({architecture.Name}) has null Kind and cannot be serialized safely.");
+            }
+            dto.KindID = architecture.Kind.ID;
             
             // Location
              if (architecture.ArchitectureArea != null)
@@ -716,6 +723,77 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             dto.IncrementOfViewRadius = architecture.IncrementOfViewRadius;
             
             return dto;
+        }
+
+        private static ArchitectureDTO CreateArchitectureDto(Architecture architecture)
+        {
+            ArchitectureDtoCategory category = ResolveArchitectureDtoCategory(architecture);
+            return category switch
+            {
+                ArchitectureDtoCategory.City => new CityDTO
+                {
+                    DevelopmentLevel = architecture.Agriculture + architecture.Commerce + architecture.Technology
+                },
+                ArchitectureDtoCategory.Port => new PortDTO
+                {
+                    ShipCapacity = 100
+                },
+                ArchitectureDtoCategory.Gate => new GateDTO
+                {
+                    DefenseBonus = architecture.Endurance / 10
+                },
+                _ => throw new InvalidOperationException(
+                    $"[SaveDataPhase] Unsupported architecture DTO category for architecture {architecture.ID} ({architecture.Name}).")
+            };
+        }
+
+        private static ArchitectureDtoCategory ResolveArchitectureDtoCategory(Architecture architecture)
+        {
+            ArchitectureKind kind = architecture.Kind;
+            if (kind == null)
+            {
+                throw new InvalidOperationException(
+                    $"[SaveDataPhase] Architecture {architecture.ID} ({architecture.Name}) has null Kind and cannot be serialized safely.");
+            }
+
+            string kindName = kind.Name ?? string.Empty;
+            if (kindName.Contains("城", StringComparison.Ordinal) ||
+                kindName.Contains("City", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.City;
+            }
+
+            if (kindName.Contains("港", StringComparison.Ordinal) ||
+                kindName.Contains("Port", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.Port;
+            }
+
+            if (kindName.Contains("关", StringComparison.Ordinal) ||
+                kindName.Contains("Gate", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.Gate;
+            }
+
+            if (kind.HasHarbor)
+            {
+                return ArchitectureDtoCategory.Port;
+            }
+
+            if (kind.HasPopulation)
+            {
+                return ArchitectureDtoCategory.City;
+            }
+
+            throw new InvalidOperationException(
+                $"[SaveDataPhase] Architecture {architecture.ID} ({architecture.Name}) Kind {kind.ID} ({kind.Name}) cannot be classified to City/Port/Gate.");
+        }
+
+        private enum ArchitectureDtoCategory
+        {
+            City,
+            Port,
+            Gate
         }
         
         /// <summary>

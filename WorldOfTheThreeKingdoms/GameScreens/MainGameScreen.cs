@@ -2433,7 +2433,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                 }
                                 else
                                 {
-                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "说服", "ConvinceTarget");
+                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "说服", "Personal");
                                 }
                             }
                             else
@@ -4627,7 +4627,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     convinceTargets, 
                     null, 
                     "选择说服目标", 
-                    "ConvinceTarget"
+                    "Personal"
                 );
             }
             catch (Exception ex)
@@ -11454,12 +11454,10 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                             _inkRenderer?.UpdateInfluenceMap();
                         };
                         
-                        // 🔥 重新应用势力范围增益（GlobalInfluenceMap 已初始化）
-                        // 🔥 日期：2026-03-17
-                        // 🔥 原因：AfterLoadGameScenario() 中的 ApplyInfluenceBuff() 因 GlobalInfluenceMap 未初始化而跳过
-                        Session.Current.Scenario.Architectures.ApplyInfluenceBuff();
-                        Session.Current.Scenario.Troops.ApplyInfluenceBuff();
-                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] ✅ 势力范围增益应用完成");
+                        // 🔥 关键：初始化后立即完成一次全局能量重算并统一回灌实体状态
+                        // 避免出现“地图已初始化但 Buff/视野仍是旧值”的首帧不一致
+                        _influenceUpdateManager.SyncAfterFactionTopologyChange("MainGameScreen.InitializeInfluenceSystem");
+                        System.Diagnostics.Debug.WriteLine("[MainGameScreen] ✅ 势力范围重算与实体回灌完成");
                         
                         // 🎨 GlobalInfluenceMap 已初始化，现在可以安全调用水墨渲染器
                         _inkRenderer?.UpdateInfluenceMap();
@@ -11562,22 +11560,8 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 {
                     global::GameObjects.AI.Pathfinding.AsyncPathfindingManager.Instance.ProcessCompletedPaths(result =>
                     {
-                        // 🔥 性能优化：直接使用 Troops 集合，避免类型转换
-                        global::GameObjects.Troop troop = null;
-                        
-                        // 使用 for 循环遍历，避免 LINQ
-                        var troops = Session.Current.Scenario.Troops;
-                        for (int i = 0; i < troops.Count; i++)
-                        {
-                            var t = troops[i] as global::GameObjects.Troop;
-                            if (t != null && t.ID == result.TroopId)
-                            {
-                                troop = t;
-                                break;
-                            }
-                        }
-                        
-                        if (troop != null && !troop.Destroyed)
+                        global::GameObjects.Troop troop;
+                        if (Session.Current.TryGetTroop(result.TroopId, out troop) && !troop.Destroyed)
                         {
                             troop.OnPathfindingCompleted(result);
                         }

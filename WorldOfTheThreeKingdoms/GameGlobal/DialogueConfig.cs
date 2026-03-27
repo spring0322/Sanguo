@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Xml.Serialization;
 using System.IO;
 using System.Linq;
+using System.Xml;
 using GameObjects;
 
 namespace WorldOfTheThreeKingdoms.GameGlobal
@@ -315,14 +316,14 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
         public static void LoadConfig(string xmlPath)
         {
             // 使用新的类名 AppointmentDialogueConfig
-            XmlSerializer serializer = new XmlSerializer(typeof(AppointmentDialogueConfig));
+            _cachedEntries = LoadAppointmentDialogueConfig(xmlPath).Entries;
             using (FileStream fs = new FileStream(xmlPath, FileMode.Open))
             {
                 // 加载并强转为新的配置类
-                var config = (AppointmentDialogueConfig)serializer.Deserialize(fs);
+                return;
                 // 如果你需要缓存它，请确保你的缓存变量类型也是 AppointmentDialogueConfig
                 // 或者把 Entries 提取出来存到一个通用的 List<DialogueEntry> 里
-                _cachedEntries = config.Entries;
+                return;
             }
         }
 
@@ -332,13 +333,13 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
         public static void LoadRecallConfig(string xmlPath)
         {
             // 使用罢免对话配置类
-            XmlSerializer serializer = new XmlSerializer(typeof(RecallDialogueConfig));
+            _cachedEntries = LoadRecallDialogueConfig(xmlPath).Entries;
             using (FileStream fs = new FileStream(xmlPath, FileMode.Open))
             {
                 // 加载并强转为罢免配置类
-                var config = (RecallDialogueConfig)serializer.Deserialize(fs);
+                return;
                 // 把 Entries 提取出来存到通用的缓存里
-                _cachedEntries = config.Entries;
+                return;
             }
         }
 
@@ -351,10 +352,10 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
             {
                 if (File.Exists(filePath))
                 {
-                    XmlSerializer serializer = new XmlSerializer(typeof(AppointmentDialogueConfig));
-                    using (FileStream fs = new FileStream(filePath, FileMode.Open))
+                    XmlDocument document = LoadXmlDocument(filePath);
+                    if (true)
                     {
-                        return (AppointmentDialogueConfig)serializer.Deserialize(fs);
+                        return ParseAppointmentDialogueConfig(document);
                     }
                 }
                 else
@@ -379,10 +380,10 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
             {
                 if (File.Exists(filePath))
                 {
-                    XmlSerializer serializer = new XmlSerializer(typeof(RecallDialogueConfig));
-                    using (FileStream fs = new FileStream(filePath, FileMode.Open))
+                    XmlDocument document = LoadXmlDocument(filePath);
+                    if (true)
                     {
-                        return (RecallDialogueConfig)serializer.Deserialize(fs);
+                        return ParseRecallDialogueConfig(document);
                     }
                 }
                 else
@@ -407,10 +408,10 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
             {
                 if (File.Exists(filePath))
                 {
-                    XmlSerializer serializer = new XmlSerializer(typeof(DialogueConfig));
-                    using (FileStream fs = new FileStream(filePath, FileMode.Open))
+                    XmlDocument document = LoadXmlDocument(filePath);
+                    if (true)
                     {
-                        return (DialogueConfig)serializer.Deserialize(fs);
+                        return ParseDialogueConfig(document);
                     }
                 }
                 else
@@ -429,6 +430,135 @@ namespace WorldOfTheThreeKingdoms.GameGlobal
         /// <summary>
         /// 查找最佳匹配的对话条目（通用版本）
         /// </summary>
+        public static DialogueConfig LoadUnifiedConfig(string filePath)
+        {
+            return LoadDialogueConfig(filePath);
+        }
+
+        private static XmlDocument LoadXmlDocument(string filePath)
+        {
+            XmlDocument document = new XmlDocument();
+            using FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            document.Load(fs);
+            return document;
+        }
+
+        private static DialogueConfig ParseDialogueConfig(XmlDocument document)
+        {
+            DialogueConfig config = new DialogueConfig();
+            XmlElement root = document.DocumentElement;
+
+            if (root == null)
+            {
+                return config;
+            }
+
+            var groupNodes = root.SelectNodes("./Entries");
+            if (groupNodes != null)
+            {
+                foreach (XmlNode groupNode in groupNodes)
+                {
+                    DialogueEntries group = new DialogueEntries
+                    {
+                        Type = GetAttribute(groupNode, "Type", "")
+                    };
+                    group.Entries.AddRange(ParseDialogueEntryNodes(groupNode));
+                    config.EntriesGroups.Add(group);
+                }
+            }
+
+            config.Entries.AddRange(ParseDialogueEntryNodes(root));
+            return config;
+        }
+
+        private static AppointmentDialogueConfig ParseAppointmentDialogueConfig(XmlDocument document)
+        {
+            AppointmentDialogueConfig config = new AppointmentDialogueConfig();
+            if (document.DocumentElement != null)
+            {
+                config.Entries.AddRange(ParseDialogueEntryNodes(document.DocumentElement));
+            }
+
+            return config;
+        }
+
+        private static RecallDialogueConfig ParseRecallDialogueConfig(XmlDocument document)
+        {
+            RecallDialogueConfig config = new RecallDialogueConfig();
+            if (document.DocumentElement != null)
+            {
+                config.Entries.AddRange(ParseDialogueEntryNodes(document.DocumentElement));
+            }
+
+            return config;
+        }
+
+        private static List<DialogueEntry> ParseDialogueEntryNodes(XmlNode parentNode)
+        {
+            List<DialogueEntry> entries = new List<DialogueEntry>();
+            var nodes = parentNode.SelectNodes("./Entry");
+
+            if (nodes == null)
+            {
+                return entries;
+            }
+
+            foreach (XmlNode entryNode in nodes)
+            {
+                entries.Add(ParseDialogueEntry(entryNode));
+            }
+
+            return entries;
+        }
+
+        private static DialogueEntry ParseDialogueEntry(XmlNode entryNode)
+        {
+            return new DialogueEntry
+            {
+                Type = GetEnumAttribute(entryNode, "Type", DialogueType.Default),
+                LeaderID = GetIntAttribute(entryNode, "LeaderID", -1),
+                AdvisorID = GetIntAttribute(entryNode, "AdvisorID", -1),
+                LeaderKind = GetIntAttribute(entryNode, "LeaderKind", -1),
+                MinIntelligence = GetIntAttribute(entryNode, "MinIntelligence", 0),
+                MaxIntelligence = GetIntAttribute(entryNode, "MaxIntelligence", 999),
+                MaxLoyalty = GetIntAttribute(entryNode, "MaxLoyalty", 999),
+                MinLoyalty = GetIntAttribute(entryNode, "MinLoyalty", 0),
+                HighAmbition = GetBoolAttribute(entryNode, "HighAmbition", false),
+                MinAge = GetIntAttribute(entryNode, "MinAge", 0),
+                MaxAge = GetIntAttribute(entryNode, "MaxAge", 999),
+                MinCommand = GetIntAttribute(entryNode, "MinCommand", 0),
+                MinPolitics = GetIntAttribute(entryNode, "MinPolitics", 0),
+                AdvisorKind = GetIntAttribute(entryNode, "AdvisorKind", -1),
+                Relation = GetEnumAttribute(entryNode, "Relation", RelationType.None),
+                LeaderText = entryNode.SelectSingleNode("LeaderText")?.InnerText,
+                AdvisorText = entryNode.SelectSingleNode("AdvisorText")?.InnerText
+            };
+        }
+
+        private static string GetAttribute(XmlNode node, string attributeName, string defaultValue)
+        {
+            return node.Attributes?[attributeName]?.Value ?? defaultValue;
+        }
+
+        private static int GetIntAttribute(XmlNode node, string attributeName, int defaultValue)
+        {
+            string rawValue = node.Attributes?[attributeName]?.Value;
+            return int.TryParse(rawValue, out int parsedValue) ? parsedValue : defaultValue;
+        }
+
+        private static bool GetBoolAttribute(XmlNode node, string attributeName, bool defaultValue)
+        {
+            string rawValue = node.Attributes?[attributeName]?.Value;
+            return bool.TryParse(rawValue, out bool parsedValue) ? parsedValue : defaultValue;
+        }
+
+        private static TEnum GetEnumAttribute<TEnum>(XmlNode node, string attributeName, TEnum defaultValue)
+            where TEnum : struct, Enum
+        {
+            string rawValue = node.Attributes?[attributeName]?.Value;
+            return Enum.TryParse(rawValue, true, out TEnum parsedValue) ? parsedValue : defaultValue;
+        }
+
         public static DialogueEntry FindBestMatch(DialogueConfig config, Person leader, Person advisor)
         {
             if (config == null || config.Entries == null || config.Entries.Count == 0)

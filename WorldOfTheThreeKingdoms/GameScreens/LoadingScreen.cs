@@ -62,7 +62,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             
             // 🔥 诊断：记录 LoadingScreen 构造参数
             string logPath = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                AppContext.BaseDirectory,
                 "loading_screen_log.txt");
             try
             {
@@ -244,7 +244,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 _updateLoggedOnce = true;
                 string logPath = System.IO.Path.Combine(
-                    System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                    AppContext.BaseDirectory,
                     "loading_screen_log.txt");
                 try
                 {
@@ -333,7 +333,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     _thresholdLoggedOnce = true;
                     string logPath = System.IO.Path.Combine(
-                        System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                        AppContext.BaseDirectory,
                         "loading_screen_log.txt");
                     try
                     {
@@ -355,7 +355,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         // 🔥 诊断：记录 LoadScreenEvent 为 null（只记录一次）
                         string logPath = System.IO.Path.Combine(
-                            System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                            AppContext.BaseDirectory,
                             "loading_screen_log.txt");
                         try
                         {
@@ -368,7 +368,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         // 🔥 诊断：记录准备触发事件（只记录一次）
                         string logPath = System.IO.Path.Combine(
-                            System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                            AppContext.BaseDirectory,
                             "loading_screen_log.txt");
                         try
                         {
@@ -439,7 +439,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                 // 🔥 根本修复：Release 版本后台线程异常必须写文件，否则完全静默消失
                                 // PlatformTask 用 Task.Run，异常不会传播到主线程
                                 string logPath = System.IO.Path.Combine(
-                                    System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                                    AppContext.BaseDirectory,
                                     "crash_log.txt");
                                 string msg = $"[{System.DateTime.Now:yyyy-MM-dd HH:mm:ss}] 加載出錯:\n{e}\n\nInnerException:\n{e.InnerException}\n\n---\n";
                                 try

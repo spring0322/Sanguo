@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Xml.Serialization;
 using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using WorldOfTheThreeKingdoms.GameScreens;
@@ -38,10 +37,10 @@ namespace GameObjects
             {
                 try
                 {
-                    XmlSerializer serializer = new XmlSerializer(typeof(DialogueConfig));
-                    using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read))
+                    DialogueConfig config = DialogueConfigManager.LoadUnifiedConfig(path);
+                    if (true)
                     {
-                        DialogueConfig config = (DialogueConfig)serializer.Deserialize(stream);
+                        return config;
                         System.Diagnostics.Debug.WriteLine($"[DialogueManager] 成功加载配置: {path}");
                         return config;
                     }

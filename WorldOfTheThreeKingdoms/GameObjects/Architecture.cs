@@ -285,7 +285,7 @@ namespace GameObjects
                         for (int i = 0; i < Math.Min(10, stackTrace.FrameCount); i++)
                         {
                             var frame = stackTrace.GetFrame(i);
-                            System.Diagnostics.Debug.WriteLine($"at {frame.GetMethod().DeclaringType.Name}.{frame.GetMethod().Name}() in {frame.GetFileName()}:line {frame.GetFileLineNumber()}");
+                            System.Diagnostics.Debug.WriteLine(frame?.ToString()?.Trim() ?? "at <unknown frame>");
                         }
                         #endif
                         
@@ -1593,7 +1593,7 @@ namespace GameObjects
                     for (int i = 0; i < Math.Min(5, stackTrace.FrameCount); i++)
                     {
                         var frame = stackTrace.GetFrame(i);
-                        System.Diagnostics.Debug.WriteLine($"  at {frame.GetMethod().DeclaringType?.Name}.{frame.GetMethod().Name}()");
+                        System.Diagnostics.Debug.WriteLine($"  {frame?.ToString()?.Trim() ?? "<unknown frame>"}");
                     }
                     
                     return; // 玩家非委任建筑不执行内政 AI
@@ -5722,36 +5722,36 @@ namespace GameObjects
                 this.ArchitectureArea.Centre, 
                 this.BelongedFaction);
             
-            // 2. 计算分级 Buff
-            var buffEffect = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateTieredBuffs(netEnergy);
-            
-            // 3. 应用 Buff 到城池属性
-            // 🔥 关键：城池的攻防加成通过部队实现（部队在城池区域内获得加成）
-            // 🔥 城池本身的增益主要是：粮食折扣、视野范围
-            // 🔥 日期：2026-03-17
-            // 🔥 说明：城池攻防最高10%，通过部队在城池区域内的 ApplyInfluenceBuff() 实现
-            
-            // 粮食折扣影响城池维护成本
-            // 例如：FoodDiscount = 0.15 表示 -15%
-            // 如果原本 RateOfFoodReduceRate = 1.0，则变为 0.85（减少 15% 粮食消耗）
-            if (buffEffect.FoodDiscount > 0)
+            // 2. 计算本次应应用的增量
+            float foodConsumptionMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateFoodConsumptionMultiplier(
+                netEnergy,
+                isArchitecture: true);
+            float newFoodReduceRateDelta = foodConsumptionMultiplier - 1.0f;
+            int newVisionDelta = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: true);
+            int oldVisionDelta = _appliedInfluenceVisionDelta;
+
+            // 3. 撤销旧增益，再应用新增益，保证幂等
+            this.RateOfFoodReduceRate -= _appliedInfluenceFoodReduceRateDelta;
+            _appliedInfluenceFoodReduceRateDelta = newFoodReduceRateDelta;
+            this.RateOfFoodReduceRate += _appliedInfluenceFoodReduceRateDelta;
+
+            // 4. 更新视野缓存，并在半径变化时重建视野登记
+            int oldEffectiveViewDistance = this.ViewDistance + oldVisionDelta;
+            _appliedInfluenceVisionDelta = newVisionDelta;
+            _cachedEffectiveViewDistance = this.ViewDistance + _appliedInfluenceVisionDelta;
+
+            if ((this.viewArea != null || this.longViewArea != null) && oldEffectiveViewDistance != _cachedEffectiveViewDistance)
             {
-                this.RateOfFoodReduceRate = Math.Max(0.1f, 1.0f - buffEffect.FoodDiscount);
+                this.RefreshViewArea();
             }
-            
-            // 4. 更新视野缓存
-            // 🔥 关键：在应用增益时更新缓存，避免 Hot Path 重复计算
-            // 🔥 核心保护：建筑可以为 0（被敌方完全压制时失去视野）
-            _cachedEffectiveViewDistance = this.ViewDistance + 
-                WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: true);
-            
+
             // 5. 记录调试信息
             #if DEBUG
-            if (buffEffect.FoodDiscount > 0)
+            if (_appliedInfluenceFoodReduceRateDelta != 0f)
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 获得增益：" +
-                    $"粮耗-{buffEffect.FoodDiscount * 100:F1}%，" +
+                    $"粮耗{_appliedInfluenceFoodReduceRateDelta * 100:F1}%，" +
                     $"视野={_cachedEffectiveViewDistance}");
             }
             #endif
@@ -18933,6 +18933,8 @@ namespace GameObjects
         /// 日期：2026-03-16
         /// </summary>
         private int _cachedEffectiveViewDistance = -1;
+        private float _appliedInfluenceFoodReduceRateDelta = 0f;
+        private int _appliedInfluenceVisionDelta = 0;
         
         /// <summary>
         /// 🆕 势力范围（基于内政数值和地形阻力计算）

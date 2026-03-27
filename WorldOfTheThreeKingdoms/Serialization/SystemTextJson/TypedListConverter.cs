@@ -69,7 +69,9 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
         {
             try
             {
-                var item = JsonSerializer.Deserialize<TItem>(element.GetRawText(), options);
+                var item = JsonSerializer.Deserialize(
+                    element.GetRawText(),
+                    JsonTypeInfoHelper.Resolve<TItem>(options));
                 if (item != null)
                 {
                     list.GameObjects.Add(item);

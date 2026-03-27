@@ -10,7 +10,9 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Linq;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Xna.Framework;
 using Platforms;
 using WorldOfTheThreeKingdoms.Serialization;
@@ -31,8 +33,32 @@ namespace WorldOfTheThreeKingdoms.Tools
         {
             System.Diagnostics.Debug.WriteLine(message);
         }
+
+        private static JsonTypeInfo<T> ResolveTypeInfo<T>(JsonSerializerOptions options)
+        {
+            JsonTypeInfo typeInfo = options.GetTypeInfo(typeof(T));
+            if (typeInfo is not JsonTypeInfo<T> typedTypeInfo)
+            {
+                throw new InvalidOperationException($"AOT metadata not registered for type: {typeof(T).FullName}");
+            }
+
+            return typedTypeInfo;
+        }
+
+        private static T DeserializeRequired<T>(string json, JsonSerializerOptions options)
+        {
+            T? result = System.Text.Json.JsonSerializer.Deserialize(json, ResolveTypeInfo<T>(options));
+            if (result == null)
+            {
+                throw new InvalidOperationException($"System.Text.Json 反序列化 {typeof(T).Name} 返回 null");
+            }
+
+            return result;
+        }
         
         #region XMLSerializer
+        [RequiresUnreferencedCode("XML serialization is not trim-safe. This legacy path must not be used in NativeAOT runtime flows.")]
+        [RequiresDynamicCode("XML serialization may require runtime code generation and is not NativeAOT-safe.")]
         public static string SerializeXML<T>(T t)
         {
             using (StringWriter sw = new StringWriter())
@@ -48,6 +74,8 @@ namespace WorldOfTheThreeKingdoms.Tools
             }
         }
 
+        [RequiresUnreferencedCode("XML deserialization is not trim-safe. This legacy path must not be used in NativeAOT runtime flows.")]
+        [RequiresDynamicCode("XML deserialization may require runtime code generation and is not NativeAOT-safe.")]
         public static T DeserializeXML<T>(string s)
         {
             using (StringReader sr = new StringReader(s))
@@ -70,12 +98,16 @@ namespace WorldOfTheThreeKingdoms.Tools
             }
         }
 
+        [RequiresUnreferencedCode("XML serialization is not trim-safe. This legacy path must not be used in NativeAOT runtime flows.")]
+        [RequiresDynamicCode("XML serialization may require runtime code generation and is not NativeAOT-safe.")]
         public static void SerializeXML<T>(T t, string file)
         {
             string xml = SerializeXML(t);
             Platform.Current.SaveUserFile(file, xml);
         }
 
+        [RequiresUnreferencedCode("XML deserialization is not trim-safe. This legacy path must not be used in NativeAOT runtime flows.")]
+        [RequiresDynamicCode("XML deserialization may require runtime code generation and is not NativeAOT-safe.")]
         public static T DeserializeXMLFile<T>(string file, bool isUserFile)
         {
             string content = isUserFile ? Platform.Current.GetUserText(file) : Platform.Current.LoadText(file);
@@ -102,8 +134,7 @@ namespace WorldOfTheThreeKingdoms.Tools
                     // 获取序列化选项
                     var options = GameJsonContext.GetDefaultOptions(Indented);
                     
-                    // 🔥 AOT修复：使用非泛型方法确保类型信息正确传递
-                    result = System.Text.Json.JsonSerializer.Serialize(t, typeof(T), options);
+                    result = System.Text.Json.JsonSerializer.Serialize(t, ResolveTypeInfo<T>(options));
                     
                 }
                 catch (Exception ex)
@@ -134,9 +165,7 @@ namespace WorldOfTheThreeKingdoms.Tools
 
             lock (Platform.SerializerLock)
             {
-                var result = (T)System.Text.Json.JsonSerializer.Deserialize(s, typeof(T), options);
-                if (result == null)
-                    throw new InvalidOperationException($"System.Text.Json 反序列化 {typeof(T).Name} 返回 null");
+                T result = DeserializeRequired<T>(s, options);
                 
                 // 🔥 只对 GameScenario 调用 FixSharedReferences
                 if (result is GameScenario)
@@ -165,8 +194,7 @@ namespace WorldOfTheThreeKingdoms.Tools
                     // 🔥 根本修复：使用 GameJsonContext 的配置选项
                     var options = GameJsonContext.GetDefaultOptions();
                     
-                    // 🔥 AOT修复：使用非泛型方法确保类型信息正确传递
-                    result = (T)System.Text.Json.JsonSerializer.Deserialize(s, typeof(T), options);
+                    result = DeserializeRequired<T>(s, options);
                     
                     // 🔥 只对 GameScenario 调用 FixSharedReferences
                     if (result is GameScenario)
@@ -614,7 +642,9 @@ namespace WorldOfTheThreeKingdoms.Tools
                             if (idealTendencyElement.TryGetProperty("GameObjects", out var gameObjectsElement))
                             {
                                 var options = GameJsonContext.GetLooseOptions();
-                                var idealTendencyKinds = System.Text.Json.JsonSerializer.Deserialize<List<global::GameObjects.PersonDetail.IdealTendencyKind>>(gameObjectsElement.GetRawText(), options);
+                                var idealTendencyKinds = System.Text.Json.JsonSerializer.Deserialize(
+                                    gameObjectsElement,
+                                    ResolveTypeInfo<List<global::GameObjects.PersonDetail.IdealTendencyKind>>(options));
                                 
                                 if (idealTendencyKinds != null && idealTendencyKinds.Count > 0)
                                 {
@@ -684,7 +714,7 @@ namespace WorldOfTheThreeKingdoms.Tools
 
             // 🔥 诊断日志：写文件而不是 Debug.WriteLine（Release 下可见）
             string logPath = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                AppContext.BaseDirectory,
                 "load_progress.txt");
             void Log(string msg)
             {
@@ -1428,19 +1458,12 @@ namespace WorldOfTheThreeKingdoms.Tools
         /// </summary>
         public static async Task<string> SerializeJsonAsync<T>(T t, bool zip = false, bool indented = false, CancellationToken cancellationToken = default)
         {
-            var typeInfo = GameJsonContext.Default.GetTypeInfo(typeof(T));
             var options = GameJsonContext.GetDefaultOptions(indented);
+            var typeInfo = ResolveTypeInfo<T>(options);
             
             using var stream = new MemoryStream();
-            
-            if (typeInfo != null)
-            {
-                await System.Text.Json.JsonSerializer.SerializeAsync(stream, t, typeInfo, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                await System.Text.Json.JsonSerializer.SerializeAsync(stream, t, options, cancellationToken).ConfigureAwait(false);
-            }
+
+            await System.Text.Json.JsonSerializer.SerializeAsync(stream, t, typeInfo, cancellationToken).ConfigureAwait(false);
             
             var result = Encoding.UTF8.GetString(stream.ToArray());
             
@@ -1463,20 +1486,18 @@ namespace WorldOfTheThreeKingdoms.Tools
                 s = await Task.Run(() => s.GZipDecompressString(), cancellationToken).ConfigureAwait(false);
             }
             
-            var typeInfo = GameJsonContext.Default.GetTypeInfo(typeof(T));
             var options = GameJsonContext.GetDefaultOptions();
+            var typeInfo = ResolveTypeInfo<T>(options);
             
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(s));
             
-            T result;
-            if (typeInfo != null)
+            T? deserialized = await System.Text.Json.JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken).ConfigureAwait(false);
+            if (deserialized == null)
             {
-                result = (T)await System.Text.Json.JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException($"System.Text.Json 异步反序列化 {typeof(T).Name} 返回 null");
             }
-            else
-            {
-                result = await System.Text.Json.JsonSerializer.DeserializeAsync<T>(stream, options, cancellationToken).ConfigureAwait(false);
-            }
+
+            T result = deserialized;
             
             // 🔥 只对 GameScenario 调用 FixSharedReferences
             if (result is GameScenario)

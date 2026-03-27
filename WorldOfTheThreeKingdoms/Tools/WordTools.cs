@@ -332,12 +332,13 @@ namespace Tools
             {
                 using (JsonDocument doc = JsonDocument.Parse(str))
                 {
-                    var options = JsonHelper.Options;
-                    if (!options.WriteIndented)
+                    using MemoryStream stream = new MemoryStream();
+                    using (Utf8JsonWriter writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
                     {
-                        options = new JsonSerializerOptions(options) { WriteIndented = true };
+                        doc.RootElement.WriteTo(writer);
                     }
-                    return JsonSerializer.Serialize(doc.RootElement, options);
+
+                    return Encoding.UTF8.GetString(stream.ToArray());
                 }
             }
             catch

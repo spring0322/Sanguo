@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using GameObjects;
+using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
 
 namespace WorldOfTheThreeKingdoms.Serialization
 {
@@ -41,7 +42,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
             var dto = savePhase.ConvertToDTO(scenario);
             
             var options = GameJsonContext.GetDefaultOptions(indented: false);
-            string json = System.Text.Json.JsonSerializer.Serialize(dto, typeof(DTOs.GameScenarioDTO), options);
+            string json = System.Text.Json.JsonSerializer.Serialize(dto, JsonTypeInfoHelper.Resolve<DTOs.GameScenarioDTO>(options));
             
             long uncompressedSize = Encoding.UTF8.GetByteCount(json);
             result.UncompressedSize = uncompressedSize;

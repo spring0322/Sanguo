@@ -128,7 +128,9 @@ namespace WorldOfTheThreeKingdoms.AOTCompatibility
                 {
                     var testObject = new Person { ID = 0 };
                     // Name assignment removed due to read-only property
-                    var json = System.Text.Json.JsonSerializer.Serialize(testObject);
+                    var json = System.Text.Json.JsonSerializer.Serialize(
+                        testObject,
+                        WorldOfTheThreeKingdoms.Serialization.GameJsonContext.Default.Person);
                     Debug.WriteLine("  ✅ 序列化组件预热完成");
                 }
                 catch (Exception ex)

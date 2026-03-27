@@ -745,7 +745,7 @@ namespace WorldOfTheThreeKingdoms
                             
                             // 🔥 Release 模式：写入文件日志
                             string logPath = System.IO.Path.Combine(
-                                System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                                AppContext.BaseDirectory,
                                 "crash_log.txt");
                             try
                             {

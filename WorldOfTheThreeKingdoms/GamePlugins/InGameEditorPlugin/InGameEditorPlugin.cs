@@ -914,12 +914,12 @@ namespace InGameEditorPlugin
         private bool ValidateArchitecture(Architecture arch)
         {
             // 获取上限值
-            int maxAgri = GetTypeMax(arch, "Agriculture");
-            int maxComm = GetTypeMax(arch, "Commerce");
-            int maxTech = GetTypeMax(arch, "Technology");
-            int maxDomi = GetTypeMax(arch, "Domination");
-            int maxMorale = GetTypeMax(arch, "Morale");
-            int maxEndurance = GetTypeMax(arch, "Endurance");
+            int maxAgri = int.MaxValue;
+            int maxComm = int.MaxValue;
+            int maxTech = int.MaxValue;
+            int maxDomi = int.MaxValue;
+            int maxMorale = int.MaxValue;
+            int maxEndurance = int.MaxValue;
 
             // System.Diagnostics.Debug.WriteLine($"[InGameEditor] 建筑验证 - 耐久: 当前={arch.Endurance}, 上限={maxEndurance}");
 
@@ -1030,7 +1030,7 @@ namespace InGameEditorPlugin
         /// </summary>
         private bool ValidateTroop(Troop troop)
         {
-            int maxArmy = GetCap(troop, "MaxArmy", 20000);
+            int maxArmy = 20000;
 
             if (troop.Army.Quantity > maxArmy)
             {
@@ -1817,12 +1817,12 @@ namespace InGameEditorPlugin
 
             // --- 智能获取上限 ---
             // 尝试通过反射或已知属性获取上限，如果获取不到则用默认值
-            int maxAgri = GetTypeMax(arch, "Agriculture");
-            int maxComm = GetTypeMax(arch, "Commerce");
-            int maxTech = GetTypeMax(arch, "Technology");
-            int maxDomi = GetTypeMax(arch, "Domination");
-            int maxMorale = GetTypeMax(arch, "Morale");
-            int maxEndurance = GetTypeMax(arch, "Endurance");
+            int maxAgri = int.MaxValue;
+            int maxComm = int.MaxValue;
+            int maxTech = int.MaxValue;
+            int maxDomi = int.MaxValue;
+            int maxMorale = int.MaxValue;
+            int maxEndurance = int.MaxValue;
             
             // 调试信息：输出实际获取到的上限值
             // System.Diagnostics.Debug.WriteLine($"[BufferedEditor] 城市 {arch.Name} 耐久上限: {maxEndurance}");
@@ -2039,7 +2039,7 @@ namespace InGameEditorPlugin
             PrepareBufferedMenu($"[编辑部队] {troop.DisplayName}");
 
             // 假设 Troop.MaxArmy 是它的最大编制
-            int maxArmy = GetCap(troop, "MaxArmy", 20000); 
+            int maxArmy = 20000; 
 
             AddIntEditItem("兵力", "Army", troop.Army.Quantity, maxArmy, () => ShowTroopBufferedEditMenu(troop));
             AddIntEditItem("士气", "Morale", troop.Morale, 120, () => ShowTroopBufferedEditMenu(troop));
@@ -2257,15 +2257,6 @@ namespace InGameEditorPlugin
         /// </summary>
         private int GetCap(object target, string propertyName, int defaultCap)
         {
-            try
-            {
-                PropertyInfo pi = target.GetType().GetProperty(propertyName);
-                if (pi != null && pi.PropertyType == typeof(int))
-                {
-                    return (int)pi.GetValue(target);
-                }
-            }
-            catch { }
             return defaultCap;
         }
 
@@ -2276,7 +2267,7 @@ namespace InGameEditorPlugin
         {
             try
             {
-                PropertyInfo pi = target.GetType().GetProperty(propertyName);
+                PropertyInfo pi = null;
                 if (pi != null)
                 {
                     if (pi.PropertyType == typeof(int)) return int.MaxValue;

@@ -20,6 +20,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
         {
             using var document = JsonDocument.ParseValue(ref reader);
             var root = document.RootElement;
+            var innerOptions = CreateInnerOptions(options);
 
             if (root.ValueKind == JsonValueKind.Null)
             {
@@ -38,7 +39,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 var actualType = GetGameObjectType(typeName);
                 if (actualType != null)
                 {
-                    return JsonSerializer.Deserialize(root.GetRawText(), actualType, options) as GameObject;
+                    return JsonSerializer.Deserialize(root.GetRawText(), JsonTypeInfoHelper.Resolve(innerOptions, actualType)) as GameObject;
                 }
             }
 
@@ -46,11 +47,11 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             var inferredType = InferGameObjectType(root);
             if (inferredType != null)
             {
-                return JsonSerializer.Deserialize(root.GetRawText(), inferredType, options) as GameObject;
+                return JsonSerializer.Deserialize(root.GetRawText(), JsonTypeInfoHelper.Resolve(innerOptions, inferredType)) as GameObject;
             }
 
             // 默认尝试反序列化为基类
-            return JsonSerializer.Deserialize<GameObject>(root.GetRawText(), options);
+            return JsonSerializer.Deserialize(root.GetRawText(), JsonTypeInfoHelper.Resolve<GameObject>(innerOptions));
         }
 
         public override void Write(Utf8JsonWriter writer, GameObject value, JsonSerializerOptions options)
@@ -62,6 +63,17 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             }
 
             // 🔥 创建不包含此转换器的选项副本，避免无限递归
+            var innerOptions = CreateInnerOptions(options);
+
+            // 获取实际类型并序列化
+            var actualType = value.GetType();
+            
+            // 直接序列化对象，使用内部选项
+            JsonSerializer.Serialize(writer, value, JsonTypeInfoHelper.Resolve(innerOptions, actualType));
+        }
+
+        private static JsonSerializerOptions CreateInnerOptions(JsonSerializerOptions options)
+        {
             var innerOptions = new JsonSerializerOptions(options);
             innerOptions.Converters.Clear();
             foreach (var converter in options.Converters)
@@ -72,11 +84,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 }
             }
 
-            // 获取实际类型并序列化
-            var actualType = value.GetType();
-            
-            // 直接序列化对象，使用内部选项
-            JsonSerializer.Serialize(writer, value, actualType, innerOptions);
+            return innerOptions;
         }
 
         private Type GetGameObjectType(string typeName)

@@ -712,6 +712,10 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (dto == null)
                 return null;
+
+            ArchitectureKind kind = ResolveArchitectureKindOrThrow(dto);
+            dto = NormalizeArchitectureDtoCompatibility(dto, kind);
+            ValidateArchitectureDtoTypeConsistency(dto, kind);
             
             Architecture architecture;
             
@@ -747,6 +751,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             architecture.ID = dto.ID;
             architecture.Name = dto.Name;
             architecture.CaptionID = dto.CaptionID;
+            architecture.Kind = kind;
             architecture.KindID = dto.KindID;
             
             // Location
@@ -943,6 +948,181 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // 正确做法：让这些字段保持初始值 0，由 ApplyInfluences() 重新计算
             
             return architecture;
+        }
+
+        private static ArchitectureKind ResolveArchitectureKindOrThrow(ArchitectureDTO dto)
+        {
+            ArchitectureKind kind =
+                global::GameManager.Session.Current?.Scenario?.GameCommonData?.AllArchitectureKinds?.GetArchitectureKind(dto.KindID) ??
+                CommonData.Current?.AllArchitectureKinds?.GetArchitectureKind(dto.KindID);
+
+            if (kind == null)
+            {
+                throw new InvalidOperationException(
+                    $"[LoadDataPhase] Architecture DTO {dto.ID} ({dto.Name}) references unknown KindID={dto.KindID}.");
+            }
+
+            return kind;
+        }
+
+        private static ArchitectureDTO NormalizeArchitectureDtoCompatibility(ArchitectureDTO dto, ArchitectureKind kind)
+        {
+            if (dto is CityDTO or PortDTO or GateDTO)
+            {
+                return dto;
+            }
+
+            if (dto.GetType() != typeof(ArchitectureDTO))
+            {
+                return dto;
+            }
+
+            return ResolveArchitectureDtoCategory(kind, dto) switch
+            {
+                ArchitectureDtoCategory.City => CreateCompatibleCityDto(dto),
+                ArchitectureDtoCategory.Port => CreateCompatiblePortDto(dto),
+                ArchitectureDtoCategory.Gate => CreateCompatibleGateDto(dto),
+                _ => dto
+            };
+        }
+
+        private static CityDTO CreateCompatibleCityDto(ArchitectureDTO source)
+        {
+            return CopyArchitectureDto(source, new CityDTO
+            {
+                DevelopmentLevel = source.Agriculture + source.Commerce + source.Technology
+            });
+        }
+
+        private static PortDTO CreateCompatiblePortDto(ArchitectureDTO source)
+        {
+            return CopyArchitectureDto(source, new PortDTO
+            {
+                ShipCapacity = 100
+            });
+        }
+
+        private static GateDTO CreateCompatibleGateDto(ArchitectureDTO source)
+        {
+            return CopyArchitectureDto(source, new GateDTO
+            {
+                DefenseBonus = source.Endurance / 10
+            });
+        }
+
+        private static TDto CopyArchitectureDto<TDto>(ArchitectureDTO source, TDto target)
+            where TDto : ArchitectureDTO
+        {
+            target.ID = source.ID;
+            target.Name = source.Name;
+            target.CaptionID = source.CaptionID;
+            target.KindID = source.KindID;
+            target.AreaX = source.AreaX;
+            target.AreaY = source.AreaY;
+            target.AreaWidth = source.AreaWidth;
+            target.AreaHeight = source.AreaHeight;
+            target.ArchitectureAreaString = source.ArchitectureAreaString;
+            target.BelongedFactionID = source.BelongedFactionID;
+            target.BelongedSectionID = source.BelongedSectionID;
+            target.MayorID = source.MayorID;
+            target.StateID = source.StateID;
+            target.huangdisuozai = source.huangdisuozai;
+            target.Agriculture = source.Agriculture;
+            target.Commerce = source.Commerce;
+            target.Technology = source.Technology;
+            target.Morale = source.Morale;
+            target.Endurance = source.Endurance;
+            target.Domination = source.Domination;
+            target.Population = source.Population;
+            target.MilitaryPopulation = source.MilitaryPopulation;
+            target.Fund = source.Fund;
+            target.Food = source.Food;
+            target.PersonIDs = source.PersonIDs;
+            target.MilitaryIDs = source.MilitaryIDs;
+            target.FacilityIDs = source.FacilityIDs;
+            target.PersonsString = source.PersonsString;
+            target.MilitariesString = source.MilitariesString;
+            target.FacilitiesString = source.FacilitiesString;
+            target.CharacteristicsString = source.CharacteristicsString;
+            target.AILandLinksString = source.AILandLinksString;
+            target.AIWaterLinksString = source.AIWaterLinksString;
+            target.FundPacksString = source.FundPacksString;
+            target.FoodPacksString = source.FoodPacksString;
+            target.InformationsString = source.InformationsString;
+            target.PopulationPacksString = source.PopulationPacksString;
+            target.MilitaryPopulationPacksString = source.MilitaryPopulationPacksString;
+            target.CaptivesString = source.CaptivesString;
+            target.MovingPersonsString = source.MovingPersonsString;
+            target.NoFactionPersonsString = source.NoFactionPersonsString;
+            target.NoFactionMovingPersonsString = source.NoFactionMovingPersonsString;
+            target.feiziliebiaoString = source.feiziliebiaoString;
+            target.AutoHiring = source.AutoHiring;
+            target.AutoRewarding = source.AutoRewarding;
+            target.AutoSearching = source.AutoSearching;
+            target.AutoWorking = source.AutoWorking;
+            target.FacilityEnabled = source.FacilityEnabled;
+            target.ExtensionData = source.ExtensionData;
+            return target;
+        }
+
+        private static void ValidateArchitectureDtoTypeConsistency(ArchitectureDTO dto, ArchitectureKind kind)
+        {
+            ArchitectureDtoCategory expected = ResolveArchitectureDtoCategory(kind, dto);
+            bool matches = expected switch
+            {
+                ArchitectureDtoCategory.City => dto is CityDTO,
+                ArchitectureDtoCategory.Port => dto is PortDTO,
+                ArchitectureDtoCategory.Gate => dto is GateDTO,
+                _ => false
+            };
+
+            if (!matches)
+            {
+                throw new InvalidOperationException(
+                    $"[LoadDataPhase] Architecture DTO type mismatch for {dto.ID} ({dto.Name}): KindID={dto.KindID}, KindName={kind.Name}, expected {expected} DTO, actual {dto.GetType().Name}.");
+            }
+        }
+
+        private static ArchitectureDtoCategory ResolveArchitectureDtoCategory(ArchitectureKind kind, ArchitectureDTO dto)
+        {
+            string kindName = kind.Name ?? string.Empty;
+            if (kindName.Contains("城", StringComparison.Ordinal) ||
+                kindName.Contains("City", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.City;
+            }
+
+            if (kindName.Contains("港", StringComparison.Ordinal) ||
+                kindName.Contains("Port", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.Port;
+            }
+
+            if (kindName.Contains("关", StringComparison.Ordinal) ||
+                kindName.Contains("Gate", StringComparison.OrdinalIgnoreCase))
+            {
+                return ArchitectureDtoCategory.Gate;
+            }
+
+            if (kind.HasHarbor)
+            {
+                return ArchitectureDtoCategory.Port;
+            }
+
+            if (kind.HasPopulation)
+            {
+                return ArchitectureDtoCategory.City;
+            }
+
+            throw new InvalidOperationException(
+                $"[LoadDataPhase] Architecture Kind {kind.ID} ({kind.Name}) for DTO {dto.ID} ({dto.Name}) cannot be classified to City/Port/Gate.");
+        }
+
+        private enum ArchitectureDtoCategory
+        {
+            City,
+            Port,
+            Gate
         }
         
         /// <summary>
@@ -1212,6 +1392,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             troop.RateOfMovability = dto.RateOfMovability;
             troop.RateOfOffence = dto.RateOfOffence;
             troop.RateOfQibingDamage = dto.RateOfQibingDamage;
+            troop.MarkInfluenceBuffNeedsBootstrapFromSave();
             
             troop.AttackRangeIncreaseByInfluence = dto.AttackRangeIncreaseByInfluence;
             troop.InCityOffenseRate = dto.InCityOffenseRate;

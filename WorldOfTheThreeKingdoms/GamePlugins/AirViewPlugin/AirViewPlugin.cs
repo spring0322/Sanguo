@@ -83,7 +83,7 @@ namespace AirViewPlugin
 
         public void Initialize(Screen screen)
         {
-            for (int i = 0; i < Enum.GetValues(typeof(TerrainKind)).Length; i++)
+            for (int i = 0; i < Enum.GetValues<TerrainKind>().Length; i++)
             {
                 string filename = "Content/Textures/Resources/Terrain/" + i.ToString() + "/Basic01.png";
                 this.TerrainImages.Add(Image.FromFile(filename));
@@ -959,4 +959,3 @@ namespace AirViewPlugin
  
 
 }
-

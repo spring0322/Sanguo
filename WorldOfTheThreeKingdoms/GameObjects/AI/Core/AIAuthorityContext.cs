@@ -130,6 +130,7 @@ public sealed class AIAuthorityContext
     public bool ApplyIntentProjection(GameScenario scenario, Troop troop)
     {
         if (scenario == null || troop == null || troop.Destroyed) return false;
+        if (!ShouldAuthorityOwnTroop(scenario, troop)) return false;
         if (!IntentRegistry.TryGetCurrentIntent(troop.ID, out TroopIntent intent)) return false;
 
         TroopExecutionState executionState = GetOrCreateExecutionState(troop.ID);
@@ -222,6 +223,7 @@ public sealed class AIAuthorityContext
         bool shouldReplanNow = true)
     {
         if (scenario == null || troop == null || troop.Destroyed) return false;
+        if (!ShouldAuthorityOwnTroop(scenario, troop)) return false;
         if (!TryGetIntent(troop.ID, out TroopIntent intent)) return false;
 
         TroopExecutionState executionState = GetOrCreateExecutionState(troop.ID);
@@ -244,6 +246,7 @@ public sealed class AIAuthorityContext
     public bool ValidateAndHandleIntentCheckpoint(GameScenario scenario, Troop troop, IntentCheckpointKind checkpoint)
     {
         if (scenario == null || troop == null || troop.Destroyed) return false;
+        if (!ShouldAuthorityOwnTroop(scenario, troop)) return false;
         if (!TryGetIntent(troop.ID, out TroopIntent intent)) return true;
 
         TroopExecutionState executionState = GetOrCreateExecutionState(troop.ID);
@@ -279,6 +282,7 @@ public sealed class AIAuthorityContext
 
                 if (!TryGetOrCreateTroopById(scenario, eventData.TroopId, out Troop troop)) continue;
                 if (troop.Destroyed) continue;
+                if (!ShouldAuthorityOwnTroop(scenario, troop)) continue;
 
                 if (!_executionStateByTroop.TryGetValue(troop.ID, out TroopExecutionState state)) continue;
                 if (!state.PendingReplan) continue;
@@ -300,6 +304,7 @@ public sealed class AIAuthorityContext
     public bool ReplanTroop(GameScenario scenario, Troop troop, TroopIntentFailureReason reason)
     {
         if (scenario == null || troop == null || troop.Destroyed) return false;
+        if (!ShouldAuthorityOwnTroop(scenario, troop)) return false;
 
         if (troop.BelongedFaction == null || troop.BelongedLegion == null)
         {
@@ -357,6 +362,7 @@ public sealed class AIAuthorityContext
 
         Faction faction = legion.BelongedFaction;
         if (faction == null) return 0;
+        if (!ShouldAuthorityOwnFaction(scenario, faction)) return 0;
 
         FactionIntent factionIntent = EnsureFactionIntent(scenario, faction);
         LegionIntent legionIntent = EnsureLegionIntent(scenario, legion, factionIntent, scenario.DaySince, true);
@@ -419,6 +425,7 @@ public sealed class AIAuthorityContext
         foreach (Faction faction in scenario.Factions)
         {
             if (faction == null || faction.Destroyed) continue;
+            if (!ShouldAuthorityOwnFaction(scenario, faction)) continue;
 
             int factionVersion = GetNextFactionIntentVersion(faction.ID);
             FactionIntent factionIntent = _factionIntentPlanner.BuildFactionIntent(
@@ -450,6 +457,7 @@ public sealed class AIAuthorityContext
                 foreach (Troop troop in legion.Troops)
                 {
                     if (troop == null || troop.Destroyed) continue;
+                    if (!ShouldAuthorityOwnTroop(scenario, troop)) continue;
 
                     int troopVersion = GetNextTroopIntentVersion(troop.ID);
                     TroopIntent troopIntent = _troopIntentPlanner.BuildTroopIntent(
@@ -725,10 +733,6 @@ public sealed class AIAuthorityContext
         int cooldownTicks = isBlockedFailure ? 1 : 0;
         executionState.LocalCooldownUntilTick = scenario.DaySince + cooldownTicks;
         executionState.PendingReplan = validation.ShouldReplanNow;
-        if (validation.FailureReason == TroopIntentFailureReason.ArbitrationLost)
-        {
-            executionState.PendingReplan = true;
-        }
 
         int sourceFactionId = troop.BelongedFaction?.ID ?? intent.SourceFactionId;
         AdvisorFacade.ReportTroopIntentFailure(sourceFactionId, validation.FailureReason, scenario.DaySince);
@@ -1128,6 +1132,42 @@ public sealed class AIAuthorityContext
         Faction faction = troop.BelongedFaction;
         if (faction == null) return false;
         return !faction.IsPositionKnown(targetPosition);
+    }
+
+    private static bool ShouldAuthorityOwnFaction(GameScenario scenario, Faction faction)
+    {
+        if (scenario == null || faction == null || faction.Destroyed)
+        {
+            return false;
+        }
+
+        return !scenario.IsPlayer(faction);
+    }
+
+    private static bool ShouldAuthorityOwnTroop(GameScenario scenario, Troop troop)
+    {
+        if (scenario == null || troop == null || troop.Destroyed)
+        {
+            return false;
+        }
+
+        if (troop.ManualControl)
+        {
+            return false;
+        }
+
+        if (!ShouldAuthorityOwnFaction(scenario, troop.BelongedFaction))
+        {
+            return false;
+        }
+
+        Legion legion = troop.BelongedLegion;
+        if (legion != null && legion.Kind == LegionKind.Player)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private int GetNextFactionIntentVersion(int factionId)

@@ -65,10 +65,10 @@ namespace GameObjects.TroopDetail
             int rightSquareCost = this.MakeSquare(currentSquare, false, new Point(currentSquare.Position.X + 1, currentSquare.Position.Y), end, -1, useAStar, kind);
             int bottomSquareCost = this.MakeSquare(currentSquare, false, new Point(currentSquare.Position.X, currentSquare.Position.Y + 1), end, -1, useAStar, kind);
             
-            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X - 1, currentSquare.Position.Y - 1), end, Math.Max(topSquareCost, leftSquareCost), useAStar, kind);
-            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X - 1, currentSquare.Position.Y + 1), end, Math.Max(bottomSquareCost, leftSquareCost), useAStar, kind);
-            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X + 1, currentSquare.Position.Y - 1), end, Math.Max(topSquareCost, rightSquareCost), useAStar, kind);
-            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X + 1, currentSquare.Position.Y + 1), end, Math.Max(bottomSquareCost, rightSquareCost), useAStar, kind);
+            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X - 1, currentSquare.Position.Y - 1), end, Math.Min(topSquareCost, leftSquareCost), useAStar, kind);
+            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X - 1, currentSquare.Position.Y + 1), end, Math.Min(bottomSquareCost, leftSquareCost), useAStar, kind);
+            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X + 1, currentSquare.Position.Y - 1), end, Math.Min(topSquareCost, rightSquareCost), useAStar, kind);
+            this.MakeSquare(currentSquare, true, new Point(currentSquare.Position.X + 1, currentSquare.Position.Y + 1), end, Math.Min(bottomSquareCost, rightSquareCost), useAStar, kind);
         }
 
         private int GetCostByPosition(Point position, bool oblique, int DirectionCost, MilitaryKind kind)

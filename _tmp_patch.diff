@@ -1,0 +1,10 @@
+﻿*** Begin Patch
+*** Update File: WorldOfTheThreeKingdoms/GameScreens/MainGameScreen.cs
+@@
+-                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "b07b58", "ConvinceTarget");
++                                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.GetConvinceDestinationPerson, false, true, true, false, convinceTargets, null, "b07b58", "Personal");
+@@
+-                    "ConvinceTarget"
++                    "Personal"
+                 );
+*** End Patch

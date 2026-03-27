@@ -661,7 +661,7 @@ namespace GameManager
         {
             // 🔥 诊断：Release 模式使用文件日志
             string logPath = System.IO.Path.Combine(
-                System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
+                AppContext.BaseDirectory,
                 "start_scenario_log.txt");
             try
             {

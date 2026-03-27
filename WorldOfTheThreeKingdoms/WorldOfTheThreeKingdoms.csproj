@@ -88,6 +88,10 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <Compile Remove="Diagnostics\STJDiagnostics\**\*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="$(NuGetPackageRoot)monogame.framework.desktopgl\3.8.1.303\runtimes\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -115,9 +119,6 @@
     </Content>
 
     <None Update="Icon.ico">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="**\*.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

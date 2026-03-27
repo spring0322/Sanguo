@@ -52,10 +52,11 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 // 解决：预处理 JSON，将浮点数转换为整数
                 using var document = JsonDocument.ParseValue(ref reader);
                 var jsonString = document.RootElement.GetRawText();
+                var personTypeInfo = JsonTypeInfoHelper.Resolve<Person>(optionsWithoutThisConverter);
                 
                 try
                 {
-                    return JsonSerializer.Deserialize<Person>(jsonString, optionsWithoutThisConverter);
+                    return JsonSerializer.Deserialize(jsonString, personTypeInfo);
                 }
                 catch (JsonException ex) when (ex.Message.Contains("Glamour"))
                 {
@@ -107,7 +108,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                     
                     byte[] fixedJsonBytes = stream.ToArray();
                     string fixedJson = System.Text.Encoding.UTF8.GetString(fixedJsonBytes);
-                    return JsonSerializer.Deserialize<Person>(fixedJson, optionsWithoutThisConverter);
+                    return JsonSerializer.Deserialize(fixedJson, personTypeInfo);
                 }
             }
 

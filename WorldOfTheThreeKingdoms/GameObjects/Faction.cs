@@ -3509,8 +3509,7 @@ namespace GameObjects
 
                 // 获取调用堆栈，显示触发来源
                 var stackTrace = new System.Diagnostics.StackTrace(1, true);
-                var callingMethod = stackTrace.GetFrame(0)?.GetMethod();
-                string callerInfo = callingMethod != null ? $"{callingMethod.DeclaringType?.Name}.{callingMethod.Name}" : "未知";
+                string callerInfo = stackTrace.GetFrame(0)?.ToString()?.Trim() ?? "未知";
                 System.Diagnostics.Debug.WriteLine($"║ 调用来源: {callerInfo}");
 
                 if (targetList != null)

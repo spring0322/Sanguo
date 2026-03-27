@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -38,6 +39,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 NumberHandling = JsonNumberHandling.AllowReadingFromString
             };
         }
+
+        private JsonTypeInfo<T> ResolveTypeInfo<T>()
+        {
+            JsonTypeInfo typeInfo = _options.GetTypeInfo(typeof(T));
+            if (typeInfo is not JsonTypeInfo<T> typedTypeInfo)
+            {
+                throw new InvalidOperationException($"AOT metadata not registered for type: {typeof(T).FullName}");
+            }
+
+            return typedTypeInfo;
+        }
         
         /// <summary>
         /// Serializes an object to a JSON string asynchronously.
@@ -54,7 +66,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
             await JsonSerializer.SerializeAsync(
                 stream, 
                 value, 
-                _options, 
+                ResolveTypeInfo<T>(),
                 cancellationToken)
                 .ConfigureAwait(false);
             
@@ -73,11 +85,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 throw new ArgumentException("JSON string cannot be null or empty", nameof(json));
             
             using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-            return await JsonSerializer.DeserializeAsync<T>(
+            T? result = await JsonSerializer.DeserializeAsync(
                 stream, 
-                _options, 
+                ResolveTypeInfo<T>(),
                 cancellationToken)
                 .ConfigureAwait(false);
+            if (result == null)
+            {
+                throw new InvalidOperationException($"System.Text.Json 反序列化 {typeof(T).Name} 返回 null");
+            }
+
+            return result;
         }
         
         /// <summary>
@@ -98,7 +116,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
             await JsonSerializer.SerializeAsync(
                 stream, 
                 value, 
-                _options, 
+                ResolveTypeInfo<T>(),
                 cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -114,11 +132,17 @@ namespace WorldOfTheThreeKingdoms.Serialization
             if (stream == null)
                 throw new ArgumentNullException(nameof(stream));
             
-            return await JsonSerializer.DeserializeAsync<T>(
+            T? result = await JsonSerializer.DeserializeAsync(
                 stream, 
-                _options, 
+                ResolveTypeInfo<T>(),
                 cancellationToken)
                 .ConfigureAwait(false);
+            if (result == null)
+            {
+                throw new InvalidOperationException($"System.Text.Json 反序列化 {typeof(T).Name} 返回 null");
+            }
+
+            return result;
         }
     }
 }

@@ -104,7 +104,6 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         }
 
         EnsureAllFactionInfluenceMapsInitialized(scenario, mapWidth, mapHeight);
-        scenario.InvalidateInfluenceEnergyCache();
 
         var factions = scenario.Factions.GetList();
         int factionCount = factions.Count;
@@ -120,19 +119,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             RecalculateFactionInfluence(faction);
         }
 
-        for (int i = 0; i < factionCount; i++)
-        {
-            if (factions[i] is not Faction faction)
-            {
-                throw new InvalidOperationException(
-                    $"[InfluenceUpdateManager] Factions contains invalid entry at index {i} while syncing faction topology.");
-            }
-
-            faction.ClearEnergyBasedIntelligence();
-        }
-
-        OnBeforeEnergyCompetition?.Invoke();
-        ApplyGlobalEnergyCompetition();
+        FinalizeGlobalRecalculation(scenario);
 
         _needsFullRecalculation = false;
         _factionCalculationIndex = 0;
@@ -442,50 +429,59 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         }
         else
         {
-            // 🔥 关键步骤 1：清除所有势力的旧能量情报
-            // 日期：2026-03-20
-            // 说明：必须在重新计算前清除，否则会累积旧数据
+            // 🔥 统一收尾：在全势力重算完成后一次性清情报、竞争、失效缓存并刷新实体增益
             var scenario = Session.Current.Scenario;
-            
-            // 🔥 ANTI-BAND-AID：明确检查数据源
-            if (scenario.Factions == null)
-            {
-                throw new InvalidOperationException(
-                    "[InfluenceUpdateManager] Scenario.Factions 为 null");
-            }
-            
-            var factions = scenario.Factions.GetList();
-            int factionCount = factions.Count;
-            
-            for (int i = 0; i < factionCount; i++)
-            {
-                // 🔥 ANTI-BAND-AID：Fail Fast，不使用防御性空检查
-                if (factions[i] is not Faction faction)
-                {
-                    throw new InvalidOperationException(
-                        $"[InfluenceUpdateManager] Factions 列表包含无效项（索引 {i}）");
-                }
-                
-                faction.ClearEnergyBasedIntelligence();
-            }
-            
-            // 🔥 关键步骤 2：执行全局能量竞争并生成新的视野情报
-            // 日期：2026-03-13
-            // 说明：每个地块只有能量最高的势力保留（最高能量 - 第二高能量）
-            // 
-            // 🔥 关键修复：在 ApplyGlobalEnergyCompetition 之前通知水墨渲染器
-            // 日期：2026-03-21
-            // 原因：ApplyGlobalEnergyCompetition 会清零非胜出势力的能量
-            //       水墨渲染器需要在清零前读取完整的能量数据
-            OnBeforeEnergyCompetition?.Invoke();
-            
-            ApplyGlobalEnergyCompetition();
+            FinalizeGlobalRecalculation(scenario);
             
             // 算完了
             _needsFullRecalculation = false;
             _factionCalculationIndex = 0;
             _factionsToRecalculate = [];  // 🔥 C# 12 集合表达式：字段类型已明确为 Faction[]
         }
+    }
+
+    /// <summary>
+    /// 🔥 收尾：完成全局能量重算后的统一落地
+    /// 包含：清理旧情报、执行能量竞争、失效净能量缓存、回灌城池/部队增益
+    /// </summary>
+    private void FinalizeGlobalRecalculation(GameScenario scenario)
+    {
+        if (scenario == null)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceUpdateManager] Session.Current.Scenario is null while finalizing global recalculation.");
+        }
+
+        if (scenario.Factions == null)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceUpdateManager] Scenario.Factions 为 null");
+        }
+
+        var factions = scenario.Factions.GetList();
+        int factionCount = factions.Count;
+
+        for (int i = 0; i < factionCount; i++)
+        {
+            if (factions[i] is not Faction faction)
+            {
+                throw new InvalidOperationException(
+                    $"[InfluenceUpdateManager] Factions 列表包含无效项（索引 {i}）");
+            }
+
+            faction.ClearEnergyBasedIntelligence();
+        }
+
+        // 在能量竞争前通知渲染器读取完整能量数据
+        OnBeforeEnergyCompetition?.Invoke();
+        ApplyGlobalEnergyCompetition();
+
+        // 能量竞争会改变净能量结果，必须统一失效缓存
+        scenario.InvalidateInfluenceEnergyCache();
+
+        // 全图重算完成后统一刷新实体状态，避免部分势力更新导致的数据撕裂
+        scenario.Architectures.ApplyInfluenceBuff();
+        scenario.Troops.ApplyInfluenceBuff();
     }
 
     /// <summary>

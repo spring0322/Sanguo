@@ -50,7 +50,7 @@ namespace WorldOfTheThreeKingdoms.Resources
 
             try
             {
-                this.MouseArrowTextures = new PlatformTexture[Enum.GetValues(typeof(MouseArrowKind)).Length];
+                this.MouseArrowTextures = new PlatformTexture[Enum.GetValues<MouseArrowKind>().Length];
                 this.MouseArrowTextures[0] = CacheManager.GetTempTexture("Content/Textures/Resources/MouseArrow/Normal.png");
                 this.MouseArrowTextures[1] = CacheManager.GetTempTexture("Content/Textures/Resources/MouseArrow/Left.png");
                 this.MouseArrowTextures[2] = CacheManager.GetTempTexture("Content/Textures/Resources/MouseArrow/Right.png");
@@ -239,7 +239,7 @@ namespace WorldOfTheThreeKingdoms.Resources
             }
             try
             {
-                this.MapVeilTextures = new PlatformTexture[Enum.GetValues(typeof(MapVeilKind)).Length];
+                this.MapVeilTextures = new PlatformTexture[Enum.GetValues<MapVeilKind>().Length];
                 this.MapVeilTextures[0] = CacheManager.GetTempTexture("Content/Textures/Resources/MapVeil/Gray.png");
             }
             catch (Exception exception5)
@@ -249,7 +249,7 @@ namespace WorldOfTheThreeKingdoms.Resources
             }
             try
             {
-                this.TileFrameTextures = new PlatformTexture[Enum.GetValues(typeof(TileFrameKind)).Length];
+                this.TileFrameTextures = new PlatformTexture[Enum.GetValues<TileFrameKind>().Length];
                 this.TileFrameTextures[0] = CacheManager.GetTempTexture("Content/Textures/Resources/TileFrame/White.png");
                 this.TileFrameTextures[1] = CacheManager.GetTempTexture("Content/Textures/Resources/TileFrame/Black.png");
                 this.TileFrameTextures[2] = CacheManager.GetTempTexture("Content/Textures/Resources/TileFrame/Red.png");
@@ -265,20 +265,20 @@ namespace WorldOfTheThreeKingdoms.Resources
             }
             try
             {
-                this.RoutewayTextures = new PlatformTexture[Enum.GetValues(typeof(RoutewayState)).Length];
+                this.RoutewayTextures = new PlatformTexture[Enum.GetValues<RoutewayState>().Length];
                 this.RoutewayTextures[0] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/Planning.png");
                 this.RoutewayTextures[1] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/Active.png");
                 this.RoutewayTextures[2] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/Inefficiency.png");
                 this.RoutewayTextures[3] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/Building.png");
                 this.RoutewayTextures[4] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/NoFood.png");
                 this.RoutewayTextures[5] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/Hostile.png");
-                this.RoutewayDirectionArrowTextures = new PlatformTexture[Enum.GetValues(typeof(SimpleDirection)).Length];
+                this.RoutewayDirectionArrowTextures = new PlatformTexture[Enum.GetValues<SimpleDirection>().Length];
                 this.RoutewayDirectionArrowTextures[0] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionArrowNone.png");
                 this.RoutewayDirectionArrowTextures[1] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionArrowLeft.png");
                 this.RoutewayDirectionArrowTextures[2] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionArrowUp.png");
                 this.RoutewayDirectionArrowTextures[3] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionArrowRight.png");
                 this.RoutewayDirectionArrowTextures[4] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionArrowDown.png");
-                this.RoutewayDirectionTailTextures = new PlatformTexture[Enum.GetValues(typeof(SimpleDirection)).Length];
+                this.RoutewayDirectionTailTextures = new PlatformTexture[Enum.GetValues<SimpleDirection>().Length];
                 this.RoutewayDirectionTailTextures[1] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionTailLeft.png");
                 this.RoutewayDirectionTailTextures[2] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionTailUp.png");
                 this.RoutewayDirectionTailTextures[3] = CacheManager.GetTempTexture("Content/Textures/Resources/Routeway/DirectionTailRight.png");

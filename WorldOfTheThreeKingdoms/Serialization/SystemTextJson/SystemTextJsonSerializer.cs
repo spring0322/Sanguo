@@ -42,6 +42,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 IgnoreReadOnlyProperties = false,
                 AllowTrailingCommas = true,
                 ReadCommentHandling = JsonCommentHandling.Skip,
+                TypeInfoResolver = GameJsonContext.Default,
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                 ReferenceHandler = referenceHandler, // 🔥 使用自定义 ReferenceHandler
                 NumberHandling = JsonNumberHandling.AllowReadingFromString, // 允许从字符串读取数字（适配字典Key）
@@ -65,6 +66,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 IgnoreReadOnlyProperties = false,
                 AllowTrailingCommas = true,
                 ReadCommentHandling = JsonCommentHandling.Skip,
+                TypeInfoResolver = GameJsonContext.Default,
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
                 ReferenceHandler = referenceHandler, // 🔥 使用自定义 ReferenceHandler
                 NumberHandling = JsonNumberHandling.AllowReadingFromString, // 允许从字符串读取数字（适配字典Key）
@@ -100,7 +102,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                         WriteIndented = indented
                     };
 
-                    result = JsonSerializer.Serialize(obj, options);
+                    result = JsonSerializer.Serialize(obj, JsonTypeInfoHelper.Resolve<T>(options));
                 }
                 catch (Exception ex)
                 {
@@ -137,7 +139,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             {
                 lock (Platform.SerializerLock)
                 {
-                    result = JsonSerializer.Deserialize<T>(json, _deserializerOptions);
+                    result = JsonSerializer.Deserialize(json, JsonTypeInfoHelper.Resolve<T>(_deserializerOptions));
                     
                     // 🔥【根本性修复】🔥
                     // 在锁内处理，确保线程安全，直接切断不该共享的引用
@@ -151,8 +153,8 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 // 尝试使用更宽松的选项
                 try
                 {
-                    var fallbackOptions = JsonHelper.LooseOptions;
-                    result = JsonSerializer.Deserialize<T>(json, fallbackOptions);
+                    var fallbackOptions = GameJsonContext.GetLooseOptions();
+                    result = JsonSerializer.Deserialize(json, JsonTypeInfoHelper.Resolve<T>(fallbackOptions));
                     System.Diagnostics.Debug.WriteLine($"[SystemTextJsonSerializer] Fallback deserialization succeeded for type {typeof(T).Name}");
                 }
                 catch (Exception fallbackEx)
@@ -175,6 +177,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
         /// <returns>JSON字符串</returns>
         public static string SerializeJson(object obj, Type type, bool zip = false, bool indented = false)
         {
+            ArgumentNullException.ThrowIfNull(type);
             string result = null;
             
             lock (Platform.SerializerLock)
@@ -186,7 +189,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                         WriteIndented = indented
                     };
 
-                    result = JsonSerializer.Serialize(obj, type, options);
+                    result = JsonSerializer.Serialize(obj, JsonTypeInfoHelper.Resolve(options, type));
                 }
                 catch (Exception ex)
                 {
@@ -212,6 +215,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
         /// <returns>反序列化的对象</returns>
         public static object DeserializeJson(string json, Type type, bool zip = false)
         {
+            ArgumentNullException.ThrowIfNull(type);
             if (zip)
             {
                 json = json.GZipDecompressString();
@@ -223,7 +227,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             {
                 lock (Platform.SerializerLock)
                 {
-                    result = JsonSerializer.Deserialize(json, type, _deserializerOptions);
+                    result = JsonSerializer.Deserialize(json, JsonTypeInfoHelper.Resolve(_deserializerOptions, type));
                     
                     // 🔥【根本性修复】🔥
                     // 在锁内处理，确保线程安全，直接切断不该共享的引用
@@ -237,8 +241,8 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 // 尝试使用更宽松的选项
                 try
                 {
-                    var fallbackOptions = JsonHelper.LooseOptions;
-                    result = JsonSerializer.Deserialize(json, type, fallbackOptions);
+                    var fallbackOptions = GameJsonContext.GetLooseOptions();
+                    result = JsonSerializer.Deserialize(json, JsonTypeInfoHelper.Resolve(fallbackOptions, type));
                     System.Diagnostics.Debug.WriteLine($"[SystemTextJsonSerializer] Fallback deserialization succeeded for type {type?.Name}");
                 }
                 catch (Exception fallbackEx)

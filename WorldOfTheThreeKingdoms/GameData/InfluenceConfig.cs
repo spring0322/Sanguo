@@ -25,27 +25,27 @@ public class InfluenceConfig
     
     /// <summary>基础能量偏移量</summary>
     [JsonPropertyName("BaseEnergyOffset")]
-    public double BaseEnergyOffset { get; set; }
+    public double BaseEnergyOffset { get; set; } = 50.0;
     
     /// <summary>规模倍率（每级规模提供的能量）</summary>
     [JsonPropertyName("ScaleMultiplier")]
-    public double ScaleMultiplier { get; set; }
+    public double ScaleMultiplier { get; set; } = 150.0;
     
     /// <summary>统治倍率</summary>
     [JsonPropertyName("DominationMultiplier")]
-    public double DominationMultiplier { get; set; }
+    public double DominationMultiplier { get; set; } = 1.5;
     
     /// <summary>民心倍率</summary>
     [JsonPropertyName("MoraleMultiplier")]
-    public double MoraleMultiplier { get; set; }
+    public double MoraleMultiplier { get; set; } = 1.5;
     
     /// <summary>资源倍率（农业+商业+耐久）</summary>
     [JsonPropertyName("ResourceMultiplier")]
-    public double ResourceMultiplier { get; set; }
+    public double ResourceMultiplier { get; set; } = 0.025;
     
     /// <summary>最小能量值（保底）</summary>
     [JsonPropertyName("MinimumEnergy")]
-    public int MinimumEnergy { get; set; }
+    public int MinimumEnergy { get; set; } = 150;
     
     // ===== 地形阻力参数 =====
     
@@ -171,6 +171,10 @@ public class InfluenceConfig
     /// <summary>视野/情报配置</summary>
     [JsonPropertyName("VisionConfig")]
     public VisionConfig VisionConfig { get; set; }
+
+    /// <summary>AI 战略评分配置（统一 StrategicMap 与能量口径）</summary>
+    [JsonPropertyName("AIStrategicConfig")]
+    public AIStrategicConfig AIStrategicConfig { get; set; } = new();
     
     // ===== 天气效果查询 =====
     
@@ -249,6 +253,58 @@ public class InfluenceConfig
         
         // 兜底值
         return 100;
+    }
+
+    /// <summary>
+    /// 获取并验证 AI 战略配置。
+    /// </summary>
+    public AIStrategicConfig GetValidatedAIStrategicConfig()
+    {
+        if (AIStrategicConfig == null)
+        {
+            throw new InvalidOperationException("[InfluenceConfig] AIStrategicConfig 为 null，配置不完整。");
+        }
+
+        if (AIStrategicConfig.NetEnergyToInfluenceScale <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"[InfluenceConfig] AIStrategicConfig.NetEnergyToInfluenceScale 必须 > 0，当前={AIStrategicConfig.NetEnergyToInfluenceScale}");
+        }
+
+        if (AIStrategicConfig.NetEnergyToThreatScale <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"[InfluenceConfig] AIStrategicConfig.NetEnergyToThreatScale 必须 > 0，当前={AIStrategicConfig.NetEnergyToThreatScale}");
+        }
+
+        if (AIStrategicConfig.ThreatClamp <= 0f)
+        {
+            throw new InvalidOperationException(
+                $"[InfluenceConfig] AIStrategicConfig.ThreatClamp 必须 > 0，当前={AIStrategicConfig.ThreatClamp}");
+        }
+
+        return AIStrategicConfig;
+    }
+
+    /// <summary>
+    /// 校验遗留能量公式字段，防止误以为修改这些字段会影响当前能量系统。
+    /// 当前能量公式唯一来源：EnergyCalculationConfig.json。
+    /// </summary>
+    public void ValidateLegacyEnergyFormulaMirror()
+    {
+        const double eps = 0.0001;
+
+        if (Math.Abs(BaseEnergyOffset - 50.0) > eps ||
+            Math.Abs(ScaleMultiplier - 150.0) > eps ||
+            Math.Abs(DominationMultiplier - 1.5) > eps ||
+            Math.Abs(MoraleMultiplier - 1.5) > eps ||
+            Math.Abs(ResourceMultiplier - 0.025) > eps ||
+            MinimumEnergy != 150)
+        {
+            throw new InvalidOperationException(
+                "[InfluenceConfig] 检测到遗留能量公式字段已偏离基线值（BaseEnergyOffset/ScaleMultiplier/DominationMultiplier/MoraleMultiplier/ResourceMultiplier/MinimumEnergy）。" +
+                "这些字段不再驱动能量计算；请改用 Content/Data/EnergyCalculationConfig.json 调参。");
+        }
     }
 }
 
@@ -378,6 +434,31 @@ public sealed class VisionConfig
     
     [JsonPropertyName("InformationLevelByEnergy")]
     public Dictionary<string, int> InformationLevelByEnergy { get; init; }
+}
+
+/// <summary>
+/// AI 战略评分配置（AOT 友好）
+/// 用于将净能量统一映射到 StrategicMap 的 influence/threat。
+/// </summary>
+public sealed class AIStrategicConfig
+{
+    [JsonPropertyName("UseEnergyMapForStrategicMap")]
+    public bool UseEnergyMapForStrategicMap { get; init; } = true;
+
+    [JsonPropertyName("FallbackToLegacyModel")]
+    public bool FallbackToLegacyModel { get; init; } = true;
+
+    [JsonPropertyName("NetEnergyToInfluenceScale")]
+    public float NetEnergyToInfluenceScale { get; init; } = 0.05f;
+
+    [JsonPropertyName("NetEnergyToThreatScale")]
+    public float NetEnergyToThreatScale { get; init; } = 0.05f;
+
+    [JsonPropertyName("ThreatClamp")]
+    public float ThreatClamp { get; init; } = 100f;
+
+    [JsonPropertyName("Description")]
+    public string Description { get; init; } = "";
 }
 
 

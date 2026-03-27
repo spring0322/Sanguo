@@ -491,7 +491,7 @@ public static class CrashReporter
             // 防止引发 NullReferenceException 二次崩溃
             if (Session.MainGame != null)
             {
-                string savePath = Path.Combine(Environment.CurrentDirectory, $"CrashSave_{timestamp}.sav");
+                string savePath = Path.Combine(CrashSaveDir, $"CrashSave_{timestamp}.sav");
                 sw.WriteLine($"正在尝试生成救援存档: {savePath}");
                 
                 // 🔥 2. 同步执行：在崩溃上下文中，绝对不要使用 Task.Run 或 async/await

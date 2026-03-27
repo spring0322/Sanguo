@@ -815,9 +815,11 @@ namespace GameObjects
         }
 
         // 保留原有的 AI 目标修正逻辑 (非常重要，否则 AI 会乱走)
-        public void TroopChangeRealDestination(Troop troop)
+        public void TroopChangeRealDestination(Troop troop, bool skipAuthorityProjection = false)
         {
-            if (Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1)
+            if (!skipAuthorityProjection &&
+                Session.GlobalVariables != null &&
+                Session.GlobalVariables.EnableAIAuthorityPhase1)
             {
                 GameScenario scenario = Session.Current?.Scenario;
                 if (scenario != null)

@@ -13,6 +13,13 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
     public class EventEffectListDictionaryConverter<TEventEffect> : JsonConverter<Dictionary<int, List<TEventEffect>>>
         where TEventEffect : class
     {
+        private static TEventEffect DeserializeEventEffect(JsonElement element, JsonSerializerOptions options)
+        {
+            return JsonSerializer.Deserialize(
+                element.GetRawText(),
+                JsonTypeInfoHelper.Resolve<TEventEffect>(options));
+        }
+
         public override Dictionary<int, List<TEventEffect>> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
             // 处理 null
@@ -45,7 +52,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                                 {
                                     try
                                     {
-                                        var effect = JsonSerializer.Deserialize<TEventEffect>(item.GetRawText(), options);
+                                        var effect = DeserializeEventEffect(item, options);
                                         if (effect != null)
                                         {
                                             list.Add(effect);
@@ -92,7 +99,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                                     {
                                         try
                                         {
-                                            var effect = JsonSerializer.Deserialize<TEventEffect>(effectItem.GetRawText(), options);
+                                            var effect = DeserializeEventEffect(effectItem, options);
                                             if (effect != null)
                                             {
                                                 list.Add(effect);
@@ -142,7 +149,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 {
                     foreach (var item in kvp.Value)
                     {
-                        JsonSerializer.Serialize(writer, item, options);
+                        JsonSerializer.Serialize(writer, item, JsonTypeInfoHelper.Resolve<TEventEffect>(options));
                     }
                 }
                 

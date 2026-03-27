@@ -164,7 +164,42 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
         public override void Write(Utf8JsonWriter writer, GameObjectList value, JsonSerializerOptions options)
         {
             // 使用默认序列化
-            JsonSerializer.Serialize(writer, value, value.GetType(), options);
+            if (value == null)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+
+            writer.WriteStartObject();
+            writer.WritePropertyName("GameObjects");
+            writer.WriteStartArray();
+
+            for (int i = 0; i < value.GameObjects.Count; i++)
+            {
+                var gameObject = value.GameObjects[i];
+                if (gameObject == null)
+                {
+                    writer.WriteNullValue();
+                    continue;
+                }
+
+                JsonSerializer.Serialize(writer, gameObject, JsonTypeInfoHelper.Resolve(options, gameObject.GetType()));
+            }
+
+            writer.WriteEndArray();
+            writer.WriteBoolean("IsNumber", value.IsNumber);
+
+            if (value.PropertyName == null)
+            {
+                writer.WriteNull("PropertyName");
+            }
+            else
+            {
+                writer.WriteString("PropertyName", value.PropertyName);
+            }
+
+            writer.WriteBoolean("SmallToBig", value.SmallToBig);
+            writer.WriteEndObject();
         }
 
         private void ProcessGameObjectsElement(JsonElement element, GameObjectList list, JsonSerializerOptions options)
@@ -238,7 +273,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                                 }
                                 else
                                 {
-                                    gameObject = JsonSerializer.Deserialize(item.GetRawText(), type, options) as GameObject;
+                                    gameObject = JsonSerializer.Deserialize(item.GetRawText(), JsonTypeInfoHelper.Resolve(options, type)) as GameObject;
                                 }
                                 
                                 if (gameObject != null)
@@ -273,7 +308,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                             }
                             else
                             {
-                                gameObject = JsonSerializer.Deserialize(item.GetRawText(), inferredElementType, options) as GameObject;
+                                gameObject = JsonSerializer.Deserialize(item.GetRawText(), JsonTypeInfoHelper.Resolve(options, inferredElementType)) as GameObject;
                             }
                         }
                         
@@ -357,7 +392,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
                 if (type != null)
                 {
                     // 🔥 不 catch：如果有 $type 但反序列化失败，说明数据损坏，应该 Fail Fast
-                    return JsonSerializer.Deserialize(element.GetRawText(), type, options) as GameObject;
+                    return JsonSerializer.Deserialize(element.GetRawText(), JsonTypeInfoHelper.Resolve(options, type)) as GameObject;
                 }
                 // $type 存在但无法解析 → 数据损坏，Fail Fast
                 var raw = element.GetRawText();

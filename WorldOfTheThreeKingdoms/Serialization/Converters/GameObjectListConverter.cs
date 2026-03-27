@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
 
 namespace WorldOfTheThreeKingdoms.Serialization.Converters;
 
@@ -35,7 +36,7 @@ public class GameObjectListConverter<T> : JsonConverter<List<T>>
                 // 新格式：直接数组 [...]
                 // 🔥 关键修复：使用不包含此转换器的 options
                 var innerOptions = GetInnerOptions(options);
-                List<T>? result = JsonSerializer.Deserialize<List<T>>(ref reader, innerOptions);
+                List<T>? result = JsonSerializer.Deserialize(ref reader, JsonTypeInfoHelper.Resolve<List<T>>(innerOptions));
                 return result ?? [];
             }
             
@@ -53,7 +54,7 @@ public class GameObjectListConverter<T> : JsonConverter<List<T>>
                 if (doc.RootElement.TryGetProperty("$values", out JsonElement valuesElement))
                 {
                     var innerOptions = GetInnerOptions(options);
-                    List<T>? result = JsonSerializer.Deserialize<List<T>>(valuesElement.GetRawText(), innerOptions);
+                    List<T>? result = JsonSerializer.Deserialize(valuesElement.GetRawText(), JsonTypeInfoHelper.Resolve<List<T>>(innerOptions));
                     return result ?? [];
                 }
                 
@@ -61,7 +62,7 @@ public class GameObjectListConverter<T> : JsonConverter<List<T>>
                 if (doc.RootElement.TryGetProperty("GameObjects", out JsonElement gameObjects))
                 {
                     var innerOptions = GetInnerOptions(options);
-                    List<T>? result = JsonSerializer.Deserialize<List<T>>(gameObjects.GetRawText(), innerOptions);
+                    List<T>? result = JsonSerializer.Deserialize(gameObjects.GetRawText(), JsonTypeInfoHelper.Resolve<List<T>>(innerOptions));
                     return result ?? [];
                 }
                 
@@ -76,7 +77,8 @@ public class GameObjectListConverter<T> : JsonConverter<List<T>>
         public override void Write(Utf8JsonWriter writer, List<T> value, JsonSerializerOptions options)
         {
             // 写入新格式（直接数组）
-            JsonSerializer.Serialize(writer, value, options);
+            var innerOptions = GetInnerOptions(options);
+            JsonSerializer.Serialize(writer, value, JsonTypeInfoHelper.Resolve<List<T>>(innerOptions));
         }
         
         /// <summary>

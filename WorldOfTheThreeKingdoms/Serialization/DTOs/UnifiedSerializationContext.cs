@@ -75,6 +75,8 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
     [JsonSerializable(typeof(Dictionary<int, int>))]
     [JsonSerializable(typeof(Dictionary<int, int[]>))]
     [JsonSerializable(typeof(Dictionary<string, object>))]
+    [JsonSerializable(typeof(Dictionary<string, object>[]))]
+    [JsonSerializable(typeof(Dictionary<int, Dictionary<string, object>>))]
     [JsonSerializable(typeof(Dictionary<string, string>))]
     
     public partial class UnifiedSerializationContext : JsonSerializerContext

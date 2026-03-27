@@ -988,7 +988,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public void Initialize()
         {
             this.TerrainList.Clear();
-            int terrainCount = Enum.GetValues(typeof(TerrainKind)).Length;
+            int terrainCount = Enum.GetValues<TerrainKind>().Length;
             if(this.TerrainList.Capacity < terrainCount)
             {
                 this.TerrainList.Capacity = terrainCount;

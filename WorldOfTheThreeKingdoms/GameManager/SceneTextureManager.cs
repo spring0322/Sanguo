@@ -140,7 +140,7 @@ namespace GameManager
         /// </summary>
         public static void ClearAllSceneTextures()
         {
-            foreach (var scene in Enum.GetValues(typeof(GameSceneType)).Cast<GameSceneType>())
+            foreach (var scene in Enum.GetValues<GameSceneType>())
             {
                 ReleaseSceneTextures(scene);
             }

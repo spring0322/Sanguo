@@ -112,7 +112,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 int itemHeight = 50;
                 int clickedIndex = (y - strategyListRect.Y) / itemHeight;
                 
-                var strategies = Enum.GetValues(typeof(StrategyKind)).Cast<StrategyKind>().ToArray();
+                var strategies = Enum.GetValues<StrategyKind>();
                 if (clickedIndex >= 0 && clickedIndex < strategies.Length)
                 {
                     selectedStrategy = strategies[clickedIndex];
@@ -159,7 +159,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
         /// </summary>
         private void DrawStrategyList(SpriteBatch spriteBatch, SpriteFont font, Texture2D buttonTexture)
         {
-            var strategies = Enum.GetValues(typeof(StrategyKind)).Cast<StrategyKind>().ToArray();
+            var strategies = Enum.GetValues<StrategyKind>();
             int itemHeight = 50;
 
             for (int i = 0; i < strategies.Length; i++)

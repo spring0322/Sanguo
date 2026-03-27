@@ -39,7 +39,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             {
                 // 如果是对象，正常反序列化（用于 AllIdealTendencyKinds 列表）
                 using var document = JsonDocument.ParseValue(ref reader);
-                return JsonSerializer.Deserialize<IdealTendencyKind>(document.RootElement.GetRawText(), options);
+                return ReadIdealTendencyKind(document.RootElement);
             }
 
             throw new JsonException($"Unexpected token type for IdealTendencyKind: {reader.TokenType}");
@@ -56,6 +56,28 @@ namespace WorldOfTheThreeKingdoms.Serialization.SystemTextJson
             // 🔥 修复 StackOverflow：只写入 ID 避免无限递归
             // 完整的 IdealTendencyKind 对象会在 AllIdealTendencyKinds 列表中序列化
             writer.WriteNumberValue(value.ID);
+        }
+
+        private static IdealTendencyKind ReadIdealTendencyKind(JsonElement element)
+        {
+            IdealTendencyKind idealTendencyKind = new IdealTendencyKind();
+
+            if (element.TryGetProperty("ID", out JsonElement idElement) && idElement.ValueKind == JsonValueKind.Number)
+            {
+                idealTendencyKind.ID = idElement.GetInt32();
+            }
+
+            if (element.TryGetProperty("Name", out JsonElement nameElement) && nameElement.ValueKind == JsonValueKind.String)
+            {
+                idealTendencyKind.Name = nameElement.GetString();
+            }
+
+            if (element.TryGetProperty("Offset", out JsonElement offsetElement) && offsetElement.ValueKind == JsonValueKind.Number)
+            {
+                idealTendencyKind.Offset = offsetElement.GetInt32();
+            }
+
+            return idealTendencyKind;
         }
 
         private IdealTendencyKind ResolveIdealTendencyById(int idealTendencyId)
