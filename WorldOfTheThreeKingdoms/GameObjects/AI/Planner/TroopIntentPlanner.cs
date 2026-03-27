@@ -45,6 +45,11 @@ public sealed class TroopIntentPlanner
 
     private static TroopIntentKind ResolveIntentKind(Troop troop, LegionIntent legionIntent)
     {
+        if (TryResolveCommandIntentKind(troop, out TroopIntentKind commandKind))
+        {
+            return commandKind;
+        }
+
         if (!legionIntent.AttackAuthorized &&
             troop.CurrentAIState == TroopAIState.Waiting &&
             !troop.IsRetreatLocked)
@@ -69,6 +74,46 @@ public sealed class TroopIntentPlanner
                 : MapFromLegionIntent(legionIntent),
             _ => MapFromLegionIntent(legionIntent)
         };
+    }
+
+    private static bool TryResolveCommandIntentKind(Troop troop, out TroopIntentKind intentKind)
+    {
+        switch (troop.Command)
+        {
+            case TroopCommand.Move:
+                intentKind = TroopIntentKind.March;
+                return true;
+            case TroopCommand.Enter:
+                intentKind = TroopIntentKind.EnterCity;
+                return true;
+            case TroopCommand.AttackArch:
+                intentKind = TroopIntentKind.AttackArchitecture;
+                return true;
+            case TroopCommand.AttackTroop:
+                intentKind = TroopIntentKind.AttackTroop;
+                return true;
+            case TroopCommand.Attack:
+            case TroopCommand.Stratagem:
+                if (troop.TargetArchitecture != null)
+                {
+                    intentKind = TroopIntentKind.AttackArchitecture;
+                    return true;
+                }
+
+                if (troop.TargetTroop != null && !troop.TargetTroop.Destroyed)
+                {
+                    intentKind = TroopIntentKind.AttackTroop;
+                    return true;
+                }
+
+                intentKind = IsValidPosition(troop.RealDestination)
+                    ? TroopIntentKind.March
+                    : TroopIntentKind.Hold;
+                return true;
+            default:
+                intentKind = TroopIntentKind.Hold;
+                return false;
+        }
     }
 
     private static TacticalPosture ResolvePreferredPosture(TroopIntentKind intentKind)
@@ -120,9 +165,15 @@ public sealed class TroopIntentPlanner
 
         if (troop.TargetArchitecture != null)
         {
+            Point architectureTargetPosition = troop.TargetArchitecture.Position;
+            if (troop.Command == TroopCommand.AttackArch && IsValidPosition(troop.RealDestination))
+            {
+                architectureTargetPosition = troop.RealDestination;
+            }
+
             return IntentTargetRef.ForArchitecture(
                 troop.TargetArchitecture.ID,
-                troop.TargetArchitecture.Position,
+                architectureTargetPosition,
                 troop.TargetArchitecture.BelongedFaction?.ID ?? -1);
         }
 
@@ -385,6 +436,6 @@ public sealed class TroopIntentPlanner
 
     private static bool IsValidPosition(Point position)
     {
-        return position.X >= 0 && position.Y >= 0 && position != Point.Zero;
+        return position.X >= 0 && position.Y >= 0;
     }
 }

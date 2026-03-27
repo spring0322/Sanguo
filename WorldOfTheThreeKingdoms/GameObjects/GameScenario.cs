@@ -6678,6 +6678,16 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine("[AfterLoadGameScenario] 🔥 构建武将缓存...");
             this.CreatePersonStatusCache();
             System.Diagnostics.Debug.WriteLine("[AfterLoadGameScenario] ✅ 武将缓存构建完成");
+
+            try
+            {
+                this.ValidateAndLinkMilitaryKinds();
+                this.ValidateAndLinkTroopArmies();
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
             
             // 🔥 修复：BuildQueue会重置Controlling状态，需要在之后重新设置
             // 日期：2026-03-16

@@ -135,11 +135,12 @@ public sealed class AIAuthorityContext
         TroopExecutionState executionState = GetOrCreateExecutionState(troop.ID);
         SyncLegacyCompatibilityState(scenario.DaySince, troop, executionState);
         RefreshPostureState(scenario, troop, intent, executionState, IntentCheckpointKind.BeforeProjection);
+        bool preserveExplicitDestination = ShouldPreserveExplicitCommandDestination(troop);
 
         switch (intent.Target.Kind)
         {
             case IntentTargetKind.Position:
-                if (IsValidPosition(intent.Target.Position))
+                if (!preserveExplicitDestination && IsValidPosition(intent.Target.Position))
                 {
                     troop.RealDestination = intent.Target.Position;
                 }
@@ -150,7 +151,10 @@ public sealed class AIAuthorityContext
                 if (targetTroop != null && !targetTroop.Destroyed)
                 {
                     troop.TargetTroop = targetTroop;
-                    if (intent.Kind == TroopIntentKind.AttackTroop)
+                    bool projectAsAttackTroop =
+                        intent.Kind == TroopIntentKind.AttackTroop ||
+                        troop.Command is TroopCommand.AttackTroop or TroopCommand.Attack or TroopCommand.Stratagem;
+                    if (projectAsAttackTroop)
                     {
                         Point attackPosition = troop.GetOptimalAttackPosition(targetTroop);
                         if (IsValidPosition(attackPosition))
@@ -174,19 +178,31 @@ public sealed class AIAuthorityContext
                 if (targetArchitecture != null)
                 {
                     troop.TargetArchitecture = targetArchitecture;
-                    bool preserveAssignedSiegePosition =
-                        intent.Kind == TroopIntentKind.AttackArchitecture &&
+
+                    Point projectedPosition = IsValidPosition(intent.Target.Position)
+                        ? intent.Target.Position
+                        : targetArchitecture.Position;
+
+                    bool preserveLegacySiegePosition =
                         troop.Command == TroopCommand.AttackArch &&
+                        !IsValidPosition(intent.Target.Position) &&
                         IsValidPosition(troop.RealDestination);
-                    if (!preserveAssignedSiegePosition && IsValidPosition(targetArchitecture.Position))
+
+                    if (!preserveLegacySiegePosition && IsValidPosition(projectedPosition))
                     {
-                        troop.RealDestination = targetArchitecture.Position;
+                        troop.RealDestination = projectedPosition;
                     }
                 }
                 break;
         }
 
-        troop.CurrentAIState = ResolveProjectedAIState(intent.Kind, executionState.CurrentPosture, troop.CurrentAIState);
+        TroopAIState projectedState = ResolveProjectedAIState(intent.Kind, executionState.CurrentPosture, troop.CurrentAIState);
+        if (TryResolveCommandProjectedState(troop.Command, out TroopAIState commandProjectedState))
+        {
+            projectedState = commandProjectedState;
+        }
+
+        troop.CurrentAIState = projectedState;
 
         return true;
     }
@@ -709,6 +725,10 @@ public sealed class AIAuthorityContext
         int cooldownTicks = isBlockedFailure ? 1 : 0;
         executionState.LocalCooldownUntilTick = scenario.DaySince + cooldownTicks;
         executionState.PendingReplan = validation.ShouldReplanNow;
+        if (validation.FailureReason == TroopIntentFailureReason.ArbitrationLost)
+        {
+            executionState.PendingReplan = true;
+        }
 
         int sourceFactionId = troop.BelongedFaction?.ID ?? intent.SourceFactionId;
         AdvisorFacade.ReportTroopIntentFailure(sourceFactionId, validation.FailureReason, scenario.DaySince);
@@ -1139,6 +1159,46 @@ public sealed class AIAuthorityContext
 
     private static bool IsValidPosition(Point position)
     {
-        return position.X >= 0 && position.Y >= 0 && position != Point.Zero;
+        return position.X >= 0 && position.Y >= 0;
+    }
+
+    private static bool ShouldPreserveExplicitCommandDestination(Troop troop)
+    {
+        if (troop == null)
+        {
+            return false;
+        }
+
+        if (!IsValidPosition(troop.RealDestination))
+        {
+            return false;
+        }
+
+        return troop.Command is TroopCommand.Move or
+            TroopCommand.AttackTroop or
+            TroopCommand.AttackArch or
+            TroopCommand.Attack or
+            TroopCommand.Stratagem or
+            TroopCommand.Enter;
+    }
+
+    private static bool TryResolveCommandProjectedState(TroopCommand command, out TroopAIState projectedState)
+    {
+        switch (command)
+        {
+            case TroopCommand.Enter:
+                projectedState = TroopAIState.EnterCity;
+                return true;
+            case TroopCommand.Move:
+            case TroopCommand.Attack:
+            case TroopCommand.AttackArch:
+            case TroopCommand.AttackTroop:
+            case TroopCommand.Stratagem:
+                projectedState = TroopAIState.Marching;
+                return true;
+            default:
+                projectedState = TroopAIState.Idle;
+                return false;
+        }
     }
 }

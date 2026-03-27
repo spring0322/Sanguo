@@ -76,6 +76,15 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
                 "InkBleedInfluenceRenderer: GraphicsDevice 未初始化，请检查 MainGameScreen.LoadContent()");
         }
         
+        // 🔥 关键修复：检查 GraphicsDevice 是否已被释放
+        // 日期：2026-03-26
+        // 原因：RenderTarget2D 构造函数内部会访问 GraphicsDevice，如果设备已释放会抛出 NullReferenceException
+        if (graphicsDevice.IsDisposed)
+        {
+            throw new ObjectDisposedException(nameof(graphicsDevice),
+                "InkBleedInfluenceRenderer: GraphicsDevice 已被释放，无法创建 RenderTarget2D");
+        }
+        
         if (inkBleedEffect == null)
         {
             throw new ArgumentNullException(nameof(inkBleedEffect),
@@ -105,8 +114,23 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
         Array.Fill(_visualInfluenceMap, 0f);
         
         // 🔥 创建低分屏画布（1/4 分辨率）
+        // 🔥 关键修复：在创建 RenderTarget2D 前再次检查 PresentationParameters
+        // 日期：2026-03-26
+        if (graphicsDevice.PresentationParameters == null)
+        {
+            throw new InvalidOperationException(
+                "InkBleedInfluenceRenderer: GraphicsDevice.PresentationParameters 为 null，设备未正确初始化");
+        }
+        
         int screenWidth = graphicsDevice.PresentationParameters.BackBufferWidth;
         int screenHeight = graphicsDevice.PresentationParameters.BackBufferHeight;
+        
+        if (screenWidth <= 0 || screenHeight <= 0)
+        {
+            throw new InvalidOperationException(
+                $"InkBleedInfluenceRenderer: 无效的屏幕尺寸 {screenWidth}×{screenHeight}");
+        }
+        
         _lowResTarget = new RenderTarget2D(
             graphicsDevice,
             screenWidth / 2,

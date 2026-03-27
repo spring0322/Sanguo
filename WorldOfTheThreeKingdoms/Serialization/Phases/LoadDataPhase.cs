@@ -763,6 +763,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             architecture.BelongedSectionID = dto.BelongedSectionID;
             architecture.MayorID = dto.MayorID;
             architecture.StateID = dto.StateID;  // 🔥 修复：恢复 StateID
+            architecture.huangdisuozai = dto.huangdisuozai;
             
             // Resources
             architecture.Agriculture = dto.Agriculture;

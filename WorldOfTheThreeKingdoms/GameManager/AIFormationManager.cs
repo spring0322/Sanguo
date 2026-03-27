@@ -218,6 +218,8 @@ namespace GameManager
             
             int dynamicMorale = 65 + (int)((1.0f - capability) * 25);
             if (troop.Morale < dynamicMorale) return false;
+
+            int conservativeFoodCostPerDay = Troop.GetConservativePlanningFoodCostPerDay(troop.Army);
             
             // Food Check (Troop level)
             // assuming troop.FoodMax is correctly set or derived from Army
@@ -226,7 +228,7 @@ namespace GameManager
             // Architecture Food Check
             if (troop.BelongedLegion != null && troop.StartingArchitecture != null)
             {
-                 if (troop.StartingArchitecture.Food < troop.FoodCostPerDay * 30) return false;
+                 if (troop.StartingArchitecture.Food < conservativeFoodCostPerDay * 30) return false;
             }
             // Note: If BelongedLegion is null (during creation), we might strip that check or check StartingArchitecture directly?
             // User code says: if (this.BelongedLegion != null && this.StartingArchitecture != null)
@@ -238,7 +240,7 @@ namespace GameManager
             // To be safe and effective, we likely want:
             if (troop.StartingArchitecture != null)
             {
-                if (troop.StartingArchitecture.Food < troop.FoodCostPerDay * 30) return false;
+                if (troop.StartingArchitecture.Food < conservativeFoodCostPerDay * 30) return false;
             }
 
             return true;
@@ -249,7 +251,7 @@ namespace GameManager
             if (troop.Army == null || troop.Army.Kind == null) return false;
             int maxScale = (troop.Army.Kind.MaxScale > 0 ? troop.Army.Kind.MaxScale : 10000);
             if (troop.Army.Quantity < maxScale * 0.2f) return false;
-            if (troop.Food < troop.FoodCostPerDay * 3) return false;
+            if (troop.Food < Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * 3) return false;
             return true;
         }
 

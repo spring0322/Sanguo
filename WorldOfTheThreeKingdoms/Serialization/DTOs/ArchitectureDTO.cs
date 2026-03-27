@@ -31,6 +31,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
         public int BelongedSectionID { get; set; } = -1;
         public int MayorID { get; set; } = -1;
         public int StateID { get; set; }  // 🔥 修复：添加 StateID 字段用于恢复 LocationState
+        public bool huangdisuozai { get; set; } = false;
         
         // Resources
         public int Agriculture { get; set; }

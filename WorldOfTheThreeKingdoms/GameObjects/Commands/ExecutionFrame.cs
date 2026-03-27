@@ -17,6 +17,7 @@ public enum ExecutionActionKind : byte
 public readonly record struct ExecutionCommand(
     Guid TroopId,
     ExecutionActionKind ActionKind,
+    Point SourcePosition,
     Point TargetPosition,
     Point ConflictPosition,
     Guid TargetTroopId,
@@ -28,8 +29,13 @@ public readonly record struct ExecutionCommand(
     int SourceFactionId,
     int SourceLegionId)
 {
+    public bool HasSourcePosition => SourcePosition.X >= 0 && SourcePosition.Y >= 0;
     public bool HasTargetPosition => TargetPosition.X >= 0 && TargetPosition.Y >= 0;
     public bool HasConflictPosition => ConflictPosition.X >= 0 && ConflictPosition.Y >= 0;
+    public bool HasImmediateStep =>
+        HasSourcePosition &&
+        IsSpatialConflictAction &&
+        TryResolveDirectedEdgeKey(out _);
 
     public bool IsSpatialConflictAction =>
         ActionKind is ExecutionActionKind.Move or
@@ -51,6 +57,46 @@ public readonly record struct ExecutionCommand(
     {
         Point position = ResolveSpatialPosition();
         return (position.X << 16) ^ (position.Y & 0xFFFF);
+    }
+
+    public bool TryResolveDirectedEdgeKey(out ulong edgeKey)
+    {
+        edgeKey = 0UL;
+
+        if (!HasSourcePosition)
+        {
+            return false;
+        }
+
+        Point destination = ResolveSpatialPosition();
+        if (destination.X < 0 || destination.Y < 0 || destination == SourcePosition)
+        {
+            return false;
+        }
+
+        edgeKey = PackEdgeKey(SourcePosition, destination);
+        return true;
+    }
+
+    public bool IsReverseEdgeOf(in ExecutionCommand other)
+    {
+        if (!TryResolveDirectedEdgeKey(out _) || !other.TryResolveDirectedEdgeKey(out _))
+        {
+            return false;
+        }
+
+        return SourcePosition == other.ResolveSpatialPosition() &&
+            ResolveSpatialPosition() == other.SourcePosition;
+    }
+
+    public static ulong PackEdgeKey(Point from, Point to)
+    {
+        return (PackPointKey(from) << 32) | PackPointKey(to);
+    }
+
+    private static ulong PackPointKey(Point position)
+    {
+        return ((ulong)(ushort)position.X << 16) | (ushort)position.Y;
     }
 }
 

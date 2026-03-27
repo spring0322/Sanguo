@@ -53,6 +53,22 @@ namespace WorldOfTheThreeKingdoms.GameManager
             _inkBleedEffect = inkBleedEffect ?? throw new ArgumentNullException(nameof(inkBleedEffect));
             _noiseTexture = noiseTexture ?? throw new ArgumentNullException(nameof(noiseTexture));
             
+            // 🔥 关键修复：检查 GraphicsDevice 是否已被释放
+            // 日期：2026-03-26
+            // 原因：RenderTarget2D 构造函数内部会访问 GraphicsDevice，如果设备已释放会抛出 NullReferenceException
+            if (graphicsDevice.IsDisposed)
+            {
+                throw new ObjectDisposedException(nameof(graphicsDevice),
+                    "InkBleedRenderer: GraphicsDevice 已被释放，无法创建 RenderTarget2D");
+            }
+            
+            // 🔥 验证屏幕尺寸
+            if (screenWidth <= 0 || screenHeight <= 0)
+            {
+                throw new ArgumentException(
+                    $"InkBleedRenderer: 无效的屏幕尺寸 {screenWidth}×{screenHeight}");
+            }
+            
             // 🔥 极限降采样：1/16 尺寸，强化水墨糊化效果
             int lowResWidth = screenWidth / 8;
             int lowResHeight = screenHeight / 8;

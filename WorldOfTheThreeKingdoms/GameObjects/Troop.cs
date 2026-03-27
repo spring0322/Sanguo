@@ -6784,45 +6784,24 @@ namespace GameObjects
                         }
                     }
                 }
-                if (this.Food >= this.FoodCostPerDay)
+                // 🆕 阶段 4：应用势力范围粮食消耗倍率
+                // 日期：2026-03-11
+                int actualFoodCost = CalculateActualFoodCost();
+                if (this.Food >= actualFoodCost)
                 {
-                    // 🆕 阶段 4：应用势力范围粮食消耗倍率
-                    // 日期：2026-03-11
-                    int actualFoodCost = CalculateActualFoodCost();
-                    
                     this.Food -= actualFoodCost;
                     this.RefillFood();
-
                 }
                 else
                 {
                     this.RefillFood();
-
-                    if (this.Food < this.FoodCostPerDay)
+                    if (this.Food >= actualFoodCost)
                     {
-                        this.Food = 0;
-                        if (this.RecentlyFighting > 0)
-                        {
-                            this.DecreaseCombativity(10);
-                            this.DecreaseMorale((int)(10f * this.MoraleChangeRateOnOutOfFood));
-                        }
-                        else
-                        {
-                            this.DecreaseCombativity(5);
-                            this.DecreaseMorale(5);
-                        }
-                        this.DecreaseQuantity(this.Quantity / 10);
-                        CheckTroopRout(this);
-                    }
-                    else
-                    {
-                        // 🆕 阶段 4：应用势力范围粮食消耗倍率
-                        // 日期：2026-03-11
-                        int actualFoodCost = CalculateActualFoodCost();
-                        
                         this.Food -= actualFoodCost;
                     }
                 }
+
+                HandleOutOfFoodAfterRefill(actualFoodCost);
                 if (this.BelongedFaction != null)
                 {
                     // ✅ 修复：使用安全的类型转换，避免InvalidCastException
@@ -6910,6 +6889,42 @@ namespace GameObjects
             // 🔥 调试：记录 DayEvent 结束时的状态
             System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.DisplayName} 结束 RealDest={this.RealDestination}, Dest={this.Destination}, Pos={this.Position}");
             */
+        }
+
+        private void HandleOutOfFoodAfterRefill(int requiredFoodCost)
+        {
+            if (this.Food >= requiredFoodCost)
+            {
+                return;
+            }
+
+            this.Food = 0;
+            if (this.RecentlyFighting > 0)
+            {
+                this.DecreaseCombativity(10);
+                this.DecreaseMorale((int)(10f * this.MoraleChangeRateOnOutOfFood));
+            }
+            else
+            {
+                this.DecreaseCombativity(5);
+                this.DecreaseMorale(5);
+            }
+
+            this.DecreaseQuantity(this.Quantity / 10);
+            CheckTroopRout(this);
+            if (this.Destroyed)
+            {
+                return;
+            }
+
+            if (!this.ManualControl && this.BelongedLegion != null && !this.BelongedLegion.IsRetreating())
+            {
+                if (EvaluateRetreatDecision())
+                {
+                    System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.DisplayName} 断粮且评估确认撤退");
+                    EnterRetreatMode();
+                }
+            }
         }
 
         private void RefillFood()
@@ -12960,11 +12975,13 @@ namespace GameObjects
                 int increment = this.FoodMax - this.Food;
                 if (increment > 0)
                 {
+                    int requiredFoodCost = this.GetCurrentActualFoodCost();
+
                     #if DEBUG
                     // 🔥 调试日志：追踪出发城池补给过程
                     // 日期：2026-03-07
                     // 用途：诊断 StartingArchitecture 补给失败的原因
-                    if (this.Food < this.FoodCostPerDay)
+                    if (this.Food < requiredFoodCost)
                     {
                         System.Diagnostics.Debug.WriteLine($"[RefillByStart] 部队 {this.DisplayName}(ID:{this.ID}) 尝试从出发城池补给");
                         System.Diagnostics.Debug.WriteLine($"[RefillByStart]   需要补给: {increment}, 当前粮食: {this.Food}/{this.FoodMax}, 每日消耗: {this.FoodCostPerDay}");
@@ -12985,7 +13002,7 @@ namespace GameObjects
                             System.Diagnostics.Debug.WriteLine($"[RefillByStart]   势力匹配: {this.StartingArchitecture.BelongedFaction == this.BelongedFaction}");
                             
                             bool foodCondition = (this.StartingArchitecture.Food > 0) && 
-                                                ((this.StartingArchitecture.Food + this.Food) >= this.FoodCostPerDay);
+                                                ((this.StartingArchitecture.Food + this.Food) >= requiredFoodCost);
                             System.Diagnostics.Debug.WriteLine($"[RefillByStart]   粮食条件: {foodCondition} (城池 {this.StartingArchitecture.Food} + 部队 {this.Food} >= 消耗 {this.FoodCostPerDay})");
                         }
                         else
@@ -12998,7 +13015,7 @@ namespace GameObjects
                     if (this.StartingArchitecture != null && this.StartingArchitecture.BelongedFaction == this.BelongedFaction)
                     {
                         Architecture architecture = this.StartingArchitecture;
-                        if ((architecture.Food > 0) && ((architecture.Food + this.Food) >= this.FoodCostPerDay))
+                        if ((architecture.Food > 0) && ((architecture.Food + this.Food) >= requiredFoodCost))
                         {
                             double consumptionRate = Session.Current.Scenario.GetResourceConsumptionRate(architecture, this);
                             if (architecture.Food >= increment)
@@ -13008,7 +13025,7 @@ namespace GameObjects
                             }
                             else
                             {
-                                int num2 = (((architecture.Food + this.Food) / this.FoodCostPerDay) * this.FoodCostPerDay) - this.Food;
+                                int num2 = (((architecture.Food + this.Food) / requiredFoodCost) * requiredFoodCost) - this.Food;
                                 this.IncreaseFood(num2);
                                 architecture.DecreaseFood((int)(num2 * consumptionRate));
                             }
@@ -13025,13 +13042,15 @@ namespace GameObjects
                 int increment = this.FoodMax - this.Food;
                 if (increment > 0)
                 {
+                    int requiredFoodCost = this.GetCurrentActualFoodCost();
+
                     ArchitectureList supplyArchitecturesByPositionAndFaction = Session.Current.Scenario.GetSupplyArchitecturesByPositionAndFaction(this.Position, this.BelongedFaction);
                     
                     #if DEBUG
                     // 🔥 调试日志：追踪补给城池查找过程
                     // 日期：2026-03-07
                     // 用途：验证城池势力变更后补给范围是否正确更新
-                    if (supplyArchitecturesByPositionAndFaction.Count == 0 && this.Food < this.FoodCostPerDay)
+                    if (supplyArchitecturesByPositionAndFaction.Count == 0 && this.Food < requiredFoodCost)
                     {
                         System.Diagnostics.Debug.WriteLine($"[RefillFood] ⚠️ 部队 {this.DisplayName}(ID:{this.ID}) 无法找到补给城池");
                         System.Diagnostics.Debug.WriteLine($"[RefillFood]   位置: {this.Position}, 势力: {(this.BelongedFaction != null ? this.BelongedFaction.Name : "null")}");
@@ -13054,7 +13073,7 @@ namespace GameObjects
                             supplyArchitecturesByPositionAndFaction.ReSort();
                         }
                         Architecture architecture = supplyArchitecturesByPositionAndFaction[0] as Architecture;
-                        if ((architecture.Food > 0) && ((architecture.Food + this.Food) >= this.FoodCostPerDay))
+                        if ((architecture.Food > 0) && ((architecture.Food + this.Food) >= requiredFoodCost))
                         {
                             if (architecture.Food >= increment)
                             {
@@ -13063,7 +13082,7 @@ namespace GameObjects
                             }
                             else
                             {
-                                int num2 = (((architecture.Food + this.Food) / this.FoodCostPerDay) * this.FoodCostPerDay) - this.Food;
+                                int num2 = (((architecture.Food + this.Food) / requiredFoodCost) * requiredFoodCost) - this.Food;
                                 this.IncreaseFood(num2);
                                 architecture.DecreaseFood(num2);
                             }
@@ -13081,6 +13100,7 @@ namespace GameObjects
                 int num = this.FoodMax - this.Food;
                 if (num > 0)
                 {
+                    int requiredFoodCost = this.GetCurrentActualFoodCost();
                     List<RoutePoint> supplyRoutePointsByPositionAndFaction = Session.Current.Scenario.GetSupplyRoutePointsByPositionAndFaction(this.Position, this.BelongedFaction);
                     if (supplyRoutePointsByPositionAndFaction.Count != 0)
                     {
@@ -13094,7 +13114,7 @@ namespace GameObjects
                             RoutePoint point = null;
                             foreach (RoutePoint point2 in supplyRoutePointsByPositionAndFaction)
                             {
-                                if (point2.BelongedRouteway.IsEnough(point2.ConsumptionRate, this.FoodCostPerDay - this.Food) && (point2.ConsumptionRate < consumptionRate))
+                                if (point2.BelongedRouteway.IsEnough(point2.ConsumptionRate, Math.Max(0, requiredFoodCost - this.Food)) && (point2.ConsumptionRate < consumptionRate))
                                 {
                                     consumptionRate = point2.ConsumptionRate;
                                     point = point2;
@@ -18376,7 +18396,21 @@ namespace GameObjects
         /// </summary>
         private int CalculateActualFoodCost()
         {
+            return this.GetCurrentActualFoodCost();
+        }
+
+        private int GetCurrentActualFoodCost()
+        {
+            return this.GetActualFoodCostAt(this.Position);
+        }
+
+        private int GetActualFoodCostAt(Point position)
+        {
             int baseCost = this.FoodCostPerDay;
+            if (baseCost <= 0)
+            {
+                return baseCost;
+            }
             
             // 🔥 ANTI-BAND-AID：明确检查配置
             var config = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
@@ -18406,7 +18440,7 @@ namespace GameObjects
             
             // 获取部队当前位置的粮食消耗倍率
             float multiplier = Session.Current.Scenario.GetFoodConsumptionMultiplier(
-                this.Position, 
+                position, 
                 this.BelongedFaction);
             
             #if DEBUG
@@ -18427,7 +18461,7 @@ namespace GameObjects
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[CalculateActualFoodCost] 部队 {this.DisplayName}(ID:{this.ID}) " +
-                    $"位置({this.Position.X},{this.Position.Y}) " +
+                    $"位置({position.X},{position.Y}) " +
                     $"粮食消耗: {baseCost} × {multiplier:F2} = {actualCost}");
             }
             #endif
@@ -19448,11 +19482,12 @@ namespace GameObjects
         {
             get
             {
-                if (this.FoodCostPerDay == 0)
+                int actualFoodCost = this.GetCurrentActualFoodCost();
+                if (actualFoodCost == 0)
                 {
                     return this.RationDays;
                 }
-                return (this.Food / this.FoodCostPerDay);
+                return (this.Food / actualFoodCost);
             }
         }
 
@@ -21163,11 +21198,14 @@ namespace GameObjects
         /// </summary>
         public bool EvaluateRetreatDecision()
         {
+            int actualFoodCost = CalculateActualFoodCost();
+            bool isOutOfFood = this.Food < actualFoodCost;
+
             // 1. 基础阈值判定（断粮现在作为触发深入思考的门槛之一）
             bool reachThreshold = this.Army.IsFewScaleNeedRetreat || 
                                   this.Morale < 45 || 
                                   this.InjuryQuantity > this.Quantity ||
-                                  this.Food < this.FoodCostPerDay; // 缺粮触发检定
+                                  isOutOfFood; // 缺粮触发检定
 
             // 未触底则正常战斗
             if (!reachThreshold) return false;
@@ -21189,7 +21227,7 @@ namespace GameObjects
                 {
 #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[死战触发] {this.DisplayName} (主将:{this.Leader?.Name}) 拒绝撤退！" +
-                        $"断粮状态: {this.Food < this.FoodCostPerDay} 继续战斗评分:{fightScore:F1} 撤退评分:{retreatScore:F1} 检定率:{determinationChance:F1}%");
+                        $"断粮状态: {isOutOfFood} 继续战斗评分:{fightScore:F1} 撤退评分:{retreatScore:F1} 检定率:{determinationChance:F1}%");
 #endif
                     // 无视阈值，继续战斗
                     // 给予破釜沉舟的士气补偿，防止在死战状态下士气立刻归零导致溃散
@@ -21207,9 +21245,10 @@ namespace GameObjects
         private float CalculateRetreatScore()
         {
             float score = 100f; // 基础撤退分
+            int actualFoodCost = CalculateActualFoodCost();
 
             // A. 断粮恐慌评估 (极大权重)
-            if (this.Food < this.FoodCostPerDay)
+            if (this.Food < actualFoodCost)
             {
                 // 赋予200分的极高权重，意味着常规状态下断粮必退。
                 // 只有当 死战分 极高（如敌城即将告破 + 主将极度勇猛）时才能压倒此恐慌。
@@ -23130,7 +23169,16 @@ namespace GameObjects
             // 日期：2026-03-09
             if (this.BelongedLegion.IsOffensive())
             {
-                if (CheckOffensiveCapability())
+                bool hasCapability = CheckOffensiveCapability();
+                
+                #if DEBUG
+                if (this.Food < this.FoodCostPerDay)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 断粮检查: Food={this.Food}, FoodCostPerDay={this.FoodCostPerDay}, CheckOffensiveCapability={hasCapability}");
+                }
+                #endif
+                
+                if (hasCapability)
                 {
                     // 🔥 优化：使用 CachedEnvironment 避免重复遍历
                     CachedEnvironment cache = new CachedEnvironment(this);
@@ -23161,7 +23209,13 @@ namespace GameObjects
                 }
                 else
                 {
-                    if (EvaluateRetreatDecision())
+                    bool shouldRetreat = EvaluateRetreatDecision();
+                    
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 进攻能力不足: Food={this.Food}, EvaluateRetreatDecision={shouldRetreat}");
+                    #endif
+                    
+                    if (shouldRetreat)
                     {
                         System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 进攻能力不足且评估确认撤退");
                         EnterRetreatMode();
@@ -23481,6 +23535,30 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine($"[TransferToRetreatLegion] {this.DisplayName} 转入撤退军团，目标={target.Name}, RealDest={this.RealDestination}");
         }
 
+        public static int GetConservativePlanningFoodCostPerDay(Military military)
+        {
+            if (military == null || military.Kind == null)
+            {
+                return 0;
+            }
+
+            int baseFoodCostPerDay = military.Kind.FoodPerSoldier * military.Quantity;
+            if (baseFoodCostPerDay <= 0)
+            {
+                return 0;
+            }
+
+            var config = WorldOfTheThreeKingdoms.GameData.InfluenceConfig.Current;
+            if (!config.EnableInfluenceBuff)
+            {
+                return baseFoodCostPerDay;
+            }
+
+            float worstCaseMultiplier = 1.0f + config.EnemyFoodPenalty;
+            int conservativeFoodCostPerDay = (int)Math.Ceiling(baseFoodCostPerDay * worstCaseMultiplier);
+            return Math.Max(conservativeFoodCostPerDay, baseFoodCostPerDay);
+        }
+
         public static bool CheckDefensiveCapabilityStatic(Person leader, Military military, int foodLimit, Architecture startArch = null)
         {
             if (leader == null || military == null || military.Kind == null) return false;
@@ -23488,7 +23566,7 @@ namespace GameObjects
             int maxScale = (military.Kind.MaxScale > 0 ? military.Kind.MaxScale : 10000);
             bool hasEnoughTroops = (military.Quantity >= maxScale * 0.2f);
             
-            int foodCostPerDay = (military.Kind.FoodPerSoldier * military.Quantity);
+            int foodCostPerDay = GetConservativePlanningFoodCostPerDay(military);
             
             // 🔥 修复：如果 foodLimit < 0，说明会自动分配粮食，检查城市粮食
             bool hasEnoughFood;
@@ -23538,7 +23616,7 @@ namespace GameObjects
             int dynamicMorale = 50 + (int)((1.0f - capability) * 25);
             bool hasEnoughMorale = (military.Morale >= dynamicMorale);
             
-            int foodCostPerDay = (military.Kind.FoodPerSoldier * military.Quantity);
+            int foodCostPerDay = GetConservativePlanningFoodCostPerDay(military);
             
             // 🔥 修复：如果 foodLimit < 0，说明会自动分配粮食，检查城市粮食
             bool hasEnoughFood;

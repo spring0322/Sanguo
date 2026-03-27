@@ -21,6 +21,9 @@ public class CommandBufferScheduler
     private readonly List<ExecutionCommand> _executionBatch = new(256);
     private readonly List<ExecutionCommand> _arbitrationAccepted = new(256);
     private readonly List<ExecutionCommand> _arbitrationRejected = new(256);
+    private readonly Dictionary<Guid, ActiveExecutionAudit> _activeExecutionAuditByTroop = new(512);
+    private readonly Dictionary<int, int> _normalizedSiegeTargetByLegionId = new(128);
+    private readonly List<FrameAuditRecord> _frameAuditRecords = new(1024);
 
     private const int PriorityTierEnter = 5000;
     private const int PriorityTierAttackTroop = 4300;
@@ -43,6 +46,7 @@ public class CommandBufferScheduler
     
     // 本回合 CommandBuffer 是否可用（失败时必须整回合回退旧调度器）
     public bool HasValidBuffer { get; private set; }
+    public IReadOnlyList<FrameAuditRecord> FrameAuditRecords => _frameAuditRecords;
     
     public int ProcessedMoveCommands { get; private set; }
     public int ProcessedEnterCommands { get; private set; }
@@ -55,6 +59,20 @@ public class CommandBufferScheduler
     public int ProcessedCombatMethodAttacks { get; private set; }
     public int ProcessedStratagemAttacks { get; private set; }
     public int ArbitrationRejectedCommands { get; private set; }
+
+    private readonly record struct ActiveExecutionAudit(
+        ExecutionCommand Command,
+        Point SourcePosition,
+        Point ProjectedDestination,
+        int InitialMovabilityLeft
+    );
+
+    private enum ArbitrationConflictKind : byte
+    {
+        None = 0,
+        Cell = 1,
+        Edge = 2
+    }
     
     public bool BuildCommandBuffer(GameScenario scenario)
     {
@@ -74,6 +92,9 @@ public class CommandBufferScheduler
         _executionBatch.Clear();
         _arbitrationAccepted.Clear();
         _arbitrationRejected.Clear();
+        _activeExecutionAuditByTroop.Clear();
+        _normalizedSiegeTargetByLegionId.Clear();
+        _frameAuditRecords.Clear();
         
         ProcessedMoveCommands = 0;
         ProcessedEnterCommands = 0;
@@ -171,6 +192,9 @@ public class CommandBufferScheduler
             _executionBatch.Clear();
             _arbitrationAccepted.Clear();
             _arbitrationRejected.Clear();
+            _activeExecutionAuditByTroop.Clear();
+            _normalizedSiegeTargetByLegionId.Clear();
+            _frameAuditRecords.Clear();
             
             System.Diagnostics.Debug.WriteLine($"[CommandBufferScheduler] ❌ 构建失败，已清空缓冲并回退旧调度器: {ex.Message}");
             return false;
@@ -187,7 +211,7 @@ public class CommandBufferScheduler
         
         if (_currentTroop != null)
         {
-            if (!ProcessCurrentTroop(gameTime))
+            if (!ProcessCurrentTroop(gameTime, scenario))
             {
                 return true;
             }
@@ -227,6 +251,8 @@ public class CommandBufferScheduler
                     System.Diagnostics.Debug.WriteLine($"  - 移动={ProcessedMoveCommands}, 入城={ProcessedEnterCommands}");
                     System.Diagnostics.Debug.WriteLine($"  - 攻击部队={ProcessedAttackTroopCommands}(直接={ProcessedDirectAttacks}, 战法={ProcessedCombatMethodAttacks}, 计略={ProcessedStratagemAttacks})");
                     System.Diagnostics.Debug.WriteLine($"  - 攻击城池={ProcessedAttackArchCommands}, 计略={ProcessedStratagemCommands}");
+                    _activeExecutionAuditByTroop.Clear();
+                    _normalizedSiegeTargetByLegionId.Clear();
                     return false;
                 }
             }
@@ -240,6 +266,10 @@ public class CommandBufferScheduler
             
             if (_currentTroop.Destroyed)
             {
+                FinalizeExecutionAuditForCurrentTroop(
+                    scenario,
+                    FrameAuditResultCode.DestroyedBeforeCompletion,
+                    verifySpatialConsistency: false);
                 _currentTroop = null;
                 continue;
             }
@@ -250,6 +280,10 @@ public class CommandBufferScheduler
                 if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, _currentTroop, IntentCheckpointKind.QueuePickup))
                 {
                     _currentTroop.OperationDone = true;
+                    FinalizeExecutionAuditForCurrentTroop(
+                        scenario,
+                        FrameAuditResultCode.AbortedByQueue,
+                        verifySpatialConsistency: false);
                     _currentTroop = null;
                     continue;
                 }
@@ -258,6 +292,13 @@ public class CommandBufferScheduler
             QueueAction action = TroopStateMachineRouter.DetermineQueueAction(_currentTroop);
             if (!HandleQueueAction(action, gameTime))
             {
+                FrameAuditResultCode queueResult = action is QueueAction.ForceCombatCheck or QueueAction.ExecuteStratagemDirectly
+                    ? FrameAuditResultCode.NonSpatialCompleted
+                    : FrameAuditResultCode.AbortedByQueue;
+                FinalizeExecutionAuditForCurrentTroop(
+                    scenario,
+                    queueResult,
+                    verifySpatialConsistency: false);
                 _currentTroop = null;
                 continue;
             }
@@ -331,10 +372,14 @@ public class CommandBufferScheduler
         return troop;
     }
     
-    private bool ProcessCurrentTroop(GameTime gameTime)
+    private bool ProcessCurrentTroop(GameTime gameTime, GameScenario scenario)
     {
         if (_currentTroop.Destroyed)
         {
+            FinalizeExecutionAuditForCurrentTroop(
+                scenario,
+                FrameAuditResultCode.DestroyedBeforeCompletion,
+                verifySpatialConsistency: false);
             _currentTroop = null;
             return true;
         }
@@ -369,6 +414,10 @@ public class CommandBufferScheduler
             }
             
             _currentTroop.OperationDone = true;
+            FinalizeExecutionAuditForCurrentTroop(
+                scenario,
+                FrameAuditResultCode.NonSpatialCompleted,
+                verifySpatialConsistency: false);
             _currentTroop = null;
             return true;
         }
@@ -383,6 +432,10 @@ public class CommandBufferScheduler
             if (!isActuallyMoving)
             {
                 _currentTroop.OperationDone = true;
+                FinalizeExecutionAuditForCurrentTroop(
+                    scenario,
+                    FrameAuditResultCode.Success,
+                    verifySpatialConsistency: true);
                 _currentTroop = null;
                 return true;
             }
@@ -440,6 +493,10 @@ public class CommandBufferScheduler
             if (!authorityContext.ValidateAndHandleIntentCheckpoint(scenario, _currentTroop, IntentCheckpointKind.BeforeProjection))
             {
                 _currentTroop.OperationDone = true;
+                FinalizeExecutionAuditForCurrentTroop(
+                    scenario,
+                    FrameAuditResultCode.AbortedByQueue,
+                    verifySpatialConsistency: false);
                 return;
             }
         }
@@ -599,6 +656,7 @@ public class CommandBufferScheduler
                 continue;
             }
 
+            BeginExecutionAudit(troop, command);
             EnqueueTroop(troop);
             TrackProcessedCommand(troop, command.ActionKind);
         }
@@ -634,44 +692,234 @@ public class CommandBufferScheduler
             if (authorityContext != null)
             {
                 Point failedAt = rejected.ResolveSpatialPosition();
+                ArbitrationConflictKind conflictKind = ResolveArbitrationConflictKind(in rejected, out int relatedObjectId);
                 authorityContext.HandleExecutorFailure(
                     scenario,
                     troop,
                     TroopIntentFailureReason.ArbitrationLost,
                     failedAt.X >= 0 && failedAt.Y >= 0 ? failedAt : troop.Position,
-                    ResolveRelatedWinnerObjectId(rejected),
+                    relatedObjectId,
                     IntentCheckpointKind.AfterBlocked,
                     shouldReplanNow: false);
+
+                AppendFrameAuditRecord(
+                    troop,
+                    rejected,
+                    troop.Position,
+                    MapArbitrationResultCode(conflictKind),
+                    (int)TroopIntentFailureReason.ArbitrationLost,
+                    relatedObjectId);
             }
             else
             {
                 troop.CurrentAIState = TroopAIState.Waiting;
                 troop.SetCommand(TroopCommand.None);
+
+                AppendFrameAuditRecord(
+                    troop,
+                    rejected,
+                    troop.Position,
+                    MapArbitrationResultCode(ResolveArbitrationConflictKind(in rejected, out _)),
+                    -1,
+                    -1);
             }
 
             troop.OperationDone = true;
         }
     }
 
-    private int ResolveRelatedWinnerObjectId(ExecutionCommand rejected)
+    private ArbitrationConflictKind ResolveArbitrationConflictKind(
+        in ExecutionCommand rejected,
+        out int relatedObjectId)
     {
-        if (!rejected.IsSpatialConflictAction || !rejected.HasTargetPosition)
+        relatedObjectId = -1;
+
+        if (!rejected.IsSpatialConflictAction)
         {
-            return -1;
+            return ArbitrationConflictKind.None;
+        }
+
+        Point rejectedPosition = rejected.ResolveSpatialPosition();
+        if (rejectedPosition.X < 0 || rejectedPosition.Y < 0)
+        {
+            return ArbitrationConflictKind.None;
         }
 
         int key = rejected.ResolveCellKey();
         for (int i = 0; i < _arbitrationAccepted.Count; i++)
         {
             ExecutionCommand winner = _arbitrationAccepted[i];
-            if (!winner.IsSpatialConflictAction || !winner.HasTargetPosition) continue;
-            if (winner.ResolveCellKey() != key) continue;
+            if (!winner.IsSpatialConflictAction) continue;
 
-            Troop winnerTroop = Session.Current.GetTroopByGuid(winner.TroopId);
-            return winnerTroop?.ID ?? -1;
+            Point winnerPosition = winner.ResolveSpatialPosition();
+            if (winnerPosition.X < 0 || winnerPosition.Y < 0) continue;
+            if (winner.ResolveCellKey() == key)
+            {
+                Troop winnerTroop = Session.Current.GetTroopByGuid(winner.TroopId);
+                relatedObjectId = winnerTroop?.ID ?? -1;
+                return ArbitrationConflictKind.Cell;
+            }
+
+            if (!HasReverseEdgeConflict(in rejected, in winner)) continue;
+
+            Troop edgeWinnerTroop = Session.Current.GetTroopByGuid(winner.TroopId);
+            relatedObjectId = edgeWinnerTroop?.ID ?? -1;
+            return ArbitrationConflictKind.Edge;
         }
 
-        return -1;
+        return ArbitrationConflictKind.None;
+    }
+
+    private static bool HasReverseEdgeConflict(in ExecutionCommand rejected, in ExecutionCommand winner)
+    {
+        return rejected.IsReverseEdgeOf(in winner);
+    }
+
+    private static FrameAuditResultCode MapArbitrationResultCode(ArbitrationConflictKind conflictKind)
+    {
+        return conflictKind switch
+        {
+            ArbitrationConflictKind.Edge => FrameAuditResultCode.RejectedByEdgeConflict,
+            _ => FrameAuditResultCode.RejectedByCellConflict
+        };
+    }
+
+    private void BeginExecutionAudit(Troop troop, in ExecutionCommand command)
+    {
+        Point projectedDestination = troop.RealDestination;
+        _activeExecutionAuditByTroop[troop.Id] = new ActiveExecutionAudit(
+            command,
+            troop.Position,
+            projectedDestination,
+            troop.MovabilityLeft);
+    }
+
+    private void FinalizeExecutionAuditForCurrentTroop(
+        GameScenario scenario,
+        FrameAuditResultCode fallbackResult,
+        bool verifySpatialConsistency)
+    {
+        FinalizeExecutionAudit(scenario, _currentTroop, fallbackResult, verifySpatialConsistency);
+    }
+
+    private void FinalizeExecutionAudit(
+        GameScenario scenario,
+        Troop troop,
+        FrameAuditResultCode fallbackResult,
+        bool verifySpatialConsistency)
+    {
+        if (troop == null) return;
+        if (!_activeExecutionAuditByTroop.TryGetValue(troop.Id, out ActiveExecutionAudit activeAudit)) return;
+
+        _activeExecutionAuditByTroop.Remove(troop.Id);
+
+        FrameAuditResultCode resultCode = fallbackResult;
+        int failureReasonCode = -1;
+        int relatedObjectId = -1;
+
+        if (verifySpatialConsistency && ShouldVerifySpatialConsistency(activeAudit.Command))
+        {
+            if (HasSpatialProgressMismatch(troop, activeAudit))
+            {
+                bool failureForwarded = false;
+                if (scenario != null &&
+                    Session.GlobalVariables != null &&
+                    Session.GlobalVariables.EnableAIAuthorityPhase1)
+                {
+                    AIAuthorityContext authorityContext = scenario.EnsureAIAuthorityContext();
+                    failureForwarded = authorityContext.HandleExecutorFailure(
+                        scenario,
+                        troop,
+                        TroopIntentFailureReason.ExecutorConflict,
+                        troop.Position,
+                        relatedObjectId,
+                        IntentCheckpointKind.AfterBlocked,
+                        shouldReplanNow: false);
+                }
+
+                resultCode = failureForwarded
+                    ? FrameAuditResultCode.ExecutorFailureForwarded
+                    : FrameAuditResultCode.MismatchWithoutAuthority;
+                failureReasonCode = (int)TroopIntentFailureReason.ExecutorConflict;
+            }
+            else
+            {
+                resultCode = FrameAuditResultCode.Success;
+            }
+        }
+
+        AppendFrameAuditRecord(
+            troop,
+            activeAudit.Command,
+            troop.Position,
+            resultCode,
+            failureReasonCode,
+            relatedObjectId,
+            activeAudit.SourcePosition,
+            activeAudit.ProjectedDestination);
+    }
+
+    private static bool ShouldVerifySpatialConsistency(in ExecutionCommand command)
+    {
+        return command.ActionKind is ExecutionActionKind.Move or ExecutionActionKind.Enter;
+    }
+
+    private static bool HasSpatialProgressMismatch(Troop troop, in ActiveExecutionAudit activeAudit)
+    {
+        if (activeAudit.InitialMovabilityLeft <= 0)
+        {
+            return false;
+        }
+
+        Point expected = activeAudit.Command.ResolveSpatialPosition();
+        if (expected.X < 0 || expected.Y < 0)
+        {
+            return false;
+        }
+
+        if (expected == activeAudit.SourcePosition)
+        {
+            return false;
+        }
+
+        if (troop.Position != activeAudit.SourcePosition)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void AppendFrameAuditRecord(
+        Troop troop,
+        in ExecutionCommand command,
+        Point finalPosition,
+        FrameAuditResultCode resultCode,
+        int failureReasonCode,
+        int relatedObjectId,
+        Point? sourcePositionOverride = null,
+        Point? projectedDestinationOverride = null)
+    {
+        if (troop == null)
+        {
+            return;
+        }
+
+        Point sourcePosition = sourcePositionOverride ?? command.SourcePosition;
+        Point projectedDestination = projectedDestinationOverride ?? command.TargetPosition;
+        FrameAuditRecord record = new(
+            troop.ID,
+            command.ActionKind,
+            command.IssuedTick,
+            command.CommitTick,
+            sourcePosition,
+            command.ResolveSpatialPosition(),
+            projectedDestination,
+            finalPosition,
+            resultCode,
+            failureReasonCode,
+            relatedObjectId);
+        _frameAuditRecords.Add(record);
     }
     
     private bool RefillQueueLegacy()
@@ -806,6 +1054,7 @@ public class CommandBufferScheduler
         ExecutionCommand command = new(
             troop.Id,
             actionKind,
+            troop.Position,
             targetPosition,
             conflictPosition,
             targetTroopId,
@@ -840,6 +1089,74 @@ public class CommandBufferScheduler
         int commandScore = troop.Leader?.Command ?? 0;
         int moraleScore = Math.Clamp(troop.Morale / 2, 0, 100);
         return priorityTier + mobilityScore * 4 + commandScore * 2 + moraleScore;
+    }
+
+    private void NormalizeAttackTroopExecutionPosition(Troop troop, Troop targetTroop)
+    {
+        Point optimalPosition = troop.GetOptimalAttackPosition(targetTroop);
+        if (IsValidCommandPosition(optimalPosition))
+        {
+            troop.RealDestination = optimalPosition;
+            return;
+        }
+
+        if (troop.CanAttack(targetTroop))
+        {
+            troop.RealDestination = troop.Position;
+            return;
+        }
+
+        troop.RealDestination = troop.Position;
+    }
+
+    private void NormalizeAttackArchitectureExecutionPosition(Troop troop, Architecture targetArchitecture)
+    {
+        troop.WillArchitecture = targetArchitecture;
+
+        if (troop.CanAttack(targetArchitecture))
+        {
+            troop.ApplySmartSiegePosition(troop.Position);
+            return;
+        }
+
+        Legion legion = troop.BelongedLegion;
+        if (legion != null &&
+            (!_normalizedSiegeTargetByLegionId.TryGetValue(legion.ID, out int normalizedTargetId) ||
+             normalizedTargetId != targetArchitecture.ID))
+        {
+            legion.SetOperationalTarget(targetArchitecture);
+            _normalizedSiegeTargetByLegionId[legion.ID] = targetArchitecture.ID;
+            legion.AssignSmartSiegePositions();
+        }
+
+        if (troop.RealDestination.X >= 0 &&
+            troop.RealDestination.Y >= 0 &&
+            (troop.RealDestination != Point.Zero ||
+             troop.Position == Point.Zero ||
+             troop.CanAttack(targetArchitecture)))
+        {
+            return;
+        }
+
+        Point siegePosition = troop.GetSmartSiegePosition(targetArchitecture);
+        if (IsValidCommandPosition(siegePosition))
+        {
+            troop.ApplySmartSiegePosition(siegePosition);
+            return;
+        }
+
+        if (troop.CanAttack(targetArchitecture))
+        {
+            troop.ApplySmartSiegePosition(troop.Position);
+            return;
+        }
+
+        troop.RealDestination = troop.Position;
+    }
+
+    private static bool IsValidCommandPosition(Point position)
+    {
+        return position.X >= 0 && position.Y >= 0;
     }
     
     private void GenerateMoveCommand(Troop troop)
@@ -914,6 +1231,8 @@ public class CommandBufferScheduler
         // 关键：旧 UI 仍可能留下 Attack 遗留命令，进入 CommandBuffer 前统一归一化。
         troop.SetCommand(TroopCommand.AttackTroop);
         
+        NormalizeAttackTroopExecutionPosition(troop, targetTroop);
+
         _commandBuffer.AttackTroopQueue.Enqueue(new AttackTroopCommand(
             troop.Id,
             troop.TargetTroop.Id,
@@ -958,6 +1277,8 @@ public class CommandBufferScheduler
 
         troop.SetCommand(TroopCommand.AttackArch);
         
+        NormalizeAttackArchitectureExecutionPosition(troop, targetArchitecture);
+
         _commandBuffer.AttackArchQueue.Enqueue(new AttackArchCommand(
             troop.Id,
             troop.TargetArchitecture.ID,

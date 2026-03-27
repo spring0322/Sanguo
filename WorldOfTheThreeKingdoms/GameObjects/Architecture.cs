@@ -6298,9 +6298,9 @@ namespace GameObjects
             }
             
             // 至少 10 天存粮
-            if (this.Food < troop.FoodCostPerDay * 10)
+            if (this.Food < Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * 10)
             {
-                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {troop.FoodCostPerDay * 10}");
+                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * 10}");
                 return false;
             }
 

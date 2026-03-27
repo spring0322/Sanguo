@@ -2937,7 +2937,6 @@ System.Diagnostics.Debug.WriteLine($"  - BelongedFactionID: {person.BelongedFact
                 {
                     System.Diagnostics.Debug.WriteLine($"[LinkArmy] 鈿狅笍 璀﹀憡锛歍roop {troop.ID} ({troop.Name}) 寮曠敤浜嗕笉瀛樺湪鐨?Military {troop.MilitaryID}");
                     System.Diagnostics.Debug.WriteLine($"  - Militaries.Count: {scenario.Militaries.Count}");
-                    troop.MilitaryID = -1;
                     troop.Army = null;
                 }
             }
@@ -3391,14 +3390,12 @@ public static class TroopReferenceLinkerExtensions
                 else
                 {
                     System.Diagnostics.Debug.WriteLine($"[LinkArmy] WARNING: Troop {troop.ID} references Military {military.ID} with invalid KindID={military.RealKindID}; cleared.");
-                    troop.MilitaryID = -1;
                     troop.Army = null;
                 }
             }
             else
             {
                 System.Diagnostics.Debug.WriteLine($"鈿狅笍 Troop {troop.ID} 寮曠敤浜嗕笉瀛樺湪鐨?Military {troop.MilitaryID}");
-                troop.MilitaryID = -1;
                 troop.Army = null;
             }
         }

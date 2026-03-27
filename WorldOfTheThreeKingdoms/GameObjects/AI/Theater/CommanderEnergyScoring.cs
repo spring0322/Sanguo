@@ -79,7 +79,8 @@ public static class CommanderEnergyScoring
             distancePenalty = Math.Max(0, distancePenalty - 8);
         }
 
-        if (simulatedTroop.Food < simulatedTroop.FoodCostPerDay * 10)
+        int conservativeFoodCostPerDay = Troop.GetConservativePlanningFoodCostPerDay(simulatedTroop.Army);
+        if (conservativeFoodCostPerDay > 0 && simulatedTroop.Food < conservativeFoodCostPerDay * 10)
         {
             distancePenalty += 12;
         }

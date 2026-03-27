@@ -605,6 +605,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             dto.BelongedSectionID = architecture.BelongedSection?.ID ?? -1;
             dto.MayorID = architecture.Mayor?.ID ?? -1;
             dto.StateID = architecture.LocationState?.ID ?? architecture.StateID;  // 🔥 修复：保存 StateID
+            dto.huangdisuozai = architecture.huangdisuozai;
             
             // Resources
             dto.Agriculture = architecture.Agriculture;
