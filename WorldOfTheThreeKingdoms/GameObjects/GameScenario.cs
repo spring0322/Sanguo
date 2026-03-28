@@ -332,6 +332,9 @@ namespace GameObjects
         public string CurrentPlayerID { get; set; }
 
         [DataMember]
+        public ScenarioControlMode ControlMode { get; set; } = ScenarioControlMode.Player;
+
+        [DataMember]
         public string PlayerInfo { get; set; }        
 
         [DataMember]
@@ -3639,6 +3642,7 @@ namespace GameObjects
                 {
                     architecture.DefensiveLegion = this.Legions.GetGameObject(architecture.DefensiveLegionID) as Legion;
                 }
+                architecture.ResolveDefensiveLegion();
                 if (architecture.RobberTroopID >= 0)
                 {
                     architecture.RobberTroop = this.Troops.GetGameObject(architecture.RobberTroopID) as Troop;
@@ -3944,6 +3948,36 @@ namespace GameObjects
 
         public void InitializeScenarioPlayerFactions(List<int> factionIDs)
         {
+            bool useNormalizedControlFlow = true;
+            if (useNormalizedControlFlow)
+            {
+                if (this.PlayerFactions != null && this.PlayerFactions.Count > 0)
+                {
+                    this.ControlMode = ScenarioControlMode.Player;
+                    this.NormalizeControlState();
+                    return;
+                }
+
+                this.PlayerList.Clear();
+                if (factionIDs != null)
+                {
+                    for (int i = 0; i < factionIDs.Count; i++)
+                    {
+                        int factionID = factionIDs[i];
+                        if (factionID < 0 || this.PlayerList.Contains(factionID))
+                        {
+                            continue;
+                        }
+
+                        this.PlayerList.Add(factionID);
+                    }
+                }
+
+                this.ControlMode = this.PlayerList.Count > 0 ? ScenarioControlMode.Player : ScenarioControlMode.Observer;
+                this.NormalizeControlState();
+                return;
+            }
+
             // 🔥 诊断：记录调用参数
             System.Diagnostics.Debug.WriteLine($"[InitializeScenarioPlayerFactions] 被调用");
             System.Diagnostics.Debug.WriteLine($"  - factionIDs == null: {factionIDs == null}");
@@ -4184,6 +4218,17 @@ namespace GameObjects
 
         public bool IsPlayer(Faction faction)
         {
+            bool useNormalizedControlFlow = true;
+            if (useNormalizedControlFlow)
+            {
+                if (faction == null || this.PlayerFactions == null || this.PlayerFactions.Count == 0)
+                {
+                    return false;
+                }
+
+                return this.PlayerFactions.GetGameObject(faction.ID) != null;
+            }
+
             if (faction == null) return false;
             
             // 优先使用 PlayerFactions（最可靠）
@@ -4193,7 +4238,7 @@ namespace GameObjects
             }
 
             // 观察模式硬闸：PlayerFactions 为空且 CurrentPlayerID=-1 时，任何势力都不是玩家势力
-            if (this.CurrentPlayerID == "-1")
+            if (this.IsObserverModeActive())
             {
                 return false;
             }
@@ -4216,6 +4261,128 @@ namespace GameObjects
 
             #endif
             return false;
+        }
+
+        public bool IsObserverModeActive()
+        {
+            if (this.ControlMode == ScenarioControlMode.Observer)
+            {
+                return true;
+            }
+
+            return (this.PlayerFactions == null || this.PlayerFactions.Count == 0) &&
+                (this.PlayerList == null || this.PlayerList.Count == 0) &&
+                this.CurrentPlayer == null &&
+                this.CurrentPlayerID == "-1";
+        }
+
+        public void ApplyControlSelection(GameObjectList factions)
+        {
+            this.PlayerList.Clear();
+            if (factions != null)
+            {
+                foreach (Faction faction in factions)
+                {
+                    if (faction == null || this.PlayerList.Contains(faction.ID))
+                    {
+                        continue;
+                    }
+
+                    this.PlayerList.Add(faction.ID);
+                }
+            }
+
+            this.ControlMode = this.PlayerList.Count > 0 ? ScenarioControlMode.Player : ScenarioControlMode.Observer;
+            this.NormalizeControlState();
+        }
+
+        public void NormalizeControlState()
+        {
+            if (this.PlayerList == null)
+            {
+                this.PlayerList = new List<int>();
+            }
+
+            this.PlayerFactions.Clear();
+            if (this.PlayerList.Count > 0)
+            {
+                for (int i = 0; i < this.PlayerList.Count; i++)
+                {
+                    int playerFactionID = this.PlayerList[i];
+                    if (playerFactionID < 0)
+                    {
+                        continue;
+                    }
+
+                    Faction playerFaction = this.Factions?.GetGameObject(playerFactionID) as Faction;
+                    if (playerFaction == null || this.PlayerFactions.GetGameObject(playerFaction.ID) != null)
+                    {
+                        continue;
+                    }
+
+                    this.PlayerFactions.Add(playerFaction);
+                }
+            }
+            else if (this.ControlMode != ScenarioControlMode.Observer)
+            {
+                int fallbackPlayerID = -1;
+                if (this.CurrentPlayer != null)
+                {
+                    fallbackPlayerID = this.CurrentPlayer.ID;
+                }
+                else if (!string.IsNullOrEmpty(this.CurrentPlayerID) &&
+                    int.TryParse(this.CurrentPlayerID, out int parsedPlayerID) &&
+                    parsedPlayerID >= 0)
+                {
+                    fallbackPlayerID = parsedPlayerID;
+                }
+
+                if (fallbackPlayerID >= 0)
+                {
+                    Faction fallbackPlayerFaction = this.Factions?.GetGameObject(fallbackPlayerID) as Faction;
+                    if (fallbackPlayerFaction != null)
+                    {
+                        this.PlayerFactions.Add(fallbackPlayerFaction);
+                    }
+                }
+            }
+
+            if (this.PlayerFactions.Count == 0)
+            {
+                this.ControlMode = ScenarioControlMode.Observer;
+                this.PlayerList.Clear();
+                this.CurrentPlayer = null;
+                this.CurrentPlayerID = "-1";
+                if (this.CurrentFaction == null && this.Factions != null && this.Factions.Count > 0)
+                {
+                    this.CurrentFaction = (this.Factions.RunningFaction ?? this.Factions[0]) as Faction;
+                }
+                return;
+            }
+
+            this.PlayerList.Clear();
+            for (int i = 0; i < this.PlayerFactions.Count; i++)
+            {
+                Faction playerFaction = this.PlayerFactions[i] as Faction;
+                if (playerFaction == null)
+                {
+                    continue;
+                }
+
+                this.PlayerList.Add(playerFaction.ID);
+            }
+
+            this.ControlMode = ScenarioControlMode.Player;
+            if (this.CurrentPlayer == null || this.PlayerFactions.GetGameObject(this.CurrentPlayer.ID) == null)
+            {
+                this.CurrentPlayer = this.PlayerFactions[0] as Faction;
+            }
+
+            this.CurrentPlayerID = this.CurrentPlayer.ID.ToString();
+            if (this.CurrentFaction == null || !this.IsPlayer(this.CurrentFaction))
+            {
+                this.CurrentFaction = this.CurrentPlayer;
+            }
         }
 
         public bool HasAIResourceBonus(Section section)
@@ -6470,7 +6637,7 @@ namespace GameObjects
             // 日期：2026-03-16
             // 原因：新游戏流程中 CurrentPlayer 引用可能未链接，导致后续逻辑失败
             // 🔥 ID=0 是有效的（汉势力），必须使用 >= 0 判断
-            if (this.CurrentPlayer == null && !string.IsNullOrEmpty(this.CurrentPlayerID))
+            if (!this.IsObserverModeActive() && this.CurrentPlayer == null && !string.IsNullOrEmpty(this.CurrentPlayerID))
             {
                 if (int.TryParse(this.CurrentPlayerID, out int playerID) && playerID >= 0)
                 {
@@ -6784,7 +6951,7 @@ namespace GameObjects
             // 日期：2026-03-16
             // 原因：新游戏流程中 CurrentPlayer 引用可能未链接，导致后续逻辑失败
             // 🔥 ID=0 是有效的（汉势力），必须使用 >= 0 判断
-            if (this.CurrentPlayer == null && !string.IsNullOrEmpty(this.CurrentPlayerID))
+            if (!this.IsObserverModeActive() && this.CurrentPlayer == null && !string.IsNullOrEmpty(this.CurrentPlayerID))
             {
                 if (int.TryParse(this.CurrentPlayerID, out int playerID) && playerID >= 0)
                 {
@@ -9529,7 +9696,8 @@ namespace GameObjects
 
                     architecture.TransferFoodArchitectureID = (architecture.TransferFoodArchitecture != null) ? architecture.TransferFoodArchitecture.ID : -1;
 
-                    architecture.DefensiveLegionID = (architecture.DefensiveLegion != null) ? architecture.DefensiveLegion.ID : -1;
+                    Legion defensiveLegion = architecture.ResolveDefensiveLegion();
+                    architecture.DefensiveLegionID = (defensiveLegion != null) ? defensiveLegion.ID : -1;
 
                     architecture.CaptivesString = architecture.Captives.SaveToString();
 
@@ -9995,7 +10163,8 @@ namespace GameObjects
 
             // 🔥 修复：CurrentPlayer 不应该为 null，如果为 null 说明数据流有问题
             // 让它崩溃，暴露问题，而不是掩盖
-            this.CurrentPlayerID = this.CurrentPlayer.ID.ToString();
+            this.NormalizeControlState();
+            this.CurrentPlayerID = this.IsObserverModeActive() ? "-1" : this.CurrentPlayer.ID.ToString();
             
             if(!editing)
             {
@@ -11177,6 +11346,17 @@ namespace GameObjects
 
         public void SetPlayerFactionList(GameObjectList factions)
         {
+            bool useNormalizedControlFlow = true;
+            if (useNormalizedControlFlow)
+            {
+                this.ApplyControlSelection(factions);
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[SetPlayerFactionList] PlayerFactions 宸叉洿鏂? {this.PlayerFactions.Count} 涓娍鍔?");
+                System.Diagnostics.Debug.WriteLine($"[SetPlayerFactionList] CurrentPlayer: {this.CurrentPlayer?.Name ?? "null"}, CurrentPlayerID: {this.CurrentPlayerID ?? "null"}, ControlMode: {this.ControlMode}");
+                #endif
+                return;
+            }
+
             // 统一将 null 视为“空玩家势力列表”，避免切换观察模式时保留旧玩家身份
             if (factions == null)
             {

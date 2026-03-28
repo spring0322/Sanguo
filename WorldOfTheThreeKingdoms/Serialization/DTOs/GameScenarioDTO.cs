@@ -53,6 +53,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.DTOs
         // Player information
         public List<int> PlayerList { get; set; } = new List<int>();
         public string CurrentPlayerID { get; set; }
+        public int ControlMode { get; set; }
         public string PlayerInfo { get; set; }
         
         // Game time tracking

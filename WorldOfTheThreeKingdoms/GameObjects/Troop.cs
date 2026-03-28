@@ -73,6 +73,17 @@ namespace GameObjects
         Command = 1     // 指令攻击（DoCombatAction、AI决策）- 无冷却限制
     }
 
+    /// <summary>
+    /// 统一战斗执行模式：决定战斗结果如何提交与是否播放表现
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<CombatExecutionMode>))]
+    public enum CombatExecutionMode : byte
+    {
+        VisibleFull = 0,        // 屏幕内完整表现
+        OffScreenImmediate = 1, // 屏外立即结算
+        OffScreenAggregated = 2 // 屏外聚合模拟（可选）
+    }
+
     // ========================================
     // 🎯 动作状态锁系统（防止 AI "多动症"）
     // ========================================
@@ -608,6 +619,36 @@ namespace GameObjects
         public bool IsOnScreen { get; set; } = false;
 
         /// <summary>
+        /// 统一战斗系统：当前执行模式（由 MainGameScreen 统一写入）
+        /// </summary>
+        [JsonIgnore]
+        public CombatExecutionMode CombatExecutionMode { get; set; } = CombatExecutionMode.OffScreenImmediate;
+
+        /// <summary>
+        /// 最近一次可见帧（用于调试可见性抖动）
+        /// </summary>
+        [JsonIgnore]
+        public int LastVisibilityFrame { get; set; } = -1;
+
+        /// <summary>
+        /// 最近一次可见性切换帧（用于防抖）
+        /// </summary>
+        [JsonIgnore]
+        public int LastVisibilitySwitchFrame { get; set; } = -1;
+
+        /// <summary>
+        /// 可见性稳定帧计数（用于防抖与调试）
+        /// </summary>
+        [JsonIgnore]
+        public int VisibilityStableFrames { get; set; } = 0;
+
+        /// <summary>
+        /// 最近一次结算模式（用于调试重复结算）
+        /// </summary>
+        [JsonIgnore]
+        public CombatExecutionMode LastCombatResolutionMode { get; set; } = CombatExecutionMode.OffScreenImmediate;
+
+        /// <summary>
         /// 部队是否处于撤退状态
         /// 撤退状态的部队会加入撤退军团
         /// </summary>
@@ -1131,9 +1172,6 @@ namespace GameObjects
         [DataMember]
         public bool QuickBattling = false;
 
-        // 快速战斗优化 - 伤害累积系统
-        public float _damageAccumulator = 0f;
-        public float _lastCombatUpdateTime = 0f;
 
         // 移动优化 - 缓存计算值避免每帧开根号
         private float _attackRangeSquared = 0f;
@@ -1141,9 +1179,7 @@ namespace GameObjects
         private int _directionUpdateCounter = 0; // 用于减少方向更新频率
 
         // 时间切片优化 - 分离高频和低频逻辑
-        private float _attackTimer = 0f;
         private Vector2 _visualPosition; // 用于平滑移动的视觉位置
-        private Vector2 _logicPosition;  // 逻辑位置
         private Vector2 _targetVisualPosition; // 目标视觉位置（用于插值）
         
         // 🔥 修复：调整移动插值速度，消除"跳格"视觉问题
@@ -1166,21 +1202,10 @@ namespace GameObjects
         private float _moveStepCooldown = 0f; // 移动步骤冷却（秒）
         private const float MOVE_STEP_INTERVAL = 0.2f; // 每格移动间隔（秒）
 
-        // 先进战斗计算系统
-        private float _cachedDPS = 0f;           // 缓存的DPS值
-        private float _combatEfficiency = 1.0f;  // 战斗效率波动 (80%-120%)
-        private float _critAccumulator = 0f;     // 暴击蓄能累积器
-        private float _currentHP = 0f;           // 当前血量
-        private float _maxHP = 0f;               // 最大血量
 
         // 🔥 HOT PATH 优化：缓存天气视野配置（避免每帧多次访问 Session）
         private WeatherViewConfig? _cachedViewConfig;
 
-        // 战斗常数
-        private const float ARMOR_CONSTANT = 100f;
-        private const float BASE_ATTACK_SPEED = 1.0f;
-        private const float BASE_CRIT_RATE = 0.2f;
-        private const float BASE_CRIT_DAMAGE = 2.0f;
 
         // 战斗冷却优化 - 减少每帧战斗计算的CPU开销
         private const int BATTLE_COOLDOWN = 5;  // 假设冷却间隔是 5 帧
@@ -1634,7 +1659,6 @@ namespace GameObjects
             _visualPosition.X = this.position.X;
             _visualPosition.Y = this.position.Y;
             _targetVisualPosition = _visualPosition;
-            _logicPosition = _visualPosition;
 
             // 🔥 优化：同步 mingling → Command
             Command = mingling switch
@@ -3033,7 +3057,7 @@ namespace GameObjects
             // 原因：数值结算已提前到 StartCastSelf/StartCastTroop，此处只负责清理状态
             // 解决：移除重复结算逻辑，只保留状态清理和特殊效果（如深度混乱）
             // 
-            // 访问级别：internal（需要在 TroopLayer.Draw 中调用）
+            // 访问级别：internal（由逻辑层结算提交流程调用，不依赖 Draw）
             if (this.CurrentStratagem != null)
             {
                 // 清理计略状态（无论是否已结算）
@@ -3087,6 +3111,7 @@ namespace GameObjects
                         }
                     }
                 }
+                this.CommitCombatResultsImmediately();
             }
             ExtensionInterface.call("AttackArchitecture", new Object[] { Session.Current.Scenario, this, architecture });
         }
@@ -3102,18 +3127,11 @@ namespace GameObjects
             //}
             if (troop != null)
             {
-                // 播放攻击音效 (受 IsWorking 保护)
-                if (!Session.Current.IsWorking)
+                // 播放攻击音效（仅完整表现模式）
+                if (this.ShouldUseVisibleCombat(troop))
                 {
                     this.PlayAttackSound(troop);
                 }
-                // 快速战斗优化：对于QuickBattling部队使用简化的伤害计算
-                if (this.QuickBattling && troop.QuickBattling && Setting.Current.GlobalVariables.UseQuadtreeOptimization)
-                {
-                    ProcessQuickBattleCombat(troop);
-                    return;
-                }
-
                 // 更新战斗状态
                 UpdateBattleState(troop);
 
@@ -3179,33 +3197,27 @@ namespace GameObjects
                         }
                     }
                 }
-                // ======================================================
-                // 屏幕外战斗系统：根据是否在屏幕 且 未在后台处理 决定战斗渲染方式
-                // ======================================================
-                
+                bool useVisibleCombat = this.ShouldUseVisibleCombat(troop);
+
                 System.Diagnostics.Debug.WriteLine($"[AttackTroop] {this.DisplayName} 攻击 {troop.DisplayName}");
                 System.Diagnostics.Debug.WriteLine($"  - IsWorking={Session.Current.IsWorking}");
+                System.Diagnostics.Debug.WriteLine($"  - SourceMode={this.CombatExecutionMode}");
+                System.Diagnostics.Debug.WriteLine($"  - TargetMode={troop.CombatExecutionMode}");
                 System.Diagnostics.Debug.WriteLine($"  - CombatMethodApplied={this.CombatMethodApplied}");
                 System.Diagnostics.Debug.WriteLine($"  - CurrentCombatMethod={this.CurrentCombatMethod?.Name ?? "null"}");
-                
-                // 🔥 关键修复：IsOnScreen 未实现，暂时禁用屏幕外优化
-                // 日期：2026-03-13
-                // 问题：IsOnScreen 属性从未被设置为 true，导致所有战斗都被判定为屏幕外
-                // 原因：渲染层未实现 IsOnScreen 的更新逻辑
-                // 临时方案：在 IsOnScreen 实现之前，只检查 IsWorking（后台线程）
-                // TODO: 实现 TroopLayer 中的 IsOnScreen 更新逻辑
-                if (!Session.Current.IsWorking)
+
+                if (useVisibleCombat)
                 {
                     System.Diagnostics.Debug.WriteLine($"[AttackTroop] ✅ 使用带动画的战斗流程");
-                    // 主线程 → 使用带动画的战斗
-                    this.StartAttackTroop(troop, damage, false);
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AttackTroop] ❌ 后台线程，跳过动画");
-                    // 后台线程 → 直接数值结算，无动画
-                    this.ApplyDamageDirectly(troop, damage);
+                    System.Diagnostics.Debug.WriteLine($"[AttackTroop] ✅ 使用屏幕外立即结算流程");
                 }
+
+                // 统一逻辑：动画只负责表现，结算始终在逻辑层立即提交
+                this.StartAttackTroop(troop, damage, false);
+                this.CommitCombatResultsImmediately();
             }
             ExtensionInterface.call("AttackTroop", new Object[] { Session.Current.Scenario, this, troop });
         }
@@ -3260,210 +3272,26 @@ namespace GameObjects
             return (float)((baseScore * meritMultiplier) + influenceBonus);
         }
 
-        /// <summary>
-        /// 快速战斗优化：使用DPS直接计算伤害，避免复杂的动画和投射物逻辑
-        /// </summary>
-
-        private void ProcessQuickBattleCombat(Troop target)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool ShouldUseVisibleCombat(Troop target)
         {
-            try
-            {
-                // 计算基础DPS (每秒伤害)
-                float attackPower = this.Offence;
-                float attackSpeed = 1.0f; // 基础攻击速度，可以根据部队类型调整
-
-                // 考虑部队类型的攻击速度修正
-                if (this.Army != null)
-                {
-                    switch (this.Army.KindID)
-                    {
-                        case 0: // 步兵
-                            attackSpeed = 0.8f;
-                            break;
-                        case 1: // 弓兵  
-                            attackSpeed = 1.2f;
-                            break;
-                        case 2: // 骑兵
-                            attackSpeed = 1.0f;
-                            break;
-                        case 3: // 器械
-                            attackSpeed = 0.6f;
-                            break;
-                        case 4: // 水军
-                            attackSpeed = 0.9f;
-                            break;
-                        default:
-                            attackSpeed = 1.0f;
-                            break;
-                    }
-                }
-
-                // 计算实际伤害 - 考虑防御
-                float baseDamage = attackPower * attackSpeed;
-                float defense = target.Defence;
-                float actualDamage = Math.Max(1, baseDamage - defense * 0.5f); // 防御减少50%伤害
-
-                // 累积伤害 - 使用时间增量
-                float deltaTime = 1.0f / 60.0f; // 假设60FPS，每帧约0.0167秒
-                _damageAccumulator += actualDamage * deltaTime;
-
-                // 当累积伤害达到1点时，应用伤害
-                if (_damageAccumulator >= 1.0f)
-                {
-                    int damageToApply = (int)_damageAccumulator;
-                    _damageAccumulator -= damageToApply;
-
-                    // 直接应用伤害，跳过复杂的动画和特效
-                    ApplyQuickBattleDamage(target, damageToApply);
-                }
-
-                // 简化的反击逻辑
-                if (target.CounterAttackAvail(this) && GameObject.Random(100) < 30) // 30%反击概率
-                {
-                    float counterDamage = Math.Max(1, target.Offence * 0.5f - this.Defence * 0.3f);
-                    target._damageAccumulator += counterDamage * deltaTime;
-
-                    if (target._damageAccumulator >= 1.0f)
-                    {
-                        int counterDamageToApply = (int)target._damageAccumulator;
-                        target._damageAccumulator -= counterDamageToApply;
-                        target.ApplyQuickBattleDamage(this, counterDamageToApply);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ProcessQuickBattleCombat] 错误: {ex.Message}");
-                // 出错时回退到原始战斗逻辑
-                ProcessOriginalCombat(target);
-            }
+            // IsWorking 仅作为后台线程表现保护，不再承担屏幕内外分流语义
+            if (Session.Current.IsWorking) return false;
+            if (this.CombatExecutionMode == CombatExecutionMode.VisibleFull) return true;
+            return target != null && target.CombatExecutionMode == CombatExecutionMode.VisibleFull;
         }
 
         /// <summary>
-        /// 应用快速战斗伤害，跳过动画和特效
+        /// 统一的无表现立即提交路径：固定顺序提交战斗结果
         /// </summary>
-        private void ApplyQuickBattleDamage(Troop target, int damage)
+        private void CommitCombatResultsImmediately()
         {
-            try
-            {
-                // 直接减少部队数量，跳过复杂的伤害计算
-                int troopLoss = Math.Min(damage / 10, target.Quantity); // 每10点伤害减少1个兵
-                int injuryIncrease = damage % 10; // 剩余伤害转为伤兵
-
-                if (troopLoss > 0)
-                {
-                    target.Quantity -= troopLoss;
-                    target.InjuryQuantity += troopLoss / 2; // 部分死亡转为伤兵
-                }
-
-                if (injuryIncrease > 0)
-                {
-                    target.InjuryQuantity += injuryIncrease;
-                }
-
-                // 士气下降
-                target.Morale = Math.Max(0, target.Morale - damage / 20);
-
-                // 检查部队是否被消灭
-                if (target.Quantity <= 0)
-                {
-                    target.Quantity = 0;
-                    target.Destroyed = true;
-                }
-
-                // 简化的经验获得
-                if (this.Leader != null && damage > 0)
-                {
-                    this.Leader.CommandExperienceIncrease += damage / 100; // 简化的经验计算
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyQuickBattleDamage] 错误: {ex.Message}");
-            }
+            this.ApplyDamageList();
+            this.ApplyStratagemEffect();
+            this.LastCombatResolutionMode = this.CombatExecutionMode;
         }
 
         /// <summary>
-        /// 回退到原始战斗逻辑
-        /// </summary>
-        private void ProcessOriginalCombat(Troop troop)
-        {
-            // 原始的完整战斗逻辑
-            TroopDamage damage2;
-            TroopDamage damage = troop.ReceiveAttackDamage(this.SendAttackDamage(troop, false));
-            if ((!damage.Waylay && !damage.AntiCounterAttack) && this.CounterAttackAvail(troop))
-            {
-                damage2 = this.ReceiveAttackDamage(troop.SendAttackDamage(this, true));
-                damage.BeCountered = true;
-                damage.CounterDamage = damage2.Damage;
-                damage.CounterInjury = damage2.Injury;
-                damage.CounterCombativityDown = damage2.CounterCombativityDown;
-            }
-            this.StartAttackTroop(troop, damage, false);
-        }
-
-        /// <summary>
-        /// 屏幕外战斗系统：屏外战斗直接结算（无动画）
-        /// 复用现有的溃退/俘虏逻辑，只跳过动画播放
-        /// </summary>
-        private void ApplyDamageDirectly(Troop target, TroopDamage damage)
-        {
-            if (target == null || damage == null) return;
-
-            try
-            {
-                // 1. 直接应用伤害数值
-                target.DecreaseQuantity(damage.Damage);
-                target.IncreaseInjuryQuantity(damage.Injury);
-                // 使用正确的属性名：DestinationMoraleChange 和 DestinationCombativityChange
-                if (damage.DestinationMoraleChange != 0)
-                    target.DecreaseMorale(-damage.DestinationMoraleChange);
-                if (damage.DestinationCombativityChange != 0)
-                    target.DecreaseCombativity(-damage.DestinationCombativityChange);
-
-                // 2. 处理伤害来源方的经验增益
-                if (this.BelongedFaction != null)
-                {
-                    this.IncreaseExperience(damage.Damage / 10);
-                    if (this.Leader != null)
-                    {
-                        this.Leader.CommandExperienceIncrease += damage.Damage / 50;
-                    }
-                }
-
-                // 3. 溃退检查 - 使用现有逻辑（包含俘虏判定）
-                CheckTroopRout(this, target);
-
-                // 4. 处理反击伤害
-                if (damage.BeCountered)
-                {
-                    this.DecreaseQuantity(damage.CounterDamage);
-                    this.IncreaseInjuryQuantity(damage.CounterInjury);
-                    // 反击士气变化：使用 SourceMoraleChange (源部队是反击方)
-                    if (damage.SourceMoraleChange != 0)
-                        this.DecreaseMorale(-damage.SourceMoraleChange);
-                    this.DecreaseCombativity(damage.CounterCombativityDown);
-
-                    // 反击方也需要经验
-                    if (target.BelongedFaction != null)
-                    {
-                        target.IncreaseExperience(damage.CounterDamage / 10);
-                    }
-
-                    // 检查攻击方是否被反击致溃
-                    CheckTroopRout(target, this);
-                }
-
-#if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[ApplyDamageDirectly] {this.DisplayName} → {target.DisplayName}: 伤害={damage.Damage} 反击={damage.CounterDamage}");
-#endif
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyDamageDirectly] 错误: {ex.Message}");
-            }
-        }
-
         /// <summary>
         /// 初始化移动优化 - 缓存攻击范围的平方值
         /// </summary>
@@ -3478,16 +3306,8 @@ namespace GameObjects
                 _directionUpdateCounter = 0;
 
                 // 初始化时间切片相关变量
-                _attackTimer = 0f;
                 _visualPosition = new Vector2(this.Position.X, this.Position.Y);
-                _logicPosition = _visualPosition;
                 _targetVisualPosition = _visualPosition;
-
-                // 初始化先进战斗系统
-                _combatEfficiency = 1.0f;
-                _critAccumulator = 0f;
-                _maxHP = this.Quantity * 10f; // 简化：每个兵10点血
-                _currentHP = _maxHP;
             }
             catch (Exception ex)
             {
@@ -3694,68 +3514,8 @@ namespace GameObjects
                     _visualPosition = _targetVisualPosition;
                 }
 
-                // 以下是 QuickBattling 专用逻辑
-                if (!this.QuickBattling) return;
-                
-                // 🔥 修复战法/计略瞬移：操作面期间跳过 QuickBattling 移动逻辑
-                // 日期：2026-03-07
-                // 原因：UpdateVisuals 在 QuickBattling 模式下会直接修改 Position
-                // 根因：战法/计略选择时 UndoneWork 可能是 None，且 CurrentStunt 已被清空
-                //       应该检查 CurrentCombatMethod（战法）和 CurrentStratagem（计略）
-                // 解决：检查操作面状态 OR 检查部队是否正在选择战法/计略目标
-                bool isInOperationPhase = Session.MainGame.mainGameScreen.UndoneWorks.Peek().Kind != UndoneWorkKind.None;
-                bool isSelectingCombatTarget = this.CurrentCombatMethod != null && !this.CombatMethodApplied;
-                bool isSelectingStratagemTarget = this.Command == global::GameObjects.TroopCommand.Stratagem && this.CurrentStratagem != null;
-                
-                if (isInOperationPhase || isSelectingCombatTarget || isSelectingStratagemTarget)
-                {
-                    return;
-                }
-
-                // 1. 移动插值 - 即使大脑没思考，身体也要继续往目标走
-                if (this.Action == TroopAction.Move && this.TargetTroop != null && !this.TargetTroop.Destroyed)
-                {
-                    Vector2 targetPos = new Vector2(this.TargetTroop.Position.X, this.TargetTroop.Position.Y);
-                    Vector2 destination = targetPos + _targetOffset;
-                    Vector2 direction = destination - _visualPosition;
-
-                    float distSq = direction.LengthSquared();
-
-                    if (distSq > _attackRangeSquared)
-                    {
-                        // 继续移动 - 使用平滑插值
-                        if (distSq > 0.1f)
-                        {
-                            direction = direction / (float)Math.Sqrt(distSq); // 标准化
-                            float moveSpeed = this.Movability * 0.1f;
-                            _visualPosition += direction * moveSpeed * deltaTime;
-
-                            // 更新实际位置
-                            this.Position = new Point((int)_visualPosition.X, (int)_visualPosition.Y);
-                        }
-                    }
-                    else
-                    {
-                        // 到达攻击范围
-                        this.Action = TroopAction.Stop;
-                        
-                        // ✅ 修复：清空路径，避免状态不一致导致部队卡住
-                        if (this._firstTierPath != null && this._firstTierPath.Count > 0)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[UpdateMovement] {this.DisplayName} 到达攻击范围清空路径（长度={this._firstTierPath.Count}）");
-                            this.HasPath = false;
-                            this.ClearFirstTierPath();
-                            this.FirstIndex = 0;
-                        }
-                    }
-                }
-
-                // 2. 攻击动画和视觉效果更新
-                if (this.Action == TroopAction.Stop && this.TargetTroop != null)
-                {
-                    // 这里可以添加攻击动画的更新逻辑
-                    // 但为了性能，快速战斗模式下可以简化或跳过
-                }
+                // 统一屏幕外战斗后，QuickBattling 不再在表现层驱动位置或战斗。
+                // 视觉层只负责插值，真实位置和结算统一交给逻辑 Tick。
             }
             catch (Exception ex)
             {
@@ -3764,231 +3524,10 @@ namespace GameObjects
         }
 
         /// <summary>
-        /// 低频逻辑更新 - 每N帧调用一次，处理AI决策和战斗计算
-        /// </summary>
-        public void UpdateBrain(GameTime gameTime, int sliceFactor)
-        {
-            try
-            {
-                if (!this.QuickBattling) return; // 只对快速战斗部队进行优化
-
-                // 既然是低频，时间跨度放大了N倍
-                float logicDeltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds * sliceFactor;
-
-                // 1. 索敌 - 最耗性能的部分，不需要每帧都做
-                if (this.TargetTroop == null || this.TargetTroop.Destroyed)
-                {
-                    FindNearestEnemyBrain(); // 使用专门的大脑版本索敌
-                }
-
-                // 2. 状态切换判断
-                CheckCombatRangeBrain();
-
-                // 3. 攻击冷却计算 - 数值结算
-                if (this.Action == TroopAction.Stop && this.TargetTroop != null && !this.TargetTroop.Destroyed)
-                {
-                    _attackTimer += logicDeltaTime;
-
-                    float attackCooldown = 1.0f / Math.Max(0.1f, this.Offence * 0.01f); // 基于攻击力的攻击速度
-
-                    // 如果累积时间足够攻击多次，一次性结算多次伤害
-                    while (_attackTimer >= attackCooldown)
-                    {
-                        ApplyBrainDamageToTarget();
-                        _attackTimer -= attackCooldown;
-                    }
-                }
-
-                // 4. 更新逻辑位置
-                _logicPosition = new Vector2(this.Position.X, this.Position.Y);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[UpdateBrain] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 大脑版本的敌人搜索 - 低频调用，可以使用更复杂的逻辑
-        /// </summary>
-        private void FindNearestEnemyBrain()
-        {
-            try
-            {
-                if (this.BelongedFaction == null) return;
-
-                Troop nearestEnemy = null;
-                float nearestDistanceSquared = float.MaxValue;
-                Vector2 myPos = new Vector2(this.Position.X, this.Position.Y);
-
-                // 扩大搜索范围，因为这是低频调用
-                // 🔥 使用 EffectiveViewRadius 而不是 ViewRadius
-                // 日期：2026-03-16
-                int searchRadius = this.EffectiveViewRadius * 2;
-
-                foreach (Troop enemy in Session.Current.Scenario.Troops.GetList())
-                {
-                    if (enemy == null || enemy.Destroyed || enemy == this) continue;
-
-                    // 检查是否为敌对势力
-                    if (enemy.BelongedFaction != null &&
-                        !this.BelongedFaction.IsFriendly(enemy.BelongedFaction))
-                    {
-                        Vector2 enemyPos = new Vector2(enemy.Position.X, enemy.Position.Y);
-                        float distanceSquared = Vector2.DistanceSquared(myPos, enemyPos);
-
-                        // 在搜索范围内且是最近的
-                        if (distanceSquared < searchRadius * searchRadius &&
-                            distanceSquared < nearestDistanceSquared)
-                        {
-                            nearestDistanceSquared = distanceSquared;
-                            nearestEnemy = enemy;
-                        }
-                    }
-                }
-
-                // 设置新目标
-                if (nearestEnemy != null)
-                {
-                    this.SetQuickBattleTarget(nearestEnemy);
-                    this.Action = TroopAction.Move;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[FindNearestEnemyBrain] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 检查战斗范围 - 大脑版本
-        /// </summary>
-        private void CheckCombatRangeBrain()
-        {
-            try
-            {
-                if (this.TargetTroop == null || this.TargetTroop.Destroyed) return;
-
-                Vector2 myPos = new Vector2(this.Position.X, this.Position.Y);
-                Vector2 targetPos = new Vector2(this.TargetTroop.Position.X, this.TargetTroop.Position.Y);
-                float distanceSquared = Vector2.DistanceSquared(myPos, targetPos);
-
-                if (distanceSquared <= _attackRangeSquared)
-                {
-                    // 在攻击范围内，切换到攻击状态
-                    this.Action = TroopAction.Stop;
-                    
-                    // ✅ 修复：清空路径，避免状态不一致导致部队卡住
-                    if (this._firstTierPath != null && this._firstTierPath.Count > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[CheckCombatRangeBrain] {this.DisplayName} 在攻击范围清空路径（长度={this._firstTierPath.Count}）");
-                        this.HasPath = false;
-                        this.ClearFirstTierPath();
-                        this.FirstIndex = 0;
-                    }
-                }
-                else
-                {
-                    // 超出攻击范围，切换到移动状态
-                    this.Action = TroopAction.Move;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[CheckCombatRangeBrain] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 大脑版本的伤害应用 - 可以使用更复杂的计算
-        /// </summary>
-        private void ApplyBrainDamageToTarget()
-        {
-            try
-            {
-                if (this.TargetTroop == null || this.TargetTroop.Destroyed) return;
-
-                // 计算伤害 - 可以使用更复杂的公式
-                float baseDamage = this.Offence;
-                float defense = this.TargetTroop.Defence;
-                float actualDamage = Math.Max(1, baseDamage - defense * 0.3f);
-
-                // 应用伤害
-                int damageToApply = (int)actualDamage;
-                int troopLoss = damageToApply / 15;
-                int injuryIncrease = damageToApply / 8;
-
-                this.TargetTroop.Quantity = Math.Max(0, this.TargetTroop.Quantity - troopLoss);
-                this.TargetTroop.InjuryQuantity = Math.Min(this.TargetTroop.Quantity,
-                    this.TargetTroop.InjuryQuantity + injuryIncrease);
-                this.TargetTroop.Morale = Math.Max(0, this.TargetTroop.Morale - damageToApply / 20);
-
-                // 检查目标是否被消灭
-                if (this.TargetTroop.Quantity <= 0)
-                {
-                    this.TargetTroop.Destroyed = true;
-                    this.TargetTroop = null;
-                    this.Action = TroopAction.Stop;
-                    
-                    // ✅ 修复：清空路径，避免状态不一致导致部队卡住
-                    if (this._firstTierPath != null && this._firstTierPath.Count > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ApplyBrainDamageToTarget] {this.DisplayName} 目标被消灭清空路径（长度={this._firstTierPath.Count}）");
-                        this.HasPath = false;
-                        this.ClearFirstTierPath();
-                        this.FirstIndex = 0;
-                    }
-                }
-
-                // 获得经验
-                if (this.Leader != null)
-                {
-                    this.Leader.CommandExperienceIncrease += damageToApply / 50;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyBrainDamageToTarget] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
         /// 先进战斗计算器 - 预计算DPS，支持暴击期望和防御减免
         /// </summary>
         public static class CombatCalculator
         {
-            /// <summary>
-            /// 计算预期DPS - 将随机性转化为稳定的数值期望
-            /// </summary>
-            public static float CalculateExpectedDPS(Troop attacker, Troop defender)
-            {
-                try
-                {
-                    // 1. 基础输出 = 攻击力 * 攻击速度
-                    float rawDps = attacker.Offence * BASE_ATTACK_SPEED;
-
-                    // 2. 暴击期望 - 将暴击概率转化为稳定增伤
-                    float critRate = Math.Min(1.0f, BASE_CRIT_RATE + attacker.Offence * 0.001f); // 攻击力影响暴击率
-                    float critMultiplier = 1.0f + (critRate * (BASE_CRIT_DAMAGE - 1.0f));
-
-                    // 3. 命中期望 - 简化的闪避系统
-                    float dodgeRate = Math.Min(0.5f, defender.Movability * 0.001f); // 机动力影响闪避
-                    float hitMultiplier = Math.Max(0.1f, 1.0f - dodgeRate);
-
-                    // 4. 防御减免 - 使用护甲公式
-                    float defenseValue = Math.Max(0, defender.Defence);
-                    float defMultiplier = ARMOR_CONSTANT / (ARMOR_CONSTANT + defenseValue);
-
-                    // 5. 最终DPS = 基础DPS * 各种修正
-                    return rawDps * critMultiplier * hitMultiplier * defMultiplier;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[CalculateExpectedDPS] 错误: {ex.Message}");
-                    return 1.0f; // 默认DPS
-                }
-            }
-
             /// <summary>
             /// 计算兰切斯特平方律效应 - 用于集群战斗
             /// </summary>
@@ -4008,148 +3547,6 @@ namespace GameObjects
                 {
                     return baseDPS;
                 }
-            }
-        }
-
-        /// <summary>
-        /// 先进战斗伤害应用 - 支持蓄能暴击和效率波动
-        /// </summary>
-        private void ApplyAdvancedCombatDamage(float logicDeltaTime)
-        {
-            try
-            {
-                if (this.TargetTroop == null || this.TargetTroop.Destroyed) return;
-
-                // === 随机性C: 战斗效率波动 ===
-                // 每次大脑更新时重新计算效率，模拟状态起伏
-                _combatEfficiency = GetRandomFloat(0.8f, 1.2f);
-
-                // 1. 计算基础伤害 (包含时间切片的时间跨度)
-                float baseDamage = this.Offence * BASE_ATTACK_SPEED * logicDeltaTime * _combatEfficiency;
-
-                // 2. === 随机性D: 蓄能暴击系统 ===
-                // 每次攻击增加蓄能，避免同步暴击
-                float critCharge = BASE_CRIT_RATE * GetRandomFloat(0.9f, 1.1f);
-                float hitCount = BASE_ATTACK_SPEED * logicDeltaTime;
-                _critAccumulator += critCharge * hitCount;
-
-                // 3. 判定暴击释放
-                float finalDamage = baseDamage;
-                while (_critAccumulator >= 1.0f)
-                {
-                    // 升级为暴击伤害
-                    float singleHitDamage = this.Offence * _combatEfficiency;
-                    finalDamage += singleHitDamage * (BASE_CRIT_DAMAGE - 1.0f);
-                    _critAccumulator -= 1.0f;
-
-                    // 可选：触发暴击特效
-                    // ShowCriticalEffect();
-                }
-
-                // 4. 应用防御减免
-                float defenseReduction = ARMOR_CONSTANT / (ARMOR_CONSTANT + this.TargetTroop.Defence);
-                finalDamage *= defenseReduction;
-
-                // 5. 最终扣血
-                this.TargetTroop.TakeAdvancedDamage(finalDamage);
-
-                // 6. 更新缓存的DPS用于显示
-                _cachedDPS = finalDamage / logicDeltaTime;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyAdvancedCombatDamage] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 接受先进伤害计算
-        /// </summary>
-        public void TakeAdvancedDamage(float amount)
-        {
-            try
-            {
-                _currentHP -= amount;
-
-                // 根据血量比例更新部队数量
-                if (_maxHP > 0)
-                {
-                    float hpRatio = Math.Max(0, _currentHP / _maxHP);
-                    int newQuantity = (int)(this.Army?.Quantity ?? 1000 * hpRatio);
-
-                    if (newQuantity != this.Quantity)
-                    {
-                        this.Quantity = Math.Max(0, newQuantity);
-
-                        // 更新伤兵数量
-                        int lostTroops = (this.Army?.Quantity ?? 1000) - this.Quantity;
-                        this.InjuryQuantity = Math.Min(this.Quantity, lostTroops / 3); // 1/3死亡转伤兵
-                    }
-                }
-
-                // 检查死亡
-                if (_currentHP <= 0 || this.Quantity <= 0)
-                {
-                    this.Destroyed = true;
-                    _currentHP = 0;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[TakeAdvancedDamage] 错误: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 获取随机浮点数 - 简化的随机数生成器
-        /// </summary>
-        private static float GetRandomFloat(float min, float max)
-        {
-            return min + (float)GameObject.Random(1000) / 1000f * (max - min);
-        }
-
-        /// <summary>
-        /// 更新大脑逻辑 - 集成先进战斗计算
-        /// </summary>
-        public void UpdateBrainAdvanced(GameTime gameTime, int sliceFactor)
-        {
-            try
-            {
-                if (!this.QuickBattling) return;
-
-                float logicDeltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds * sliceFactor;
-
-                // 1. 索敌 (仅当目标为空时执行)
-                if (this.TargetTroop == null || this.TargetTroop.Destroyed)
-                {
-                    FindNearestEnemyBrain();
-                }
-
-                // 2. 战斗计算
-                if (this.TargetTroop != null && !this.TargetTroop.Destroyed)
-                {
-                    Vector2 destination = new Vector2(this.TargetTroop.Position.X, this.TargetTroop.Position.Y) + _targetOffset;
-                    Vector2 myPos = new Vector2(this.Position.X, this.Position.Y);
-                    float distanceSquared = Vector2.DistanceSquared(destination, myPos);
-
-                    // 如果在射程内，进行攻击结算
-                    if (distanceSquared <= _attackRangeSquared * 1.2f) // 稍微宽容的判定范围
-                    {
-                        ApplyAdvancedCombatDamage(logicDeltaTime);
-                    }
-                    else
-                    {
-                        // 超出范围，切换到移动状态
-                        this.Action = TroopAction.Move;
-                    }
-                }
-
-                // 3. 更新逻辑位置
-                _logicPosition = new Vector2(this.Position.X, this.Position.Y);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[UpdateBrainAdvanced] 错误: {ex.Message}");
             }
         }
 
@@ -7084,6 +6481,7 @@ namespace GameObjects
             // ====== 新异步寻路系统清理（优先执行，防止内存泄漏）======
             // 1. 取消正在进行的寻路任务
             CancelCurrentPathfinding();
+            CancelLegacyMoveTask();
             
             // 2. 回收缓存路径到对象池
             GameObjects.AI.Pathfinding.PathPool.Return(_cachedPath);
@@ -7299,9 +6697,6 @@ namespace GameObjects
                             // 解决：在 Apply() 后立即攻击目标
                             this.AttackTroop(this.OrientationTroop, AttackContext.Command);
                             
-                            // 3. 应用伤害（此时伤害列表包含战法攻击的伤害）
-                            this.ApplyDamageList();
-                            
                             #if DEBUG
                             if (this.ManualControl)
                             {
@@ -7321,7 +6716,6 @@ namespace GameObjects
                             // 战法攻击建筑
                             this.CurrentCombatMethod.Apply(this);
                             this.AttackArchitecture(this.OrientationArchitecture);
-                            this.ApplyDamageList();
                             
                             #if DEBUG
                             if (this.ManualControl)
@@ -7353,7 +6747,6 @@ namespace GameObjects
                             }
                             #endif
                             this.AttackTroop(this.OrientationTroop, AttackContext.Command);
-                            this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                         }
                         else if (this.OrientationArchitecture != null)
                         {
@@ -7364,7 +6757,6 @@ namespace GameObjects
                             }
                             #endif
                             this.AttackArchitecture(this.OrientationArchitecture);
-                            this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                         }
                         break;
                     }
@@ -8994,8 +8386,6 @@ namespace GameObjects
                     {
                         this.currentTroopAnimationIndex = 0;
                         this.Action = TroopAction.Stop;
-                        this.ApplyDamageList();
-                        this.ApplyStratagemEffect();
                         
                         // 🔥 新增：清除动画锁，让部队可以重新思考
                         _actionLock = ActionLockState.None;
@@ -9051,8 +8441,6 @@ namespace GameObjects
                 if (this.Action != TroopAction.Stop && this.Action != TroopAction.Move)
                 {
                     this.Action = TroopAction.Stop;
-                    this.ApplyDamageList();
-                    this.ApplyStratagemEffect();
                     
                     // 🔥 新增：清除动画锁，让部队可以重新思考
                     _actionLock = ActionLockState.None;
@@ -14266,7 +13654,7 @@ namespace GameObjects
 
             if ((architecture.BelongedFaction != null) && !this.AirOffence)
             {
-                damage.CounterDamage = (int)((((architecture.Endurance + architecture.Morale) * this.Army.Kind.ArchitectureCounterDamageRate) * 15f) / ((float)this.Defence));
+                damage.CounterDamage = (int)((((architecture.Endurance + architecture.Morale) * this.Army.Kind.ArchitectureCounterDamageRate) * 15f * architecture.RateOfArchitectureCounterDamage) / ((float)this.Defence));
                 if (damage.CounterDamage > this.Quantity)
                 {
                     damage.CounterDamage = this.Quantity;
@@ -15293,6 +14681,15 @@ namespace GameObjects
             System.Diagnostics.Debug.WriteLine($"[Troop] {this.DisplayName} 取消寻路任务");
         }
 
+        private void CancelLegacyMoveTask()
+        {
+            if (_oldSystemMoveCts == null) return;
+
+            _oldSystemMoveCts.Cancel();
+            _oldSystemMoveCts.Dispose();
+            _oldSystemMoveCts = null;
+        }
+
         /// <summary>
         /// 【新异步系统】主线程回调：接收寻路结果
         /// 由 Session.Update 统一分发
@@ -16149,8 +15546,6 @@ namespace GameObjects
             // 路径应该由移动逻辑自己管理（ExecuteMoveTurnAsync、AI等）
             // 如果需要停止部队，应该调用专门的 Stop() 方法
             
-            this.ApplyDamageList();
-            this.ApplyStratagemEffect();
         }
 
         public void SetOnFire(float scale)
@@ -16299,7 +15694,8 @@ namespace GameObjects
 
         public void StartAttackArchitecture(Architecture architecture, ArchitectureDamage damage)
         {
-            if (Session.Current.Scenario.IsKnownToAnyPlayer(this) || Session.Current.Scenario.IsKnownToAnyPlayer(architecture))
+            bool isVisible = this.ShouldUseVisibleCombat(null);
+            if (isVisible && (Session.Current.Scenario.IsKnownToAnyPlayer(this) || Session.Current.Scenario.IsKnownToAnyPlayer(architecture)))
             {
                 this.ResetDirectionArchitecture();
                 this.Action = TroopAction.Attack;
@@ -16321,8 +15717,7 @@ namespace GameObjects
 
         public void StartAttackTroop(Troop troop, TroopDamage damage, bool area)
         {
-            // [Safety] Skip visual/sound effects if running in background thread
-            bool isVisible = !Session.Current.IsWorking;
+            bool isVisible = this.ShouldUseVisibleCombat(troop);
             bool combatMethodAttackEventRaised = false;
 
 #if DEBUG
@@ -16348,7 +15743,7 @@ namespace GameObjects
                 System.Diagnostics.Debug.WriteLine($"  - CombatMethodApplied={this.CombatMethodApplied}");
                 System.Diagnostics.Debug.WriteLine($"  - OnCombatMethodAttack订阅者数量={this.OnCombatMethodAttack?.GetInvocationList().Length ?? 0}");
                 
-                if (this.CombatMethodApplied)
+                if (this.CombatMethodApplied && isVisible)
                 {
 #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[StartAttackTroop] {this.DisplayName} 战法已施放标记=true");
@@ -21217,7 +20612,6 @@ namespace GameObjects
                         
                         System.Diagnostics.Debug.WriteLine($"[ExecuteSmartMove] ? {this.DisplayName} 发起攻城：{this.WillArchitecture.Name}");
                         this.AttackArchitecture(this.WillArchitecture);
-                        this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                         return; // 已进入战斗，退出移动逻辑
                     }
                 }
@@ -23896,7 +23290,7 @@ namespace GameObjects
                     if (_currentMoveTask == null || _currentMoveTask.IsCompleted)
                     {
                         // 取消之前的任务（如果有）
-                        _oldSystemMoveCts?.Dispose();
+                        CancelLegacyMoveTask();
                         _oldSystemMoveCts = new CancellationTokenSource();
                         
                         // 🎯 设置状态锁：开始移动
@@ -23913,7 +23307,7 @@ namespace GameObjects
                     // 🔥 NEW: 使用异步移动系统
                     if (_currentMoveTask == null || _currentMoveTask.IsCompleted)
                     {
-                        _oldSystemMoveCts?.Dispose();
+                        CancelLegacyMoveTask();
                         _oldSystemMoveCts = new CancellationTokenSource();
                         
                         // 🎯 设置状态锁：开始移动
@@ -24147,9 +23541,30 @@ namespace GameObjects
             if (needPathfinding 
                 && this.RealDestination != new Point(-1, -1)
                 && this.RealDestination != Point.Zero
-                && !IsAtPosition(this.RealDestination)
-                && this.Army?.Kind != null)
+                && !IsAtPosition(this.RealDestination))
             {
+                if (cancellationToken.IsCancellationRequested || this.Destroyed) return false;
+
+                TroopPathFinder pathFinder = this.pathFinder;
+                if (pathFinder == null)
+                {
+                    if (cancellationToken.IsCancellationRequested || this.Destroyed) return false;
+                    throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 初始寻路时 pathFinder 为 null。");
+                }
+
+                Military army = this.Army;
+                if (army == null)
+                {
+                    if (cancellationToken.IsCancellationRequested || this.Destroyed) return false;
+                    throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 初始寻路时 Army 为 null。");
+                }
+
+                MilitaryKind armyKind = army.Kind;
+                if (armyKind == null)
+                {
+                    throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 初始寻路时 Army.Kind 为 null。");
+                }
+
                 // 🔥 2026-03-11 修复：如果有攻击目标，使用 GetOptimalAttackPosition 计算安全目标点
                 // 问题：RealDestination 可能是敌军位置（不可通行），导致 A* 9500次失败
                 Point pathTarget = this.RealDestination;
@@ -24169,7 +23584,7 @@ namespace GameObjects
                     this.RealDestination = pathTarget;
                     System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 修正寻路目标: 原={this.RealDestination}, 修正后={pathTarget}, CanAttack={canAttackTarget}");
                 }
-                bool pathFound = this.pathFinder.GetFirstTierPath(this.Position, pathTarget, this.Army.Kind);
+                bool pathFound = pathFinder.GetFirstTierPath(this.Position, pathTarget, armyKind);
 #if DEBUG
                 if (!pathFound)
                 {
@@ -24215,7 +23630,7 @@ namespace GameObjects
             while (this.MovabilityLeft > 0 && safetyCounter < maxSteps)
             {
                 // 检查取消请求
-                if (cancellationToken.IsCancellationRequested) return movedAtLeastOnce;
+                if (cancellationToken.IsCancellationRequested || this.Destroyed) return movedAtLeastOnce;
 
                 safetyCounter++;
 
@@ -24233,8 +23648,28 @@ namespace GameObjects
                     if (!IsAtPosition(this.RealDestination) 
                         && this.RealDestination != new Point(-1, -1)
                         && this.RealDestination != Point.Zero
-                        && this.Army?.Kind != null)
+                        && !this.Destroyed)
                     {
+                        TroopPathFinder pathFinder = this.pathFinder;
+                        if (pathFinder == null)
+                        {
+                            if (cancellationToken.IsCancellationRequested || this.Destroyed) return movedAtLeastOnce;
+                            throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 重新寻路时 pathFinder 为 null。");
+                        }
+
+                        Military army = this.Army;
+                        if (army == null)
+                        {
+                            if (cancellationToken.IsCancellationRequested || this.Destroyed) return movedAtLeastOnce;
+                            throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 重新寻路时 Army 为 null。");
+                        }
+
+                        MilitaryKind armyKind = army.Kind;
+                        if (armyKind == null)
+                        {
+                            throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 ExecuteMoveTurnAsync 重新寻路时 Army.Kind 为 null。");
+                        }
+
                         // 🔥 2026-03-11 修复：重新寻路时也要使用安全目标点
                         Point retryTarget = this.RealDestination;
                         Troop retryTargetTroop = this.TargetTroop;
@@ -24247,7 +23682,7 @@ namespace GameObjects
                         }
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 路径走完但未到达目标，重新寻路: {this.Position} -> {retryTarget}");
                         
-                        bool pathFound = this.pathFinder.GetFirstTierPath(this.Position, retryTarget, this.Army.Kind);
+                        bool pathFound = pathFinder.GetFirstTierPath(this.Position, retryTarget, armyKind);
                         
                         #if DEBUG
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 重新寻路结果: {pathFound}, 新路径长度={this._firstTierPath.Count}");
@@ -25611,9 +25046,6 @@ namespace GameObjects
                             {
                                 System.Diagnostics.Debug.WriteLine($"[ExecuteSmartTurn] {this.DisplayName} 攻击 {_lastPlan.Target.DisplayName}");
                                 this.AttackTroop(_lastPlan.Target);
-                                
-                                // ★★★ 根本修复：立即应用伤害，否则部队不会扣血 ★★★
-                                this.ApplyDamageList();
                             }
                             else
                             {
@@ -25650,9 +25082,6 @@ namespace GameObjects
                         // 🔥 修复：执行攻击并强制设置Action状态
                         System.Diagnostics.Debug.WriteLine($"[ExecuteSmartTurn] {this.DisplayName} 攻击建筑 {_lastPlan.TargetArchitecture.Name} (耐久={_lastPlan.TargetArchitecture.Endurance})");
                         this.AttackArchitecture(_lastPlan.TargetArchitecture);
-                        
-                        // ★★★ 根本修复：立即应用伤害，否则建筑耐久不会减少 ★★★
-                        this.ApplyDamageList();
                         
                         this.Action = TroopAction.Attack; // 强制设置攻击状态，确保动画和逻辑正确
                         this._attackAnimationFrameCounter = 0; // 🔥 初始化攻击动画计数器
@@ -25765,7 +25194,6 @@ namespace GameObjects
                                         Troop targetTroop = nearbyHostilesList[0];
                                         System.Diagnostics.Debug.WriteLine($"[ExecuteSmartTurn] {this.DisplayName} 攻击城内守军 {targetTroop.DisplayName}");
                                         this.AttackTroop(targetTroop);
-                                        this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                                         this.Action = TroopAction.Attack; // 确保状态为攻击而不是停止
                                         this._attackAnimationFrameCounter = 0; // 🔥 初始化攻击动画计数器
                                     }
@@ -25778,7 +25206,6 @@ namespace GameObjects
                                             Troop targetTroop = nearbyHostiles[0] as Troop;
                                             System.Diagnostics.Debug.WriteLine($"[ExecuteSmartTurn] {this.DisplayName} 攻击城池附近敌军 {targetTroop.DisplayName}");
                                             this.AttackTroop(targetTroop);
-                                            this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                                             this.Action = TroopAction.Attack;
                                             this._attackAnimationFrameCounter = 0; // 🔥 初始化攻击动画计数器
                                         }
@@ -25849,9 +25276,6 @@ namespace GameObjects
                                 
                                 // 攻击目标（战法效果已应用）
                                 this.AttackTroop(_lastPlan.Target);
-                                
-                                // ★★★ 根本修复：立即应用伤害 ★★★
-                                this.ApplyDamageList();
                                 
 #if DEBUG
                                 System.Diagnostics.Debug.WriteLine($"[ExecuteSmartTurn] {this.DisplayName} 战法攻击完成，目标剩余兵力={_lastPlan.Target.Army.Quantity}");
@@ -29769,14 +29193,12 @@ namespace GameObjects
              if (target != null && !target.Destroyed && !this.IsFriendly(target.BelongedFaction) && this.CanAttack(target))
              {
                  this.AttackTroop(target);
-                 this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
              }
              else if (this.WillArchitecture != null && !this.IsFriendly(this.WillArchitecture.BelongedFaction))
              {
                  if (this.WillArchitecture.ArchitectureArea != null && this.WillArchitecture.ArchitectureArea.GetContactArea(false).HasPoint(this.Position))
                  {
                      this.AttackArchitecture(this.WillArchitecture);
-                     this.ApplyDamageList(); // ★★★ 修复：立即应用伤害 ★★★
                  }
              }
              

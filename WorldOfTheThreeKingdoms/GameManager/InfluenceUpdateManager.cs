@@ -32,9 +32,9 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
     // 🔥 新增：暂停标志（回合切换时暂停分帧重算）
     private bool _isPaused = false;
     
-    // 🔥 新增：能量竞争前的事件（用于通知水墨渲染器）
-    // 日期：2026-03-21
+    // 能量竞争前后事件（用于渲染器与诊断模块）
     public event Action? OnBeforeEnergyCompetition;
+    public event Action? OnAfterEnergyCompetition;
 
     /// <summary>
     /// 初始化势力范围系统
@@ -472,9 +472,10 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             faction.ClearEnergyBasedIntelligence();
         }
 
-        // 在能量竞争前通知渲染器读取完整能量数据
+        // 保留前置钩子，兼容旧订阅方
         OnBeforeEnergyCompetition?.Invoke();
         ApplyGlobalEnergyCompetition();
+        OnAfterEnergyCompetition?.Invoke();
 
         // 能量竞争会改变净能量结果，必须统一失效缓存
         scenario.InvalidateInfluenceEnergyCache();
@@ -693,8 +694,8 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         
         // 🔥 性能优化：预分配缓冲区，避免每个地块都分配 List（2026-03-21）
         // 使用数组池或预分配数组，避免 stackalloc 超过栈限制
-        // 🆕 2026-03-21：添加 residualEnergy 字段，用于能量写回
-        var energyBuffer = new (Faction faction, int armyEnergy, int cityEnergy, int residualEnergy, int totalEnergy)[factionCount];
+        // 🆕 2026-03-27：额外缓存 effectiveResidualEnergy，确保结算阶段可正确抵消残留能量
+        var energyBuffer = new (Faction faction, int armyEnergy, int cityEnergy, int residualEnergy, int effectiveResidualEnergy, int totalEnergy)[factionCount];
 
         // 🔥 遍历地图上的每一个格子
         for (int i = 0; i < totalTiles; i++)
@@ -723,10 +724,10 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                 int cityEnergy = faction.GlobalInfluenceMap[i].CityEnergy;
                 
                 // 🆕 残留能量参与竞争，但效果减半（默认 50%）
-                // 日期：2026-03-21
-                // 原因：残留能量是"死水"，影响力应该比活跃能量弱
                 int residualEnergy = faction.GlobalInfluenceMap[i].ResidualEnergy;
-                int effectiveResidualEnergy = (int)(residualEnergy * stackingConfig.ResidualEffectiveness);
+                int effectiveResidualEnergy = InfluenceEnergyCalculator.CalculateEffectiveResidualEnergy(
+                    residualEnergy,
+                    stackingConfig.ResidualEffectiveness);
                 
                 int totalEnergy = armyEnergy + cityEnergy + effectiveResidualEnergy;
                 
@@ -735,7 +736,13 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                     // 🔥 关键修复：存储残留能量，用于能量写回
                     // 日期：2026-03-21
                     // 原因：如果胜出势力只有残留能量（没有活跃能量），需要保留残留能量
-                    energyBuffer[energyCount++] = (faction, armyEnergy, cityEnergy, residualEnergy, totalEnergy);
+                    energyBuffer[energyCount++] = (
+                        faction,
+                        armyEnergy,
+                        cityEnergy,
+                        residualEnergy,
+                        effectiveResidualEnergy,
+                        totalEnergy);
                 }
             }
             
@@ -743,7 +750,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             if (energyCount == 0) continue;
             
             // 获取有效数据的 Span
-            Span<(Faction faction, int armyEnergy, int cityEnergy, int residualEnergy, int totalEnergy)> energyList = energyBuffer.AsSpan(0, energyCount);
+            Span<(Faction faction, int armyEnergy, int cityEnergy, int residualEnergy, int effectiveResidualEnergy, int totalEnergy)> energyList = energyBuffer.AsSpan(0, energyCount);
             
             // ========================================
             // 🔥 步骤 2：按总能量排序，找出最高和第二高
@@ -757,6 +764,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             int topArmyEnergy = top.armyEnergy;
             int topCityEnergy = top.cityEnergy;
             int topResidualEnergy = top.residualEnergy;
+            int topEffectiveResidualEnergy = top.effectiveResidualEnergy;
             int topTotalEnergy = top.totalEnergy;
             
             // 找出第二高的敌对势力能量
@@ -790,7 +798,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             topTotalEnergy += friendlySupportBonus;
             
             // ========================================
-            // 🔥 步骤 3：计算净能量（部队优先抵消）
+            // 🔥 步骤 3：计算净能量（部队 -> 城池 -> 残留）
             // 🔥 关键修复：确保能量永远不会变负
             // 日期：2026-03-21
             // ========================================
@@ -798,6 +806,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             int remainingOpponentEnergy = secondTotalEnergy;
             int finalArmyEnergy = topArmyEnergy;
             int finalCityEnergy = topCityEnergy;
+            int finalEffectiveResidualEnergy = topEffectiveResidualEnergy;
             
             if (remainingOpponentEnergy > 0)
             {
@@ -827,12 +836,23 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                         // 原因：能量不足以抵抗敌方，该地块应该被敌方占据
                         remainingOpponentEnergy -= finalCityEnergy;
                         finalCityEnergy = 0;
-                        // 注意：此时 remainingOpponentEnergy > 0，说明敌方能量更强
+
+                        // 活跃能量耗尽后继续消耗残留有效能量
+                        if (finalEffectiveResidualEnergy >= remainingOpponentEnergy)
+                        {
+                            finalEffectiveResidualEnergy -= remainingOpponentEnergy;
+                            remainingOpponentEnergy = 0;
+                        }
+                        else
+                        {
+                            remainingOpponentEnergy -= finalEffectiveResidualEnergy;
+                            finalEffectiveResidualEnergy = 0;
+                        }
                     }
                 }
             }
             
-            int netEnergy = finalArmyEnergy + finalCityEnergy;
+            int netEnergy = finalArmyEnergy + finalCityEnergy + finalEffectiveResidualEnergy;
             
             // 🔥 安全检查：确保净能量不为负（防御性编程）
             // 日期：2026-03-21
@@ -841,12 +861,13 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine(
                     $"[ApplyGlobalEnergyCompetition] ⚠️ 警告：地块 {i} 净能量为负 ({netEnergy})，" +
-                    $"强制清零。topArmyEnergy={topArmyEnergy}, topCityEnergy={topCityEnergy}, " +
+                    $"强制清零。topArmyEnergy={topArmyEnergy}, topCityEnergy={topCityEnergy}, topEffectiveResidualEnergy={topEffectiveResidualEnergy}, " +
                     $"secondTotalEnergy={secondTotalEnergy}");
                 #endif
                 netEnergy = 0;
                 finalArmyEnergy = 0;
                 finalCityEnergy = 0;
+                finalEffectiveResidualEnergy = 0;
             }
             
             // ========================================
@@ -869,19 +890,25 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                     faction.GlobalInfluenceMap[i].CityFactionId = finalCityEnergy > 0 ? faction.ID : -1;
                     faction.GlobalInfluenceMap[i].CityEnergy = finalCityEnergy;
                     
-                    // 🔥 关键修复：如果胜出势力只有残留能量（没有活跃能量），保留残留能量
-                    // 日期：2026-03-21
-                    // 原因：部队离开后，残留能量应该保留，不应该消失
-                    // 说明：残留能量通过 DecayAllFactionsEnergy 自然衰减
-                    if (finalArmyEnergy == 0 && finalCityEnergy == 0 && topResidualEnergy > 0)
+                    // 胜出势力存在活跃能量时，活跃层覆盖残留层
+                    if (finalArmyEnergy > 0 || finalCityEnergy > 0)
                     {
-                        // 胜出势力只有残留能量，保留残留能量
-                        faction.GlobalInfluenceMap[i].ResidualFactionId = faction.ID;
-                        faction.GlobalInfluenceMap[i].ResidualEnergy = topResidualEnergy;
+                        faction.GlobalInfluenceMap[i].ResidualFactionId = -1;
+                        faction.GlobalInfluenceMap[i].ResidualEnergy = 0;
                     }
-                    else if (finalArmyEnergy > 0 || finalCityEnergy > 0)
+                    else if (finalEffectiveResidualEnergy > 0)
                     {
-                        // 胜出势力有活跃能量，清零残留能量（活跃能量覆盖残留能量）
+                        // 仅残留层胜出时，写回抵消后的残留 raw 值
+                        int finalResidualEnergy = finalEffectiveResidualEnergy == topEffectiveResidualEnergy
+                            ? topResidualEnergy
+                            : InfluenceEnergyCalculator.RecoverRawResidualEnergy(
+                                finalEffectiveResidualEnergy,
+                                stackingConfig.ResidualEffectiveness);
+                        faction.GlobalInfluenceMap[i].ResidualFactionId = faction.ID;
+                        faction.GlobalInfluenceMap[i].ResidualEnergy = finalResidualEnergy;
+                    }
+                    else
+                    {
                         faction.GlobalInfluenceMap[i].ResidualFactionId = -1;
                         faction.GlobalInfluenceMap[i].ResidualEnergy = 0;
                     }

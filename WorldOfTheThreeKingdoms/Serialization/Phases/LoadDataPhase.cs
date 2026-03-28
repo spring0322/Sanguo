@@ -70,6 +70,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
             // Player information
             scenario.PlayerList = dto.PlayerList ?? new List<int>();
             scenario.CurrentPlayerID = dto.CurrentPlayerID;
+            scenario.ControlMode = dto.ControlMode == (int)ScenarioControlMode.Observer ? ScenarioControlMode.Observer : ScenarioControlMode.Player;
             scenario.PlayerInfo = dto.PlayerInfo;
             
             #if DEBUG

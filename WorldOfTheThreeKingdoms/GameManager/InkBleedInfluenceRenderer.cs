@@ -302,18 +302,8 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
                 if (factions[fIdx] is not Faction faction) continue;
                 
                 // 🔥 日期：2026-03-16
-                // 🔥 重构：使用 EffectiveTotalEnergy
-                // 🆕 日期：2026-03-21
-                // 🆕 包含残留能量（视觉效果：残留能量显示为半透明）
+                // 🔥 重构：统一使用 EffectiveTotalEnergy（包含残留有效值）
                 int energy = faction.GlobalInfluenceMap[mapIndex].EffectiveTotalEnergy;
-                
-                // 🆕 残留能量单独计算（用于半透明显示）
-                int residualEnergy = faction.GlobalInfluenceMap[mapIndex].ResidualEnergy;
-                if (residualEnergy > 0 && energy == 0)
-                {
-                    // 只有残留能量，没有活跃能量：显示为半透明
-                    energy = residualEnergy / 2;  // 残留能量效果减半
-                }
                 
                 if (energy > maxEnergy)
                 {

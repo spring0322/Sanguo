@@ -21,6 +21,8 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
         {
             if (scenario == null)
                 throw new ArgumentNullException(nameof(scenario));
+
+            scenario.NormalizeControlState();
             
             var dto = new GameScenarioDTO
             {
@@ -38,6 +40,7 @@ namespace WorldOfTheThreeKingdoms.Serialization.Phases
                 // Player information - 🔥 添加防御性检查
                 PlayerList = scenario.PlayerList ?? new List<int>(),
                 CurrentPlayerID = scenario.CurrentPlayerID ?? "-1",
+                ControlMode = (int)scenario.ControlMode,
                 PlayerInfo = scenario.PlayerInfo ?? "",
                 
                 // Game time

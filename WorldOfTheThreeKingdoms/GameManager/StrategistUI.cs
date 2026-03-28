@@ -155,13 +155,13 @@ namespace WorldOfTheThreeKingdoms.GameManager
             // 加载字体
             try
             {
-                font = content.Load<SpriteFont>("FontS");
+                font = content.Load<SpriteFont>("Font/FontS");
             }
             catch
             {
                 try
                 {
-                    font = content.Load<SpriteFont>("Fonts/FontS");
+                    font = content.Load<SpriteFont>("Font/FontL");
                 }
                 catch
                 {

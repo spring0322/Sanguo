@@ -428,38 +428,23 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 swStep.Stop();
                 DebugLogger.Info(DebugLogger.LogCategory.Performance, $"读取文件 & JSON反序列化耗时: {swStep.ElapsedMilliseconds} ms");
                 
-                // 🔥 2026-03-17 修复：在 LinkReferences 之前初始化 CurrentPlayer（Fail Fast）
-                // 原因：CurrentPlayer 是游戏运行的必要条件，如果为 null 会导致渲染器崩溃
-                // 策略：Fail Fast - 如果无法设置 CurrentPlayer，立即抛出异常
-                if (string.IsNullOrEmpty(scenario.CurrentPlayerID))
+                scenario.NormalizeControlState();
+                if (scenario.IsObserverModeActive())
+                {
+                    DebugLogger.Info(DebugLogger.LogCategory.Serialization, "CurrentPlayer 初始化跳过：当前为旁观模式");
+                }
+                else if (scenario.CurrentPlayer == null)
                 {
                     throw new InvalidOperationException(
-                        $"存档数据损坏：CurrentPlayerID 为空。" +
-                        $"Factions.Count={scenario.Factions.Count}, " +
+                        $"存档数据损坏：无法恢复玩家势力。" +
+                        $"CurrentPlayerID={scenario.CurrentPlayerID}, " +
+                        $"PlayerList.Count={scenario.PlayerList.Count}, " +
                         $"PlayerFactions.Count={scenario.PlayerFactions.Count}");
                 }
-                
-                if (!int.TryParse(scenario.CurrentPlayerID, out int currentPlayerId))
+                else
                 {
-                    throw new InvalidOperationException(
-                        $"存档数据损坏：CurrentPlayerID '{scenario.CurrentPlayerID}' 无法解析为整数。");
-                }
-                
-                if (currentPlayerId >= 0)
-                {
-                    scenario.CurrentPlayer = scenario.Factions.GetGameObject(currentPlayerId) as Faction;
-                
-                    if (scenario.CurrentPlayer == null)
-                {
-                    throw new InvalidOperationException(
-                        $"存档数据损坏：CurrentPlayerID={currentPlayerId} 对应的势力不存在。" +
-                        $"可用势力: {scenario.Factions.Count}, " +
-                        $"玩家势力: {scenario.PlayerFactions.Count}");
-                }
-                
-                DebugLogger.Info(DebugLogger.LogCategory.Serialization, 
-                    $"CurrentPlayer 初始化成功: {scenario.CurrentPlayer.Name} (ID={currentPlayerId})");
-                
+                    DebugLogger.Info(DebugLogger.LogCategory.Serialization,
+                        $"CurrentPlayer 初始化成功: {scenario.CurrentPlayer.Name} (ID={scenario.CurrentPlayer.ID})");
                 }
 
                 // Phase 4: Link references phase
@@ -932,7 +917,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
                 
                 // Get player faction name if available
                 int playerFactionId = int.TryParse(scenario.CurrentPlayerID, out int parsedId) ? parsedId : -1;
-                if (playerFactionId > 0 && scenario.Factions != null)
+                if (playerFactionId >= 0 && scenario.Factions != null)
                 {
                     Faction playerFaction = scenario.Factions.GetGameObject(playerFactionId) as Faction;
                     if (playerFaction != null)

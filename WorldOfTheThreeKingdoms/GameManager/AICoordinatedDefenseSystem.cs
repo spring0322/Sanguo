@@ -108,7 +108,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
 
             // 🔥 重构：使用新的Kind+Mission系统
             // 日期：2026-03-09
-            Legion defenseLegion = architecture.BelongedFaction.GetOrCreateLegion(architecture, LegionKind.AI, LegionMission.Defend);
+            Legion defenseLegion = architecture.GetOrCreateDefensiveLegion();
             Troop activeDefenseTroop = architecture.CreateTroop(persons, bestPerson, bestMilitary, foodToTake, spawnPoint.Value, assignedLegion: defenseLegion);
             if (activeDefenseTroop != null)
             {

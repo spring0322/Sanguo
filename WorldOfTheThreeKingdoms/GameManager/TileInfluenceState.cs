@@ -1,4 +1,3 @@
-using System;
 using System.Runtime.CompilerServices;
 
 namespace WorldOfTheThreeKingdoms.GameManager;
@@ -96,19 +95,12 @@ public struct TileInfluenceState
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
         {
-            // 🔥 关键：ID >= 0 是有效的（ID=0 是洛阳）
-            if (ArmyFactionId >= 0 && ArmyFactionId == CityFactionId)
-            {
-                // 同势力叠加：主副衰减法
-                // 原因：避免能量无限叠加，保持游戏平衡
-                return CityEnergy > ArmyEnergy 
-                    ? CityEnergy + (int)(ArmyEnergy * 0.3f) 
-                    : ArmyEnergy + (int)(CityEnergy * 0.3f);
-            }
-            
-            // 不同势力，返回压制后的净剩值
-            // 注意：这种情况理论上不应该出现（经过对冲后应该只剩一方）
-            return Math.Abs(CityEnergy - ArmyEnergy);
+            return InfluenceEnergyCalculator.CalculateTileEffectiveTotalEnergy(
+                ArmyFactionId,
+                ArmyEnergy,
+                CityFactionId,
+                CityEnergy,
+                ResidualEnergy);
         }
     }
     

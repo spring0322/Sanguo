@@ -33,6 +33,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             if ((this.Plugins.ContextMenuPlugin != null) && (this.PeekUndoneWork().Kind == UndoneWorkKind.None))
             {
+                this.UpdateObserverViewingFaction();
                 
                 if (((this.CurrentArchitecture != null) && (this.CurrentTroop != null)) && ((Session.GlobalVariables.SkyEye || Session.Current.Scenario.NoCurrentPlayer) || Session.Current.Scenario.CurrentPlayer.IsPositionKnown(this.position)))
                 {
@@ -914,11 +915,17 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
 
                 case ContextMenuResult.Jump_Troop:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Troop, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Troops, null, "跳转", "");
+                    if (this.GetViewingFaction() != null)
+                    {
+                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Troop, FrameFunction.Jump, false, true, false, false, this.GetViewingFaction().Troops, null, "跳转", "");
+                    }
                     break;
 
                 case ContextMenuResult.Jump_Person:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.Jump, false, true, false, false, Session.Current.Scenario.CurrentPlayer.Persons, null, "跳转", "");
+                    if (this.GetViewingFaction() != null)
+                    {
+                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.Person, FrameFunction.Jump, false, true, false, false, this.GetViewingFaction().Persons, null, "跳转", "");
+                    }
                     break;
 
                 case ContextMenuResult.Switch_Smog:
@@ -1438,10 +1445,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                     break;
                 case ContextMenuResult.YearTable_Year5:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.YearTable, FrameFunction.Browse, false, true, false, false, Session.Current.Scenario.getFactionYearTableRecentYears(Session.Current.Scenario.CurrentPlayer, 5), null, "年表", "");
+                    if (this.GetViewingFaction() != null)
+                    {
+                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.YearTable, FrameFunction.Browse, false, true, false, false, Session.Current.Scenario.getFactionYearTableRecentYears(this.GetViewingFaction(), 5), null, "年表", "");
+                    }
                     break;
                 case ContextMenuResult.YearTable_OwnFaction:
-                    this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.YearTable, FrameFunction.Browse, false, true, false, false, Session.Current.Scenario.getOnlyFactionYearTable(Session.Current.Scenario.CurrentPlayer), null, "年表", "");
+                    if (this.GetViewingFaction() != null)
+                    {
+                        this.ShowTabListInFrame(UndoneWorkKind.Frame, FrameKind.YearTable, FrameFunction.Browse, false, true, false, false, Session.Current.Scenario.getOnlyFactionYearTable(this.GetViewingFaction()), null, "年表", "");
+                    }
                     break;
                 case ContextMenuResult.ChangeFaction:
                     this.changeFaction();

@@ -70,7 +70,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
             pixelTexture.SetData([Color.White]);
             
             // 🔥 步骤 1b：加载 white_pixel 纹理（边界线用）
-            Texture2D whitePixel = content.Load<Texture2D>("white_pixel");
+            Texture2D whitePixel = content.Load<Texture2D>("Effects/white_pixel");
             
             // 🔥 步骤 2：加载 InkBleed Shader
             Effect inkBleedEffect;
@@ -92,13 +92,13 @@ namespace WorldOfTheThreeKingdoms.GameManager
             try
             {
                 // 🎨 假设噪点图位于 Content/Textures/XuanPaperNoise.png
-                noiseTexture = content.Load<Texture2D>("Textures/XuanPaperNoise");
+                noiseTexture = content.Load<Texture2D>("Effects/XuanPaperNoise");
             }
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
                     "[InfluenceRendererInitializer] 无法加载宣纸噪点纹理，" +
-                    "请确保 Content/Textures/XuanPaperNoise.png 已添加到 Content.mgcb", ex);
+                    "请确保 Content/Effects/XuanPaperNoise.png 已添加到 Content.mgcb", ex);
             }
             
             // 🔥 步骤 4：创建 InkBleedRenderer

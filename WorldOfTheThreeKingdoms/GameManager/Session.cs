@@ -312,8 +312,8 @@ namespace GameManager
                         System.Diagnostics.Debug.WriteLine($"[Session] Load Font/FontS failed: {ex.Message}");
                         try
                         {
-                            // 备用尝试 FontS
-                            font = FontContent.Load<SpriteFont>("FontS");
+                            // 备用尝试 Font/FontL
+                            font = FontContent.Load<SpriteFont>("Font/FontL");
                         }
                         catch
                         {
@@ -1031,51 +1031,12 @@ namespace GameManager
                         System.Diagnostics.Debug.WriteLine($"[Session] ⚠️ 配置加载失败: {configEx.Message}");
                     }
                     
-                    // Ensure CurrentPlayer is set
-                    // 🔥 诊断：记录 CurrentPlayer 状态
                     System.Diagnostics.Debug.WriteLine($"[Session.EnsureObjectReferencesRestored] CurrentPlayer={scenario.CurrentPlayer?.Name}, CurrentPlayerID={scenario.CurrentPlayerID}, Factions.Count={scenario.Factions.Count}");
-                    
-                    if (scenario.CurrentPlayer == null && scenario.Factions.Count > 0)
+
+                    scenario.NormalizeControlState();
+                    if (scenario.CurrentPlayer != null && scenario.Factions is GameObjects.FactionListWithQueue factionQueue && factionQueue.RunningFaction == null)
                     {
-                        // 🔥 关键修复：优先使用 CurrentPlayerID 查找玩家势力
-                        // 日期：2026-03-16
-                        // 原因：用户选择的势力 ID 存储在 CurrentPlayerID 中，必须使用它来查找
-                        // 🔥 ID=0 是有效的（汉势力），必须使用 >= 0 判断
-                        if (!string.IsNullOrEmpty(scenario.CurrentPlayerID) && int.TryParse(scenario.CurrentPlayerID, out int playerID) && playerID >= 0)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[Session] 尝试从 CurrentPlayerID={playerID} 查找玩家势力...");
-                            scenario.CurrentPlayer = scenario.Factions.GetGameObject(playerID) as GameObjects.Faction;
-                            if (scenario.CurrentPlayer != null)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[Session] ✅ 从 CurrentPlayerID={playerID} 恢复玩家势力: {scenario.CurrentPlayer.Name}");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[Session] ⚠️ CurrentPlayerID={playerID} 对应的势力不存在，使用 Factions[0]");
-                                scenario.CurrentPlayer = scenario.Factions[0] as GameObjects.Faction;
-                                System.Diagnostics.Debug.WriteLine($"[Session] 回退到 Factions[0]: {scenario.CurrentPlayer?.Name}");
-                            }
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[Session] CurrentPlayerID 无效或为空，使用 Factions[0]");
-                            scenario.CurrentPlayer = scenario.Factions[0] as GameObjects.Faction;
-                            System.Diagnostics.Debug.WriteLine($"[Session] 备份设置当前玩家: {scenario.CurrentPlayer?.Name}");
-                        }
-                    }
-                    else if (scenario.CurrentPlayer != null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[Session] CurrentPlayer 已设置: {scenario.CurrentPlayer.Name}，跳过恢复");
-                    }
-                    
-                    // Set CurrentFaction
-                    if (scenario.CurrentPlayer != null)
-                    {
-                        scenario.CurrentFaction = scenario.CurrentPlayer;
-                        if (scenario.Factions is GameObjects.FactionListWithQueue factionQueue)
-                        {
-                            factionQueue.RunningFaction = scenario.CurrentPlayer;
-                        }
+                        factionQueue.RunningFaction = scenario.CurrentPlayer;
                     }
                 }
                 else
@@ -1087,30 +1048,7 @@ namespace GameManager
             {
                 System.Diagnostics.Debug.WriteLine($"[Session] 备份对象引用修复失败: {ex.Message}");
                 
-                // Emergency fallback: ensure CurrentPlayer is set
-                if (scenario.CurrentPlayer == null && scenario.Factions != null && scenario.Factions.Count > 0)
-                {
-                    // 🔥 关键修复：优先使用 CurrentPlayerID 查找玩家势力
-                    // 🔥 ID=0 是有效的（汉势力），必须使用 >= 0 判断
-                    if (!string.IsNullOrEmpty(scenario.CurrentPlayerID) && int.TryParse(scenario.CurrentPlayerID, out int playerID) && playerID >= 0)
-                    {
-                        scenario.CurrentPlayer = scenario.Factions.GetGameObject(playerID) as GameObjects.Faction;
-                        if (scenario.CurrentPlayer != null)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[Session] 紧急备份：从 CurrentPlayerID={playerID} 恢复玩家势力: {scenario.CurrentPlayer.Name}");
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[Session] ⚠️ 紧急备份：CurrentPlayerID={playerID} 对应的势力不存在，使用 Factions[0]");
-                            scenario.CurrentPlayer = scenario.Factions[0] as GameObjects.Faction;
-                        }
-                    }
-                    else
-                    {
-                        scenario.CurrentPlayer = scenario.Factions[0] as GameObjects.Faction;
-                        System.Diagnostics.Debug.WriteLine($"[Session] 紧急备份设置当前玩家: {scenario.CurrentPlayer?.Name}");
-                    }
-                }
+                scenario.NormalizeControlState();
             }
         }
 

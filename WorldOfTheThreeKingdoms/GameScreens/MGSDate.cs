@@ -79,6 +79,47 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 return result;
             }
         }
+
+        private bool TryRecoverFactionThreadingStall(GameScenario scenario, string source)
+        {
+            if (scenario == null || !scenario.Threading || scenario.Factions == null)
+            {
+                return false;
+            }
+
+            Faction runningFaction = scenario.Factions.RunningFaction;
+            if (runningFaction != null && runningFaction.AIFinished && !runningFaction.Controlling)
+            {
+                scenario.Threading = false;
+                System.Diagnostics.Debug.WriteLine($"[ThreadingRecovery] {source}: RunningFaction={runningFaction.Name} 已完成AI但锁仍未释放，强制解锁");
+                return true;
+            }
+
+            bool allAIFinished = true;
+            for (int i = 0; i < scenario.Factions.Count; i++)
+            {
+                Faction faction = scenario.Factions[i] as Faction;
+                if (faction == null || !faction.IsAlive)
+                {
+                    continue;
+                }
+
+                if (!faction.AIFinished)
+                {
+                    allAIFinished = false;
+                    break;
+                }
+            }
+
+            if (allAIFinished)
+            {
+                scenario.Threading = false;
+                System.Diagnostics.Debug.WriteLine($"[ThreadingRecovery] {source}: 全势力AI已完成但锁仍未释放，强制解锁");
+                return true;
+            }
+
+            return false;
+        }
         
         // 🔥 2026-03-23 新增：使用 CommandBufferScheduler 的移动逻辑
         private bool MoveTheTroopsWithCommandBuffer(GameTime gameTime)
@@ -264,6 +305,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
+                this.TryRecoverFactionThreadingStall(scenario, "Scenario_OnDayStarting");
                 if (!scenario.Threading)
                 {
                     Session.Current.OnTurnStart(); // 创建异步寻路的地图快照
@@ -281,19 +323,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 else
                 {
                     // 检查是否所有AI都已完成
-                    bool allAiDone = true;
-                    foreach (Faction faction in scenario.Factions)
+                    if (this.TryRecoverFactionThreadingStall(scenario, "Scenario_OnDayStarting.Waiting"))
                     {
-                        if (faction.Controlling && !faction.Passed)
-                        {
-                            allAiDone = false;
-                            break;
-                        }
-                    }
-
-                    if (allAiDone)
-                    {
-                        scenario.Threading = false;
                         return true;
                     }
 

@@ -277,8 +277,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                 if (troop._attackAnimationFrameCounter >= ATTACK_ANIMATION_DURATION_FRAMES)
                                 {
                                     troop.Action = TroopAction.Stop;
-                                    troop.ApplyDamageList();
-                                    troop.ApplyStratagemEffect();
                                     troop._attackAnimationFrameCounter = 0; 
                                 }
                             }

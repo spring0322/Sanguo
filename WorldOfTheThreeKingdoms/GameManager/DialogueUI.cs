@@ -150,21 +150,21 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontS失败: {ex1.Message}");
                 try 
                 { 
-                    font = content.Load<SpriteFont>("FontS"); 
-                    System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: FontS");
+                    font = content.Load<SpriteFont>("Font/FontL"); 
+                    System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font/FontL");
                 } 
                 catch (Exception ex2)
                 { 
-                    System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载FontS失败: {ex2.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontL失败: {ex2.Message}");
                     try
                     {
                         // 尝试加载其他可能的字体
-                        font = content.Load<SpriteFont>("Font/FontL");
-                        System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font/FontL");
+                        font = content.Load<SpriteFont>("Font/FontE");
+                        System.Diagnostics.Debug.WriteLine("[DialogueUI] 成功加载字体: Font/FontE");
                     }
                     catch (Exception ex3)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontL失败: {ex3.Message}");
+                        System.Diagnostics.Debug.WriteLine($"[DialogueUI] 加载Font/FontE失败: {ex3.Message}");
                         // 字体加载完全失败，但不抛出异常，使用null字体
                         font = null;
                         System.Diagnostics.Debug.WriteLine("[DialogueUI] 警告: 所有字体加载失败，对话UI将无法正常显示文本");

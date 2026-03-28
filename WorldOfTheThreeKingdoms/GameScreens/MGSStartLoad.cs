@@ -210,11 +210,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         wujiang.suoshurenwu = -1;
                     }*/
 
-                    Session.Current.Scenario.CurrentPlayer = Session.Current.Scenario.PlayerFactions[0] as Faction;
-                    
-                    // 🔥 修复：同步设置 CurrentPlayerID
-                    // 注意：不需要空检查，如果 CurrentPlayer 为 null 说明数据源有问题，应该让它崩溃
-                    Session.Current.Scenario.CurrentPlayerID = Session.Current.Scenario.CurrentPlayer.ID.ToString();
+                    Session.Current.Scenario.NormalizeControlState();
                 }                
             }
             else  //从开始菜单读取游戏
@@ -1437,11 +1433,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // 因为此时 Faction.Architectures 列表还是空的（在 ProcessScenarioData 中才会填充）
             // RestoreObjectReferencesEnhanced 应该在 ProcessScenarioData 之后调用
 
-            // 11. Force CurrentPlayer (Final Safety)
-            if (scenario.CurrentPlayer == null && scenario.Factions.Count > 0)
-            {
-                scenario.CurrentPlayer = scenario.Factions[0] as Faction;
-            }
+            scenario.NormalizeControlState();
 
             System.Diagnostics.Debug.WriteLine("[LoadScenarioData] ✅ Nuclear Option 完整初始化完成!");
 
@@ -1634,6 +1626,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             System.Diagnostics.Debug.WriteLine($"[LoadScenario] fromScenario: {fromScenario}");
             #endif
             
+            scenario.PlayerFactions.Clear();
             if (scenario.PlayerList != null && scenario.PlayerList.Count > 0)
             {
                 #if DEBUG
@@ -1654,7 +1647,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 System.Diagnostics.Debug.WriteLine($"[LoadScenario] PlayerFactions 初始化完成，共 {scenario.PlayerFactions.Count} 个玩家势力");
                 #endif
             }
-            else
+            else if (!scenario.IsObserverModeActive())
             {
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[LoadScenario] ⚠️ PlayerList 为空或null，尝试从 CurrentPlayerID 恢复");
@@ -1703,7 +1696,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
             }
             
-            if (!String.IsNullOrEmpty(scenario.CurrentPlayerID))
+            if (!String.IsNullOrEmpty(scenario.CurrentPlayerID) && !scenario.IsObserverModeActive())
             {
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[LoadScenario] 设置 CurrentPlayer，CurrentPlayerID='{scenario.CurrentPlayerID}'");
@@ -1724,6 +1717,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 System.Diagnostics.Debug.WriteLine($"[LoadScenario] ⚠️ CurrentPlayerID 为空，无法设置 CurrentPlayer");
                 #endif
             }
+
+            scenario.NormalizeControlState();
             
             #if DEBUG
             System.Diagnostics.Debug.WriteLine($"[LoadScenario] ========== PlayerList 诊断结束 ==========");
@@ -1782,7 +1777,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     #endif
                 }
 
-            if (scenario.PlayerList != null && scenario.PlayerList.Count == 0)
+            if (scenario.IsObserverModeActive())
             {
                 Session.Current.Scenario.ForceOptionsOnAutoplay();
             }
@@ -1854,11 +1849,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             try
             {
                 System.Diagnostics.Debug.WriteLine("[水墨渲染器] 步骤1：开始加载纹理...");
-                var noiseTexture = Session.Current.Content.Load<Texture2D>("XuanPaperNoise");
+                var noiseTexture = Session.Current.Content.Load<Texture2D>("Effects/XuanPaperNoise");
                 System.Diagnostics.Debug.WriteLine("[水墨渲染器] 步骤1：✅ 纹理加载成功");
                 
                 System.Diagnostics.Debug.WriteLine("[水墨渲染器] 步骤2：开始加载着色器...");
-                var inkBleedEffect = Session.Current.Content.Load<Effect>("InkBleed");
+                var inkBleedEffect = Session.Current.Content.Load<Effect>("Effects/InkBleed");
                 System.Diagnostics.Debug.WriteLine("[水墨渲染器] 步骤2：✅ 着色器加载成功");
                 
                 int mapWidth = Session.Current.Scenario.ScenarioMap.MapDimensions.X;
@@ -2082,9 +2077,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     }
                 }
 
-                // 9. Force Player
-                if (scenario.CurrentPlayer == null && scenario.Factions.Count > 0)
-                    scenario.CurrentPlayer = scenario.Factions[0] as Faction;
+                scenario.NormalizeControlState();
 
                 System.Diagnostics.Debug.WriteLine($"[RestoreObjectReferences] ✅ 全面对象引用重建完成!");
             }
@@ -2092,15 +2085,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 System.Diagnostics.Debug.WriteLine($"[RestoreObjectReferences] ❌ 重建对象引用时发生异常: {ex.Message}");
                 
-                // Emergency fallback: ensure CurrentPlayer is set
-                if (scenario.CurrentPlayer == null && scenario.Factions != null && scenario.Factions.Count > 0)
-                {
-                    scenario.CurrentPlayer = scenario.Factions[0] as Faction;
-                    if (scenario.CurrentPlayer != null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[RestoreObjectReferences] 紧急设置当前玩家: {scenario.CurrentPlayer?.Name}");
-                    }
-                }
+                scenario.NormalizeControlState();
             }
         }
 

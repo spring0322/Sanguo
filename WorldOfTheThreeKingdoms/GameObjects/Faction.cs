@@ -7239,6 +7239,10 @@ namespace GameObjects
         public void EndControl()
         {
             this.ClearRouteways();
+            this.Controlling = false;
+            this.StopToControl = false;
+            this.Passed = false;
+            this.AIFinished = false;
             foreach (Troop t in this.Troops)
             {
                 t.ManualControl = false;

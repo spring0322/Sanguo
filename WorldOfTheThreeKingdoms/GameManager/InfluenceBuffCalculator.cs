@@ -102,6 +102,43 @@ public static class InfluenceBuffCalculator
         // 返回净能量：己方总能量 - 敌方最大能量
         return friendlyEnergy - maxEnemyEnergy;
     }
+
+    /// <summary>
+    /// 计算两段式增益进度：
+    /// midpointThreshold 对应 50%，fullThreshold 对应 100%。
+    /// </summary>
+    private static float CalculateTwoStageProgress(int netEnergy, int midpointThreshold, int fullThreshold, string context)
+    {
+        if (netEnergy <= 0)
+        {
+            return 0.0f;
+        }
+
+        if (midpointThreshold <= 0)
+        {
+            throw new InvalidOperationException(
+                $"[{context}] midpointThreshold 必须 > 0，当前={midpointThreshold}");
+        }
+
+        if (fullThreshold <= midpointThreshold)
+        {
+            throw new InvalidOperationException(
+                $"[{context}] fullThreshold 必须 > midpointThreshold，当前 full={fullThreshold}, midpoint={midpointThreshold}");
+        }
+
+        if (netEnergy <= midpointThreshold)
+        {
+            return 0.5f * (netEnergy / (float)midpointThreshold);
+        }
+
+        if (netEnergy >= fullThreshold)
+        {
+            return 1.0f;
+        }
+
+        float lateStageRatio = (netEnergy - midpointThreshold) / (float)(fullThreshold - midpointThreshold);
+        return 0.5f + (0.5f * lateStageRatio);
+    }
     
     /// <summary>
     /// 🆕 计算攻击加成（基于净能量）
@@ -117,10 +154,18 @@ public static class InfluenceBuffCalculator
         
         if (netEnergy > 0)
         {
-            // 己方优势：提供攻击加成
-            // 部队最高5%（阈值300），城池最高10%（阈值500）
-            int threshold = isArchitecture ? config.ArchitectureEnergyThresholdForCore : config.EnergyThresholdForCore;
-            float ratio = Math.Min(1.0f, netEnergy / (float)threshold);
+            // 己方优势：提供攻击加成（分段成长）
+            float ratio = isArchitecture
+                ? CalculateTwoStageProgress(
+                    netEnergy,
+                    config.ArchitectureEnergyThresholdForCore,
+                    config.ArchitectureAttackFullThreshold,
+                    "CalculateAttackBonus-Architecture")
+                : CalculateTwoStageProgress(
+                    netEnergy,
+                    config.EnergyThresholdForCore,
+                    config.TroopAttackDefenseFullThreshold,
+                    "CalculateAttackBonus-Troop");
             float maxBonus = isArchitecture ? config.MaxArchitectureAttackBonus : config.MaxAttackBonus;
             return 1.0f + (maxBonus * ratio);
         }
@@ -143,10 +188,18 @@ public static class InfluenceBuffCalculator
         
         if (netEnergy > 0)
         {
-            // 己方优势：提供防御加成
-            // 部队最高5%（阈值300），城池最高10%（阈值500）
-            int threshold = isArchitecture ? config.ArchitectureEnergyThresholdForCore : config.EnergyThresholdForCore;
-            float ratio = Math.Min(1.0f, netEnergy / (float)threshold);
+            // 己方优势：提供防御加成（分段成长）
+            float ratio = isArchitecture
+                ? CalculateTwoStageProgress(
+                    netEnergy,
+                    config.ArchitectureEnergyThresholdForCore,
+                    config.ArchitectureDefenseFullThreshold,
+                    "CalculateDefenseBonus-Architecture")
+                : CalculateTwoStageProgress(
+                    netEnergy,
+                    config.EnergyThresholdForCore,
+                    config.TroopAttackDefenseFullThreshold,
+                    "CalculateDefenseBonus-Troop");
             float maxBonus = isArchitecture ? config.MaxArchitectureDefenseBonus : config.MaxDefenseBonus;
             return 1.0f + (maxBonus * ratio);
         }
@@ -155,6 +208,31 @@ public static class InfluenceBuffCalculator
         return 1.0f;
     }
     
+    /// <summary>
+    /// 计算己方区域的粮食减免进度。
+    /// 城池采用分段增长：500 左右只到中段，后续能量继续提升时仍可继续增长。
+    /// </summary>
+    private static float CalculateFriendlyFoodReductionRatio(int netEnergy, bool isArchitecture)
+    {
+        if (netEnergy <= 0)
+        {
+            return 0.0f;
+        }
+
+        var config = GameData.InfluenceConfig.Current;
+
+        if (!isArchitecture)
+        {
+            return Math.Min(1.0f, netEnergy / (float)config.EnergyThresholdForCore);
+        }
+
+        return CalculateTwoStageProgress(
+            netEnergy,
+            config.ArchitectureEnergyThresholdForCore,
+            config.ArchitectureFoodReductionFullThreshold,
+            "CalculateFriendlyFoodReductionRatio-Architecture");
+    }
+
     /// <summary>
     /// 🆕 计算粮食消耗倍率（基于净能量）
     /// </summary>
@@ -173,8 +251,8 @@ public static class InfluenceBuffCalculator
         if (netEnergy > 0)
         {
             // 己方优势：减少粮食消耗（最大-15%）
-            // 🔥 动态计算：能量越高，减免越多
-            float ratio = Math.Min(1.0f, netEnergy / (float)threshold);
+            // 🔥 城池修复：正向粮耗减免改为分段增长，500 左右仅到中段，后续仍有成长空间
+            float ratio = CalculateFriendlyFoodReductionRatio(netEnergy, isArchitecture);
             return 1.0f - (config.MaxFoodReduction * ratio);
         }
         else if (netEnergy < 0)
@@ -201,30 +279,19 @@ public static class InfluenceBuffCalculator
         var config = GameData.InfluenceConfig.Current;
         int threshold = isArchitecture ? config.ArchitectureEnergyThresholdForCore : config.EnergyThresholdForCore;
         
-        if (netEnergy > threshold)
-        {
-            // 使用配置中的最大值
-            float maxAttack = (isArchitecture ? config.MaxArchitectureAttackBonus : config.MaxAttackBonus) * 100;
-            float maxDefense = (isArchitecture ? config.MaxArchitectureDefenseBonus : config.MaxDefenseBonus) * 100;
-            float maxFoodReduction = config.MaxFoodReduction * 100;
-            return $"己方核心区域：攻击+{maxAttack:F0}%，防御+{maxDefense:F0}%，粮耗-{maxFoodReduction:F0}%";
-        }
-        else if (netEnergy > 0)
+        if (netEnergy > 0)
         {
             float attackBonus = (CalculateAttackBonus(netEnergy, isArchitecture) - 1.0f) * 100;
             float defenseBonus = (CalculateDefenseBonus(netEnergy, isArchitecture) - 1.0f) * 100;
             float foodReduction = (1.0f - CalculateFoodConsumptionMultiplier(netEnergy, isArchitecture)) * 100;
-            return $"己方势力范围：攻击+{attackBonus:F1}%，防御+{defenseBonus:F1}%，粮耗-{foodReduction:F1}%";
-        }
-        else if (netEnergy < -threshold)
-        {
-            float enemyFoodPenalty = config.EnemyFoodPenalty * 100;
-            return $"敌方核心区域：粮耗+{enemyFoodPenalty:F0}%";
+            string areaName = netEnergy >= threshold ? "己方核心区域" : "己方势力范围";
+            return $"{areaName}：攻击+{attackBonus:F1}%，防御+{defenseBonus:F1}%，粮耗-{foodReduction:F1}%";
         }
         else if (netEnergy < 0)
         {
-            float enemyFoodPenalty = config.EnemyFoodPenalty * 100;
-            return $"敌方势力范围：粮耗+{enemyFoodPenalty:F0}%";
+            float enemyFoodPenalty = (CalculateFoodConsumptionMultiplier(netEnergy, isArchitecture) - 1.0f) * 100;
+            string areaName = netEnergy <= -threshold ? "敌方核心区域" : "敌方势力范围";
+            return $"{areaName}：粮耗+{enemyFoodPenalty:F1}%";
         }
         else
         {

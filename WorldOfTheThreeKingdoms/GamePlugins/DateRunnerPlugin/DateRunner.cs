@@ -294,6 +294,7 @@ namespace DateRunnerPlugin
 
         public void Reset()
         {
+            this.yizhiyunxing = false;
             this.playing = false;
             this.DaysLeft = 0;
             this.daysLeftBackUp = 0;
@@ -331,6 +332,11 @@ namespace DateRunnerPlugin
             if ((((this.DaysLeft == 0) && (this.daysLeftBackUp == 0)) && (this.DaysToGo > 0)) && !this.playing)
             {
                 System.Diagnostics.Debug.WriteLine($"[DateRunner] 检查自动结束条件: DaysLeft={this.DaysLeft}, daysLeftBackUp={this.daysLeftBackUp}, DaysToGo={this.DaysToGo}, playing={this.playing}");
+                if (scenario.IsObserverModeActive())
+                {
+                    this.RunDays(this.DaysToGo);
+                    return;
+                }
                 if (scenario.CurrentFaction == player && player.Controlling)
                 {
                     System.Diagnostics.Debug.WriteLine($"[DateRunner] 自动结束玩家回合 (条件1): 玩家={player.Name}，开始执行{this.DaysToGo}回合");

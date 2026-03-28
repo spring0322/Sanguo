@@ -122,6 +122,22 @@ public class InfluenceConfig
     /// <summary>核心区域能量阈值（城池）</summary>
     [JsonPropertyName("ArchitectureEnergyThresholdForCore")]
     public int ArchitectureEnergyThresholdForCore { get; set; }
+
+    /// <summary>城池粮食减免满额阈值（500 仅达到中段，继续成长到此值才吃满减免）</summary>
+    [JsonPropertyName("ArchitectureFoodReductionFullThreshold")]
+    public int ArchitectureFoodReductionFullThreshold { get; set; } = 1000;
+
+    /// <summary>部队攻防加成满额阈值（核心阈值仅到中段）</summary>
+    [JsonPropertyName("TroopAttackDefenseFullThreshold")]
+    public int TroopAttackDefenseFullThreshold { get; set; } = 600;
+
+    /// <summary>城池攻击加成满额阈值（核心阈值仅到中段）</summary>
+    [JsonPropertyName("ArchitectureAttackFullThreshold")]
+    public int ArchitectureAttackFullThreshold { get; set; } = 1000;
+
+    /// <summary>城池防御加成满额阈值（核心阈值仅到中段）</summary>
+    [JsonPropertyName("ArchitectureDefenseFullThreshold")]
+    public int ArchitectureDefenseFullThreshold { get; set; } = 1000;
     
     // ===== Buff 设置 =====
     

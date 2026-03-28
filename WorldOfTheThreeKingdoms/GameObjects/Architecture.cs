@@ -150,6 +150,7 @@ namespace GameObjects
             RateOfConvincePerson = 1;
             RateOfDestroyArchitecture = 1;
             RateOfFacilityEnduranceDown = 1;
+            RateOfArchitectureCounterDamage = 1;
             RateOfFoodReduceRate = 1;
             RateOfGossipArchitecture = 1;
             RateOfHirePerson = 1;
@@ -514,6 +515,7 @@ namespace GameObjects
         public float RateOfConvincePerson = 1f;
         public float RateOfDestroyArchitecture = 1f;
         public float RateOfFacilityEnduranceDown = 1f;
+        public float RateOfArchitectureCounterDamage = 1f;
         public float RateOfFoodReduceRate = 1f;
         public float RateOfGossipArchitecture = 1f;
         public float RateOfJailBreakArchitecture = 1f;
@@ -5723,6 +5725,16 @@ namespace GameObjects
                 this.BelongedFaction);
             
             // 2. 计算本次应应用的增量
+            float attackMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateAttackBonus(
+                netEnergy,
+                isArchitecture: true);
+            float newArchitectureCounterDamageDelta = attackMultiplier > 1.0f ? attackMultiplier - 1.0f : 0f;
+
+            float defenseMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateDefenseBonus(
+                netEnergy,
+                isArchitecture: true);
+            float newEnduranceDropDelta = defenseMultiplier > 1.0f ? defenseMultiplier - 1.0f : 0f;
+
             float foodConsumptionMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateFoodConsumptionMultiplier(
                 netEnergy,
                 isArchitecture: true);
@@ -5731,8 +5743,16 @@ namespace GameObjects
             int oldVisionDelta = _appliedInfluenceVisionDelta;
 
             // 3. 撤销旧增益，再应用新增益，保证幂等
+            this.RateOfArchitectureCounterDamage -= _appliedInfluenceArchitectureCounterDamageDelta;
+            this.enduranceDecreaseRateDrop -= _appliedInfluenceEnduranceDropDelta;
             this.RateOfFoodReduceRate -= _appliedInfluenceFoodReduceRateDelta;
+
+            _appliedInfluenceArchitectureCounterDamageDelta = newArchitectureCounterDamageDelta;
+            _appliedInfluenceEnduranceDropDelta = newEnduranceDropDelta;
             _appliedInfluenceFoodReduceRateDelta = newFoodReduceRateDelta;
+
+            this.RateOfArchitectureCounterDamage += _appliedInfluenceArchitectureCounterDamageDelta;
+            this.enduranceDecreaseRateDrop += _appliedInfluenceEnduranceDropDelta;
             this.RateOfFoodReduceRate += _appliedInfluenceFoodReduceRateDelta;
 
             // 4. 更新视野缓存，并在半径变化时重建视野登记
@@ -5747,10 +5767,14 @@ namespace GameObjects
 
             // 5. 记录调试信息
             #if DEBUG
-            if (_appliedInfluenceFoodReduceRateDelta != 0f)
+            if (_appliedInfluenceArchitectureCounterDamageDelta != 0f ||
+                _appliedInfluenceEnduranceDropDelta != 0f ||
+                _appliedInfluenceFoodReduceRateDelta != 0f)
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 获得增益：" +
+                    $"反击+{_appliedInfluenceArchitectureCounterDamageDelta * 100:F1}%，" +
+                    $"减伤+{_appliedInfluenceEnduranceDropDelta * 100:F1}%，" +
                     $"粮耗{_appliedInfluenceFoodReduceRateDelta * 100:F1}%，" +
                     $"视野={_cachedEffectiveViewDistance}");
             }
@@ -8075,7 +8099,7 @@ namespace GameObjects
         {
             // 🔥 重构：使用统一的军团创建入口
             // 日期：2026-03-09
-            this.DefensiveLegion = this.BelongedFaction.GetOrCreateLegion(this, LegionKind.AI, LegionMission.Defend);
+            this.DefensiveLegion = this.GetOrCreateDefensiveLegion();
             
             // 🔥 自动分配军团角色
             if (this.DefensiveLegion.Troops != null && this.DefensiveLegion.Troops.Count > 0)
@@ -8084,6 +8108,72 @@ namespace GameObjects
             }
             
             return this.DefensiveLegion;
+        }
+
+        public Legion ResolveDefensiveLegion()
+        {
+            if (this.DefensiveLegion != null &&
+                this.BelongedFaction != null &&
+                this.DefensiveLegion.BelongedFaction == this.BelongedFaction &&
+                this.DefensiveLegion.IsDefensive() &&
+                (this.DefensiveLegion.Target == this || this.DefensiveLegion.StartArchitecture == this))
+            {
+                this.DefensiveLegionID = this.DefensiveLegion.ID;
+                return this.DefensiveLegion;
+            }
+
+            Legion defensiveLegion = null;
+            if (this.BelongedFaction != null)
+            {
+                foreach (Legion legion in this.BelongedFaction.Legions)
+                {
+                    if (!legion.IsDefensive())
+                    {
+                        continue;
+                    }
+
+                    if (legion.Target == this)
+                    {
+                        defensiveLegion = legion;
+                        break;
+                    }
+                }
+
+                if (defensiveLegion == null)
+                {
+                    foreach (Legion legion in this.BelongedFaction.Legions)
+                    {
+                        if (!legion.IsDefensive())
+                        {
+                            continue;
+                        }
+
+                        if (legion.StartArchitecture == this)
+                        {
+                            defensiveLegion = legion;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            this.DefensiveLegion = defensiveLegion;
+            this.DefensiveLegionID = defensiveLegion != null ? defensiveLegion.ID : -1;
+            return defensiveLegion;
+        }
+
+        public Legion GetOrCreateDefensiveLegion()
+        {
+            Legion defensiveLegion = this.ResolveDefensiveLegion();
+            if (defensiveLegion != null)
+            {
+                return defensiveLegion;
+            }
+
+            defensiveLegion = this.BelongedFaction.GetOrCreateLegion(this, LegionKind.AI, LegionMission.Defend);
+            this.DefensiveLegion = defensiveLegion;
+            this.DefensiveLegionID = defensiveLegion.ID;
+            return defensiveLegion;
         }
 
         /*
@@ -8759,10 +8849,11 @@ namespace GameObjects
                     }
 
                     // --- B. 唤醒防守方（使用螺旋散布防止堆叠）---
-                    if (a.DefensiveLegion != null)
+                    Legion defensiveLegion = a.ResolveDefensiveLegion();
+                    if (defensiveLegion != null)
                     {
                         int defenderIndex = 0;
-                        foreach (Troop t in a.DefensiveLegion.Troops)
+                        foreach (Troop t in defensiveLegion.Troops)
                         {
                             // 🔥 只在第一次唤醒时执行瞬移
                             if (t.QuickBattling)
@@ -8870,9 +8961,10 @@ namespace GameObjects
                         a.DefensiveCampaign(currentLegion.Troops);
                     }
                     
-                    if (a.DefensiveLegion != null)
+                    Legion defensiveLegion = a.ResolveDefensiveLegion();
+                    if (defensiveLegion != null)
                     {
-                        foreach (Troop t in a.DefensiveLegion.Troops)
+                        foreach (Troop t in defensiveLegion.Troops)
                         {
                             // 🔧 FIX: 禁用快速战斗隐身模式，部队始终可见
                             // t.QuickBattling = true;
@@ -8884,9 +8976,9 @@ namespace GameObjects
                     }
 
                     // fight
-                    if (a.DefensiveLegion != null)
+                    if (defensiveLegion != null)
                     {
-                        GameObjectList defList = a.DefensiveLegion.Troops.GetList();
+                        GameObjectList defList = defensiveLegion.Troops.GetList();
                         foreach (Troop t in defList)
                         {
                             if (currentLegion.Troops.Count > 0)
@@ -8894,7 +8986,6 @@ namespace GameObjects
                                 TroopList list = currentLegion.Troops;
                                 Troop target = (Troop)list[GameObject.Random(list.Count)];
                                 t.AttackTroop(target);
-                                t.ApplyDamageList();
                             }
                             else
                             {
@@ -8908,7 +8999,6 @@ namespace GameObjects
                         if (a.Endurance > 0)
                         {
                             t.AttackArchitecture(a);
-                            t.ApplyDamageList();
                             if (a.Endurance <= 0)
                             {
                                 break;
@@ -8916,11 +9006,10 @@ namespace GameObjects
                         }
                         else
                         {
-                            if (a.DefensiveLegion != null && a.DefensiveLegion.Troops.Count > 0)
+                            if (defensiveLegion != null && defensiveLegion.Troops.Count > 0)
                             {
-                                Troop target = (Troop)a.DefensiveLegion.Troops[GameObject.Random(a.DefensiveLegion.Troops.Count)];
+                                Troop target = (Troop)defensiveLegion.Troops[GameObject.Random(defensiveLegion.Troops.Count)];
                                 t.AttackTroop(target);
-                                t.ApplyDamageList();
                             }
                             else
                             {
@@ -9636,11 +9725,8 @@ namespace GameObjects
                                 
                                 // 🔧 FIX: 不再设置 WillArchitecture = this，避免防守部队自杀
                                 // troop2.WillArchitecture = this; // ❌ 已删除
-                                if (this.DefensiveLegion == null)
-                                {
-                                    this.CreateDefensiveLegion();
-                                }
-                                this.DefensiveLegion.AddTroop(troop2);
+                                Legion defensiveLegion = this.GetOrCreateDefensiveLegion();
+                                defensiveLegion.AddTroop(troop2);
                                 //this.PostCreateTroop(troop2, false);
                                 this.TotalFriendlyForce += troop2.FightingForce;
                                 troopSent++;
@@ -9787,11 +9873,8 @@ namespace GameObjects
                                 troop2 = i.A.CreateTroop(candidates, leader, troop.Army, -1, nullable.Value);
                                 // 🔧 FIX: 不再设置 WillArchitecture = this，避免援军自杀
                                 // troop2.WillArchitecture = this; // ❌ 已删除
-                                if (this.DefensiveLegion == null)
-                                {
-                                    this.CreateDefensiveLegion();
-                                }
-                                this.DefensiveLegion.AddTroop(troop2);
+                                Legion defensiveLegion = this.GetOrCreateDefensiveLegion();
+                                defensiveLegion.AddTroop(troop2);
                                // i.A.PostCreateTroop(troop2, false);
                                 this.TotalFriendlyForce += troop2.FightingForce;
                             }
@@ -15813,7 +15896,8 @@ namespace GameObjects
             {
                 this.TotalHostileForce += troop.FightingForce;
             }
-            if (this.DefensiveLegion == null)
+            Legion defensiveLegion = this.ResolveDefensiveLegion();
+            if (defensiveLegion == null)
             {
                 TroopList friendlyTroopsInView = this.GetFriendlyTroopsInView();
                 foreach (Troop troop in friendlyTroopsInView)
@@ -15823,7 +15907,7 @@ namespace GameObjects
             }
             else
             {
-                foreach (Troop i in this.DefensiveLegion.Troops)
+                foreach (Troop i in defensiveLegion.Troops)
                 {
                     this.TotalFriendlyForce += i.FightingForce;
                 }
@@ -16579,6 +16663,7 @@ namespace GameObjects
                     this.BelongedSection.RemoveArchitecture(this);
                 }
                 this.DefensiveLegion = null;
+                this.DefensiveLegionID = -1;
                 if (this == this.BelongedFaction.Capital || this.BelongedFaction.ArchitectureCount <= 1)
                 {
                     Person leader = this.BelongedFaction.Leader;
@@ -17442,11 +17527,12 @@ namespace GameObjects
             get
             {
                 int num = 0;
+                Legion defensiveLegion = this.ResolveDefensiveLegion();
                 foreach (Legion legion in this.BelongedFaction.Legions)
                 {
                     if (legion.IsDefensive())
                     {
-                        if (legion == this.DefensiveLegion)
+                        if (legion == defensiveLegion)
                         {
                             num += legion.FoodCostPerDay * 80;
                         }
@@ -18006,11 +18092,12 @@ namespace GameObjects
             get
             {
                 int num = 0;
+                Legion defensiveLegion = this.ResolveDefensiveLegion();
                 foreach (Legion legion in this.BelongedFaction.Legions)
                 {
                     if (legion.IsDefensive())
                     {
-                        if (legion == this.DefensiveLegion)
+                        if (legion == defensiveLegion)
                         {
                             num += legion.FoodCostPerDay * 30;
                         }
@@ -18638,7 +18725,7 @@ namespace GameObjects
         {
             get
             {
-                return (this.DefensiveLegion != null);
+                return this.ResolveDefensiveLegion() != null;
             }
         }
 
@@ -18933,6 +19020,8 @@ namespace GameObjects
         /// 日期：2026-03-16
         /// </summary>
         private int _cachedEffectiveViewDistance = -1;
+        private float _appliedInfluenceArchitectureCounterDamageDelta = 0f;
+        private float _appliedInfluenceEnduranceDropDelta = 0f;
         private float _appliedInfluenceFoodReduceRateDelta = 0f;
         private int _appliedInfluenceVisionDelta = 0;
         

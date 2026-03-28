@@ -123,16 +123,112 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 // 在编辑模式下，跳过其他按键处理
                 return;
             }
+
+            if (Session.Current?.Scenario == null)
+            {
+                return;
+            }
+
+            var currentPlayer = Session.Current.Scenario.CurrentPlayer;
+            if (currentPlayer == null && !Session.Current.Scenario.IsObserverModeActive())
+            {
+                return;
+            }
             
             // 🛡️ 新增：防弹检查
             // 如果剧本还没加载好，或者当前没有玩家，直接跳过按键处理，不要崩！
-            if (Session.Current?.Scenario?.CurrentPlayer == null) 
+            if (currentPlayer == null && !Session.Current.Scenario.IsObserverModeActive()) 
             {
                 return; // 直接不再往下执行，等待下一帧数据加载好
             }
             
             // 原来的逻辑放在下面
-            if (Session.Current.Scenario.CurrentPlayer.Controlling)
+            if (currentPlayer == null && Session.Current.Scenario.IsObserverModeActive())
+            {
+                if (InputManager.KeyBoardState.IsKeyDown(Keys.D1))
+                {
+                    this.currentKey = Keys.D1;
+                    this.DateGo(1);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D2))
+                {
+                    this.currentKey = Keys.D2;
+                    this.DateGo(2);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D3))
+                {
+                    this.currentKey = Keys.D3;
+                    this.DateGo(3);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D4))
+                {
+                    this.currentKey = Keys.D4;
+                    this.DateGo(4);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D5))
+                {
+                    this.currentKey = Keys.D5;
+                    this.DateGo(5);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D6))
+                {
+                    this.currentKey = Keys.D6;
+                    this.DateGo(6);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D7))
+                {
+                    this.currentKey = Keys.D7;
+                    this.DateGo(7);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D8))
+                {
+                    this.currentKey = Keys.D8;
+                    this.DateGo(8);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D9))
+                {
+                    this.currentKey = Keys.D9;
+                    this.DateGo(9);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.D0))
+                {
+                    this.currentKey = Keys.D0;
+                    this.DateGo(10);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.F1))
+                {
+                    this.currentKey = Keys.F1;
+                    this.DateGo(30);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.F2))
+                {
+                    this.currentKey = Keys.F2;
+                    this.DateGo(60);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.F3))
+                {
+                    this.currentKey = Keys.F3;
+                    this.DateGo(90);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.F5))
+                {
+                    this.currentKey = Keys.F5;
+                    this.DateGo(-999);
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.Q))
+                {
+                    this.currentKey = Keys.Q;
+                    Session.GlobalVariables.ShowGrid = !Session.GlobalVariables.ShowGrid;
+                }
+                else if (InputManager.KeyBoardState.IsKeyDown(Keys.LeftAlt) && InputManager.KeyBoardState.IsKeyDown(Keys.C) && Session.GlobalVariables.EnableCheat)
+                {
+                    this.currentKey = Keys.C;
+                    changeFaction();
+                }
+                return;
+            }
+
+            if (currentPlayer != null && currentPlayer.Controlling)
             {
                 if (InputManager.KeyBoardState.IsKeyDown(Keys.D1))
                 {

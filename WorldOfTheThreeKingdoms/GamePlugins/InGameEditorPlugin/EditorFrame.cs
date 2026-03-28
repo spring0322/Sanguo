@@ -108,7 +108,7 @@ namespace InGameEditorPlugin
                 if (Session.Current?.FontContent != null)
                 {
                     try { cachedFont = Session.Current.FontContent.Load<SpriteFont>("Font/FontS"); return cachedFont; } catch { }
-                    try { cachedFont = Session.Current.FontContent.Load<SpriteFont>("FontS"); return cachedFont; } catch { }
+                    try { cachedFont = Session.Current.FontContent.Load<SpriteFont>("Font/FontL"); return cachedFont; } catch { }
                 }
             }
             catch (Exception ex)

@@ -79,30 +79,40 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         private void HandleLaterMouseEvent(GameTime gameTime)
         {
-            if (base.EnableMouseEvent && base.EnableLaterMouseEvent)
+            try
             {
-                if (!StaticMethods.PointInViewport(new Point(InputManager.PoX, InputManager.PoY), base.viewportSize))
+                if (base.EnableMouseEvent && base.EnableLaterMouseEvent)
                 {
-                    this.UpdateViewMove();
-                }
-                else
-                {
-                    this.ResetCurrentStatus();
-                    this.CurrentArchitecture = Session.Current.Scenario.GetArchitectureByPosition(this.position);
-                    this.CurrentTroop = Session.Current.Scenario.GetTroopByPosition(this.position);
-                    this.CurrentRouteway = Session.Current.Scenario.GetRoutewayByPositionAndFaction(this.position, Session.Current.Scenario.CurrentPlayer);
-                    this.HandleLaterMouseMove();
-                    this.HandleLaterMouseScroll();
-                    if (this.viewMove == ViewMove.Stop)
+                    if (!StaticMethods.PointInViewport(new Point(InputManager.PoX, InputManager.PoY), base.viewportSize))
                     {
-                        this.HandleLaterMouseLeftDown();
-                        this.HandleLaterMouseLeftUp();
-                        this.HandleLaterMouseRightDown();
-                        this.HandleLaterMouseRightUp();
-                        this.UpdateConmentText(gameTime);
-                        this.UpdateSurvey(gameTime);
+                        this.UpdateViewMove();
+                    }
+                    else
+                    {
+                        this.ResetCurrentStatus();
+                        Faction routewayFaction = Session.Current.Scenario.IsObserverModeActive()
+                            ? this.GetViewingFaction()
+                            : Session.Current.Scenario.CurrentPlayer;
+                        this.CurrentArchitecture = Session.Current.Scenario.GetArchitectureByPosition(this.position);
+                        this.CurrentTroop = Session.Current.Scenario.GetTroopByPosition(this.position);
+                        this.CurrentRouteway = Session.Current.Scenario.GetRoutewayByPositionAndFaction(this.position, routewayFaction);
+                        this.HandleLaterMouseMove();
+                        this.HandleLaterMouseScroll();
+                        if (this.viewMove == ViewMove.Stop)
+                        {
+                            this.HandleLaterMouseLeftDown();
+                            this.HandleLaterMouseLeftUp();
+                            this.HandleLaterMouseRightDown();
+                            this.HandleLaterMouseRightUp();
+                            this.UpdateConmentText(gameTime);
+                            this.UpdateSurvey(gameTime);
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[HandleLaterMouseEvent] 异常: {ex}");
             }
         }
 
