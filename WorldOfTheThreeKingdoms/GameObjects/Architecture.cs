@@ -3243,6 +3243,12 @@ namespace GameObjects
                 case 4: return p.MoraleAbility;
                 case 5: return p.EnduranceAbility;
                 case 6: return p.TrainingAbility;
+                case 7:
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.补充) / 200.0f);
+
+                case 8:
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.赈灾) / 200.0f);
+
                 default: return 1.0f;
             }
         }
@@ -3443,31 +3449,37 @@ namespace GameObjects
             switch (workIndex)
             {
                 case 0: // 农业 (Politics)
-                    if (p.Politics < STAT_THRESHOLD) return (p.Politics / 100.0f) * 0.6f;
-                    return p.Politics / 100.0f;
+                    if (p.Politics < STAT_THRESHOLD) return (p.GetWorkAbility(ArchitectureWorkKind.农业) / 100.0f) * 0.6f;
+                    return Math.Min(1.25f, p.GetWorkAbility(ArchitectureWorkKind.农业) / 100.0f);
                     
                 case 1: // 商业 (Politics)
-                    if (p.Politics < STAT_THRESHOLD) return (p.Politics / 100.0f) * 0.6f;
-                    return p.Politics / 100.0f;
+                    if (p.Politics < STAT_THRESHOLD) return (p.GetWorkAbility(ArchitectureWorkKind.商业) / 100.0f) * 0.6f;
+                    return Math.Min(1.25f, p.GetWorkAbility(ArchitectureWorkKind.商业) / 100.0f);
                     
                 case 2: // 技术 (Intelligence)
-                    if (p.Intelligence < STAT_THRESHOLD) return (p.Intelligence / 100.0f) * 0.6f;
-                    return p.Intelligence / 100.0f;
+                    if (p.Intelligence < STAT_THRESHOLD) return (p.GetWorkAbility(ArchitectureWorkKind.技术) / 100.0f) * 0.6f;
+                    return Math.Min(1.25f, p.GetWorkAbility(ArchitectureWorkKind.技术) / 100.0f);
                     
                 case 3: // 统治 (Average of Strength and Glamour)
-                    return (p.Strength / 100.0f + p.Glamour / 100.0f) / 2.0f;
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.统治) / 200.0f);
                     
                 case 4: // 民心 (Average of Strength and Glamour)
-                    return (p.Strength / 100.0f + p.Glamour / 100.0f) / 2.0f;
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.民心) / 200.0f);
                     
                 case 5: // 耐久 (Strength + Command)
-                    return (p.Strength + p.Command) / 200.0f;
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.耐久) / 200.0f);
                     
                 case 6: // 训练 (Strength + Command, with bonus for fierce generals)
-                    float trainScore = (p.Strength + p.Command) / 200.0f;
-                    if (p.Strength > 80) trainScore *= 2.0f;
+                    float trainScore = Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.训练) / 200.0f);
+                    if (p.Strength > 80) trainScore *= 1.2f;
                     return trainScore;
-                    
+
+                case 7:
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.补充) / 200.0f);
+
+                case 8:
+                    return Math.Min(1.5f, p.GetWorkAbility(ArchitectureWorkKind.赈灾) / 200.0f);
+
                 default: return 1.0f;
             }
         }
@@ -3475,18 +3487,20 @@ namespace GameObjects
         /// <summary>
         /// 分配特定工作给武将
         /// </summary>
-        private void AssignSpecificWork(Person p, int workIndex)
+        private bool AssignSpecificWork(Person p, int workIndex)
         {
             switch (workIndex)
             {
-                case 0: p.WorkKind = ArchitectureWorkKind.农业; break;
-                case 1: p.WorkKind = ArchitectureWorkKind.商业; break;
-                case 2: p.WorkKind = ArchitectureWorkKind.技术; break;
-                case 3: p.WorkKind = ArchitectureWorkKind.统治; break;
-                case 4: p.WorkKind = ArchitectureWorkKind.民心; break;
-                case 5: p.WorkKind = ArchitectureWorkKind.耐久; break;
-                case 6: p.WorkKind = ArchitectureWorkKind.训练; break;
-                default: p.WorkKind = ArchitectureWorkKind.训练; break;
+                case 0: p.WorkKind = ArchitectureWorkKind.农业; return true;
+                case 1: p.WorkKind = ArchitectureWorkKind.商业; return true;
+                case 2: p.WorkKind = ArchitectureWorkKind.技术; return true;
+                case 3: p.WorkKind = ArchitectureWorkKind.统治; return true;
+                case 4: p.WorkKind = ArchitectureWorkKind.民心; return true;
+                case 5: p.WorkKind = ArchitectureWorkKind.耐久; return true;
+                case 6: p.WorkKind = ArchitectureWorkKind.训练; return true;
+                case 7: return this.TryAssignRecruitmentWork(p);
+                case 8: p.WorkKind = ArchitectureWorkKind.赈灾; return true;
+                default: return false;
             }
         }
 
@@ -3531,6 +3545,17 @@ namespace GameObjects
             */
             
             // 🔥 修复：放宽招募条件，确保编队能及时补充
+            if (this.BelongedFaction != null &&
+                !Session.Current.Scenario.IsPlayer(this.BelongedFaction) &&
+                !this.CanExecuteAIRecruitment(false))
+            {
+                foreach (Military m in this.Militaries)
+                {
+                    m.StopRecruitment();
+                }
+                return;
+            }
+
             bool shouldRecruit = false;
             string recruitReason = "";
             
@@ -3723,8 +3748,8 @@ namespace GameObjects
                     {
                         p.WorkKind = ArchitectureWorkKind.训练;
                     }
+                    return;
                 }
-                return;
             }
 
             // 🧠 使用新的智能工作分配系统
@@ -3736,23 +3761,7 @@ namespace GameObjects
                 // 如果智能分配失败，使用兜底逻辑
                 if (p.WorkKind == ArchitectureWorkKind.无)
                 {
-                    // 兜底：至少让武将做点什么
-                    if (this.GetTrainingMilitaryList().Count > 0)
-                    {
-                        p.WorkKind = ArchitectureWorkKind.训练;
-                    }
-                    else if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling)
-                    {
-                        p.WorkKind = ArchitectureWorkKind.农业;
-                    }
-                    else if (_architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling)
-                    {
-                        p.WorkKind = ArchitectureWorkKind.商业;
-                    }
-                    else if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling)
-                    {
-                        p.WorkKind = ArchitectureWorkKind.耐久;
-                    }
+                    this.AssignDefaultWork(p);
                 }
             }
 
@@ -3787,6 +3796,12 @@ namespace GameObjects
         {
             // 0. 基础门槛：如果连补兵的资格都没有（没钱/没人口），直接不谈
             if (!this.NewMilitaryAvail()) return;
+            if (this.BelongedFaction != null &&
+                !Session.Current.Scenario.IsPlayer(this.BelongedFaction) &&
+                !this.CanExecuteAIRecruitment(true))
+            {
+                return;
+            }
 
             // =========================================================
             // 🎲 软上限概率控制系统 (Soft Cap System)
@@ -13624,19 +13639,34 @@ namespace GameObjects
                             //Label_0220:;
                         }
                     }
+                    AICityOperationalState cityState = this.GetAICityOperationalState();
+                    int searchQuota = cityState switch
+                    {
+                        AICityOperationalState.Balanced => Math.Max(1, this.PersonCount / 8),
+                        AICityOperationalState.MilitaryBuildUp => Math.Max(1, this.PersonCount / 10),
+                        _ => 0
+                    };
+                    int searchingCount = 0;
                     foreach (Person person in this.PersonsExcludeNvGuan.GetList())
                     {
+                        if (searchingCount >= searchQuota)
+                        {
+                            break;
+                        }
                         if (person.ReturnedDaySince >= 3)
                         {
-                            if (this.Fund < Session.Parameters.InternalFundCost ||
-                                    (person.WaitForFeiZi == null && person.WorkKind == ArchitectureWorkKind.无 &&
-                                    !person.HasFollowingArmy && !person.HasEffectiveLeadingArmy &&
-                                    (!this.withoutTruceFrontline || GameObject.Random(person.FightingNumber) < 100)
-                                ))
+                            if (person.WaitForFeiZi == null &&
+                                person.WorkKind == ArchitectureWorkKind.无 &&
+                                !person.HasFollowingArmy &&
+                                !person.HasEffectiveLeadingArmy &&
+                                (this.Fund < Session.Parameters.InternalFundCost ||
+                                 !this.withoutTruceFrontline ||
+                                 GameObject.Random(person.FightingNumber) < 100))
                             {
                                 if (person.Tiredness <= 0)
                                 {
                                     person.GoForSearch();
+                                    searchingCount++;
                                 }
                             }
                         }
@@ -16158,6 +16188,16 @@ namespace GameObjects
 
         private void RecruitmentMilitary(Military military)
         {
+            if (this.BelongedFaction != null &&
+                !Session.Current.Scenario.IsPlayer(this.BelongedFaction) &&
+                !this.CanExecuteAIRecruitment(false))
+            {
+                if (military != null)
+                {
+                    military.StopRecruitment();
+                }
+                return;
+            }
 
             if ((((this.MilitaryPopulation != 0) && (this.Population != 0) && (!Session.GlobalVariables.PopulationRecruitmentLimit
                 || (this.ArmyQuantity <= this.Population))) && ((this.Fund >= (Session.Parameters.RecruitmentFundCost * this.AreaCount * (this.CanRecruitMilitary(military.Kind) ? 1 : 10))))
@@ -16247,6 +16287,16 @@ namespace GameObjects
 
         public void RecruitmentMilitary(Military military, float scale)
         {
+            if (this.BelongedFaction != null &&
+                !Session.Current.Scenario.IsPlayer(this.BelongedFaction) &&
+                !this.CanExecuteAIRecruitment(false))
+            {
+                if (military != null)
+                {
+                    military.StopRecruitment();
+                }
+                return;
+            }
 
             if ((((this.MilitaryPopulation != 0) && (this.Population != 0) && (!Session.GlobalVariables.PopulationRecruitmentLimit || (this.ArmyQuantity <= this.Population))) && (this.Domination >= Session.Parameters.RecruitmentDomination)) && (military.Quantity < military.Kind.MaxScale))
             {

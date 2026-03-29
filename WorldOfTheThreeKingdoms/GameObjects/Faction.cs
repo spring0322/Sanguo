@@ -2717,7 +2717,8 @@ namespace GameObjects
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[AIArchitectures Error] {this.Name} - {architecture.Name}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[AIArchitectures Error] {this.Name} - {architecture.Name}(ID:{architecture.ID}): {ex}");
                 }
             }
         }
@@ -8424,12 +8425,15 @@ namespace GameObjects
             {
                 Architecture architecture = (obj is Architecture ? (Architecture)obj : null);
                 if (architecture == null) continue;
+                bool isDelegatedAutoRun = architecture.BelongedSection != null &&
+                    architecture.BelongedSection.AIDetail != null &&
+                    architecture.BelongedSection.AIDetail.AutoRun;
                 
                 // 🔥 关键逻辑变更：只有开启了AutoRun的军区才由AI托管。 
                 // 如果建筑没有军区(BelongedSection == null)，在玩家势力下通常意味着君主直辖，不应由AI自动执行。
-                if (architecture.BelongedSection != null &&
-                    architecture.BelongedSection.AIDetail != null &&
-                    architecture.BelongedSection.AIDetail.AutoRun)
+                try
+                {
+                if (isDelegatedAutoRun)
                 {
                     // System.Diagnostics.Debug.WriteLine($"[Diagnostic] Calling Architecture.AI for {architecture.Name} (Section:{architecture.BelongedSection?.Name} AutoRun:{architecture.BelongedSection?.AIDetail?.AutoRun})");
                     architecture.AI();
@@ -8439,6 +8443,13 @@ namespace GameObjects
                     // 玩家直接控制的城市执行 PlayerAutoAI (处理一些基础自动项如人口增长，但不进行决策)
                     // System.Diagnostics.Debug.WriteLine($"[Diagnostic] Calling Architecture.PlayerAutoAI for {architecture.Name} (Section:{architecture.BelongedSection?.Name} AutoRun:{architecture.BelongedSection?.AIDetail?.AutoRun})");
                     architecture.PlayerAutoAI();
+                }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[PlayerAIArchitectures Error] {this.Name} - {architecture.Name}(ID:{architecture.ID}) delegated={isDelegatedAutoRun}: {ex}");
+                    throw;
                 }
             }
         }

@@ -645,7 +645,17 @@ namespace GameObjects
                         $"TroopList 中存在非 Troop 类型的对象：{troops[i]?.GetType().Name ?? "null"}");
                 }
 
-                troop.ApplyInfluenceBuff();
+                try
+                {
+                    troop.ApplyInfluenceBuff();
+                }
+                catch (Exception ex)
+                {
+                    string factionName = troop.BelongedFaction == null ? "null" : troop.BelongedFaction.Name;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[TroopList.ApplyInfluenceBuff] troop={troop.DisplayName}(ID:{troop.ID}), faction={factionName}, startingArchitectureId={troop.StartingArchitectureID}: {ex}");
+                    throw;
+                }
             }
         }
     }

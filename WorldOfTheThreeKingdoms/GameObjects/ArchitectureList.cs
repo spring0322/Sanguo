@@ -80,7 +80,17 @@ namespace GameObjects
                 {
                     throw new InvalidOperationException($"ArchitectureList 中存在非 Architecture 类型的对象：{base.GameObjects[i]?.GetType().Name ?? "null"}");
                 }
-                architecture.ApplyInfluenceBuff();
+                try
+                {
+                    architecture.ApplyInfluenceBuff();
+                }
+                catch (Exception ex)
+                {
+                    string factionName = architecture.BelongedFaction == null ? "null" : architecture.BelongedFaction.Name;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[ArchitectureList.ApplyInfluenceBuff] architecture={architecture.Name}(ID:{architecture.ID}), faction={factionName}: {ex}");
+                    throw;
+                }
             }
         }
 

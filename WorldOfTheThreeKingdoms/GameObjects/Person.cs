@@ -5284,6 +5284,9 @@ namespace GameObjects
 
                 case ArchitectureWorkKind.训练:
                     return this.TrainingAbility;
+
+                case ArchitectureWorkKind.补充:
+                    return this.RecruitmentAbility;
             }
             return 0;
         }

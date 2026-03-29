@@ -41,6 +41,24 @@ namespace GameObjects
         [JsonInclude]
         public int Year = 0xb8;
 
+        private string lastEndRunningBlockReason = string.Empty;
+
+        private void TraceEndRunningBlock(string reason)
+        {
+            if (this.lastEndRunningBlockReason == reason)
+            {
+                return;
+            }
+
+            this.lastEndRunningBlockReason = reason;
+            System.Diagnostics.Debug.WriteLine(reason);
+        }
+
+        private void ResetEndRunningBlock()
+        {
+            this.lastEndRunningBlockReason = string.Empty;
+        }
+
         public bool EndRunning()
         {
             if (!this.IsRunning)
@@ -54,12 +72,19 @@ namespace GameObjects
             // 阻塞条件 1：AI 正在思考
             if (scenario.Threading)
             {
+                string currentPlayerName = scenario.CurrentPlayer == null ? "null" : scenario.CurrentPlayer.Name;
+                string currentPlayerPassed = scenario.CurrentPlayer == null ? "n/a" : scenario.CurrentPlayer.Passed.ToString();
+                string currentPlayerControlling = scenario.CurrentPlayer == null ? "n/a" : scenario.CurrentPlayer.Controlling.ToString();
+                this.TraceEndRunningBlock(
+                    $"[GameDate.EndRunning] blocked by threading. CurrentPlayer={currentPlayerName}, Passed={currentPlayerPassed}, Controlling={currentPlayerControlling}");
                 return false;
             }
             
             // 阻塞条件 2：玩家未通过回合
             if (scenario.CurrentPlayer != null && !scenario.CurrentPlayer.Passed)
             {
+                this.TraceEndRunningBlock(
+                    $"[GameDate.EndRunning] blocked by current player not passed. CurrentPlayer={scenario.CurrentPlayer.Name}, Controlling={scenario.CurrentPlayer.Controlling}");
                 // 🔥 死锁修复：如果玩家未 Passed 且未 Controlling，强制授予控制权
                 if (!scenario.CurrentPlayer.Controlling)
                 {
@@ -70,7 +95,16 @@ namespace GameObjects
             }
             
             // ✅ 所有阻塞条件解除，触发日事件
-            scenario.DayPassedEvent();
+            this.ResetEndRunningBlock();
+            try
+            {
+                scenario.DayPassedEvent();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[GameDate.EndRunning] DayPassedEvent failed: " + ex);
+                throw;
+            }
             
             // 🔥 月事件和年事件检查
             if (this.Day >= 30 - Session.Parameters.DayInTurn + 1)
@@ -78,24 +112,45 @@ namespace GameObjects
                 // 月末：检查是否需要阻塞
                 if (scenario.Threading)
                 {
+                    this.TraceEndRunningBlock(
+                        "[GameDate.EndRunning] blocked before MonthPassedEvent because threading is still true after DayPassedEvent.");
                     return false;
                 }
                 
-                scenario.MonthPassedEvent();
+                try
+                {
+                    scenario.MonthPassedEvent();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("[GameDate.EndRunning] MonthPassedEvent failed: " + ex);
+                    throw;
+                }
                 
                 // 年末：检查是否需要阻塞
                 if (this.Month >= 12)
                 {
                     if (scenario.Threading)
                     {
+                        this.TraceEndRunningBlock(
+                            "[GameDate.EndRunning] blocked before YearPassedEvent because threading is still true after MonthPassedEvent.");
                         return false;
                     }
                     
-                    scenario.YearPassedEvent();
+                    try
+                    {
+                        scenario.YearPassedEvent();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[GameDate.EndRunning] YearPassedEvent failed: " + ex);
+                        throw;
+                    }
                 }
             }
             
             // ✅ 所有事件处理完成
+            this.ResetEndRunningBlock();
             this.IsRunning = false;
             return true;
         }

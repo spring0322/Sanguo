@@ -11209,10 +11209,32 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                     if (!troopsMovementDone && Session.Current?.Scenario?.Date != null && Session.Current.Scenario.Date.IsRunning) 
                     {
                         if (shouldLog) System.Diagnostics.Debug.WriteLine("[GameGo] 同步模式：部队移完，调用DateStop");
-                        this.Plugins.DateRunnerPlugin.DateStop();
+                        try
+                        {
+                            this.Plugins.DateRunnerPlugin.DateStop();
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[RoundEnd] DateStop failed in GameGo sync path: " + ex);
+                            throw;
+                        }
+
+                        var scenarioAfterDateStop = Session.Current == null ? null : Session.Current.Scenario;
+                        if (scenarioAfterDateStop != null && scenarioAfterDateStop.Date != null && scenarioAfterDateStop.Date.IsRunning)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[RoundEnd] DateStop returned but GameDate.IsRunning is still true in GameGo sync path.");
+                        }
                         
                         // 🗺️ 回合结束时强制更新所有势力范围（2026-03-11）
-                        _influenceUpdateManager?.ForceUpdateAll();
+                        try
+                        {
+                            _influenceUpdateManager?.ForceUpdateAll();
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine("[RoundEnd] ForceUpdateAll failed in GameGo sync path: " + ex);
+                            throw;
+                        }
                     }
                 }
             }
@@ -12019,10 +12041,32 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                                 if (roundDone)
                                 {
                                     roundDone = false;
-                                    this.Plugins.DateRunnerPlugin.DateStop();
+                                    try
+                                    {
+                                        this.Plugins.DateRunnerPlugin.DateStop();
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine("[RoundEnd] DateStop failed in async roundDone path: " + ex);
+                                        throw;
+                                    }
+
+                                    var scenarioAfterDateStop = Session.Current == null ? null : Session.Current.Scenario;
+                                    if (scenarioAfterDateStop != null && scenarioAfterDateStop.Date != null && scenarioAfterDateStop.Date.IsRunning)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine("[RoundEnd] DateStop returned but GameDate.IsRunning is still true in async roundDone path.");
+                                    }
                                     
                                     // 🗺️ 回合结束时强制更新所有势力范围（2026-03-11）
-                                    _influenceUpdateManager?.ForceUpdateAll();
+                                    try
+                                    {
+                                        _influenceUpdateManager?.ForceUpdateAll();
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine("[RoundEnd] ForceUpdateAll failed in async roundDone path: " + ex);
+                                        throw;
+                                    }
                                     
                                     // 🎨 水墨渲染器更新已通过 OnAfterEnergyCompetition 事件自动触发
                                     // 日期：2026-03-27

@@ -206,7 +206,8 @@ namespace GameObjects
             {
                 if (!idealQuotas.ContainsKey(sup)) idealQuotas[sup] = 0;
 
-                int surplus = sup.PersonCount - idealQuotas[sup];
+                int protectedQuota = Math.Max(idealQuotas[sup], sup.GetProtectedPersonnelFloorForAI());
+                int surplus = sup.PersonCount - protectedQuota;
                 if (surplus <= 0) continue;
 
                 // 从该城找闲人
@@ -216,7 +217,10 @@ namespace GameObjects
                     foreach (object obj in sup.Persons)
                     {
                         Person p = (obj is Person ? (Person)obj : null);
-                        if (p != null && availablePersons.Contains(p) && CanMovePersonV90(p, sup))
+                        if (p != null &&
+                            availablePersons.Contains(p) &&
+                            CanMovePersonV90(p, sup) &&
+                            sup.CanSpareOfficerForStrategicTransferForAI(p))
                         {
                             cityCandidates.Add(p);
                         }
@@ -236,7 +240,7 @@ namespace GameObjects
             var consumers = new List<Architecture>();
             foreach (Architecture a in archs)
             {
-                if (a.PersonCount < idealQuotas[a]) consumers.Add(a);
+                if (a.PersonCount < idealQuotas[a] && a.NeedsStrategicPersonnelSupportForAI(idealQuotas[a])) consumers.Add(a);
             }
             consumers.Sort((a, b) => scores[b].CompareTo(scores[a]));
 
@@ -250,13 +254,19 @@ namespace GameObjects
                     if (transferPool.Count == 0) break;
 
                     Person bestFit = null;
+                    int bestFitScore = int.MinValue;
                     // 找一个不在目标城市的人
                     foreach (Person p in transferPool)
                     {
-                        if (p.LocationArchitecture != con)
+                        Architecture origin = p.LocationArchitecture;
+                        if (origin != null && origin != con && CanMovePersonV90(p, origin))
                         {
-                            bestFit = p;
-                            break;
+                            int fitScore = EvaluateStrategicTransferFit(p, con);
+                            if (fitScore > bestFitScore)
+                            {
+                                bestFit = p;
+                                bestFitScore = fitScore;
+                            }
                         }
                     }
 
@@ -341,6 +351,7 @@ namespace GameObjects
             if (arch == null) return 0f;
 
             float score = 0f;
+            AICityOperationalState state = arch.GetAICityOperationalState();
 
             // 战争状态 - 最高优先级
             if (arch.HasHostileTroopsInView())
@@ -373,6 +384,34 @@ namespace GameObjects
             {
                 score += 30f;
             }
+
+            float internalHealthScore = arch.CalculateInternalHealthScoreForAI();
+            float recruitmentReadiness = arch.CalculateRecruitmentReadinessScoreForAI();
+            float crossCityUrgency = arch.CalculateCrossCitySupportUrgencyForAI();
+
+            switch (state)
+            {
+                case AICityOperationalState.Recovery:
+                    score += internalHealthScore * 6f;
+                    break;
+
+                case AICityOperationalState.Balanced:
+                    score += internalHealthScore * 1.5f;
+                    break;
+
+                case AICityOperationalState.MilitaryBuildUp:
+                    score += internalHealthScore * 2f;
+                    score += recruitmentReadiness * 4f;
+                    break;
+
+                case AICityOperationalState.WartimeOverdraft:
+                    score += 30f;
+                    score += internalHealthScore * 3f;
+                    score += recruitmentReadiness * 5f;
+                    break;
+            }
+
+            score += crossCityUrgency;
 
             return score;
         }
@@ -411,6 +450,50 @@ namespace GameObjects
         private float CalculatePersonnelDemand(Architecture arch)
         {
             return CalculatePersonnelDemandV81(arch);
+        }
+
+        private int EvaluateStrategicTransferFit(Person p, Architecture target)
+        {
+            if (p == null || target == null)
+            {
+                return int.MinValue;
+            }
+
+            int score = p.RecruitmentAbility + p.TrainingAbility / 2;
+
+            switch (target.GetAICityOperationalState())
+            {
+                case AICityOperationalState.Recovery:
+                    score += p.DominationAbility * 2;
+                    score += p.MoraleAbility * 2;
+                    if (target.RecentlyAttacked > 0)
+                    {
+                        score += p.EnduranceAbility;
+                    }
+                    break;
+
+                case AICityOperationalState.MilitaryBuildUp:
+                    score += p.RecruitmentAbility * 2;
+                    score += p.TrainingAbility;
+                    score += p.DominationAbility / 2;
+                    score += p.MoraleAbility / 2;
+                    break;
+
+                case AICityOperationalState.WartimeOverdraft:
+                    score += p.RecruitmentAbility * 2;
+                    score += p.TrainingAbility;
+                    score += p.EnduranceAbility;
+                    score += p.DominationAbility;
+                    score += p.MoraleAbility;
+                    break;
+
+                default:
+                    score += Math.Max(p.DominationAbility, p.MoraleAbility);
+                    score += p.Politics;
+                    break;
+            }
+
+            return score;
         }
 
         #endregion
@@ -823,7 +906,9 @@ namespace GameObjects
                 // 🚚 7. 执行调动 (仅使用 availablePersons)
                 // =================================================================
                 var suppliers = archs
-                    .Where(a => a != null && idealQuotas.ContainsKey(a) && a.PersonCount > idealQuotas[a])
+                    .Where(a => a != null &&
+                                idealQuotas.ContainsKey(a) &&
+                                a.PersonCount > Math.Max(idealQuotas[a], a.GetProtectedPersonnelFloorForAI()))
                     .ToList();
 
                 List<Person> transferPool = new List<Person>();
@@ -832,14 +917,18 @@ namespace GameObjects
                 {
                     if (sup == null || sup.Persons == null) continue;
 
-                    int surplus = sup.PersonCount - idealQuotas[sup];
+                    int protectedQuota = Math.Max(idealQuotas[sup], sup.GetProtectedPersonnelFloorForAI());
+                    int surplus = sup.PersonCount - protectedQuota;
                     if (surplus <= 0) continue;
 
                     var personCandidates = new List<Person>();
                     foreach (GameObject obj in sup.Persons)
                     {
                         Person p = (obj is Person ? (Person)obj : null);
-                        if (p != null && availablePersons.Contains(p))
+                        if (p != null &&
+                            availablePersons.Contains(p) &&
+                            CanMovePerson(p, sup) &&
+                            sup.CanSpareOfficerForStrategicTransferForAI(p))
                         {
                             personCandidates.Add(p);
                         }
@@ -854,7 +943,10 @@ namespace GameObjects
                 }
 
                 var consumers = archs
-                    .Where(a => a != null && idealQuotas.ContainsKey(a) && a.PersonCount < idealQuotas[a])
+                    .Where(a => a != null &&
+                                idealQuotas.ContainsKey(a) &&
+                                a.PersonCount < idealQuotas[a] &&
+                                a.NeedsStrategicPersonnelSupportForAI(idealQuotas[a]))
                     .OrderByDescending(a => scores.ContainsKey(a) ? scores[a] : 0f)
                     .ToList();
 
@@ -870,12 +962,18 @@ namespace GameObjects
                         if (transferPool.Count == 0) break;
 
                         Person bestFit = null;
+                        int bestFitScore = int.MinValue;
                         foreach (var p in transferPool)
                         {
-                            if (p != null && p.LocationArchitecture != con)
+                            Architecture origin = p != null ? p.LocationArchitecture : null;
+                            if (p != null && origin != null && origin != con && CanMovePerson(p, origin))
                             {
-                                bestFit = p;
-                                break;
+                                int fitScore = EvaluateStrategicTransferFit(p, con);
+                                if (fitScore > bestFitScore)
+                                {
+                                    bestFit = p;
+                                    bestFitScore = fitScore;
+                                }
                             }
                         }
 

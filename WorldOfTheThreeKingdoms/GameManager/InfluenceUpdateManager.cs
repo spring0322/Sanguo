@@ -424,14 +424,34 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         if (_factionCalculationIndex < _factionsToRecalculate.Length)
         {
             var faction = _factionsToRecalculate[_factionCalculationIndex];
-            RecalculateFactionInfluence(faction);
+            try
+            {
+                RecalculateFactionInfluence(faction);
+            }
+            catch (Exception ex)
+            {
+                string factionName = faction == null ? "null" : faction.Name;
+                string factionId = faction == null ? "null" : faction.ID.ToString();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[InfluenceUpdateManager.UpdateFactionRecalculation] factionIndex={_factionCalculationIndex}, faction={factionName}(ID:{factionId}): {ex}");
+                throw;
+            }
             _factionCalculationIndex++;
         }
         else
         {
             // 🔥 统一收尾：在全势力重算完成后一次性清情报、竞争、失效缓存并刷新实体增益
             var scenario = Session.Current.Scenario;
-            FinalizeGlobalRecalculation(scenario);
+            try
+            {
+                FinalizeGlobalRecalculation(scenario);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[InfluenceUpdateManager.UpdateFactionRecalculation] finalize failed after processing {_factionsToRecalculate.Length} factions: {ex}");
+                throw;
+            }
             
             // 算完了
             _needsFullRecalculation = false;
@@ -446,6 +466,10 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
     /// </summary>
     private void FinalizeGlobalRecalculation(GameScenario scenario)
     {
+        string stage = "validate scenario";
+
+        try
+        {
         if (scenario == null)
         {
             throw new InvalidOperationException(
@@ -461,6 +485,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         var factions = scenario.Factions.GetList();
         int factionCount = factions.Count;
 
+        stage = "clear faction intelligence";
         for (int i = 0; i < factionCount; i++)
         {
             if (factions[i] is not Faction faction)
@@ -473,16 +498,32 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         }
 
         // 保留前置钩子，兼容旧订阅方
+        stage = "before energy competition hook";
         OnBeforeEnergyCompetition?.Invoke();
+        stage = "apply global energy competition";
         ApplyGlobalEnergyCompetition();
+        stage = "after energy competition hook";
         OnAfterEnergyCompetition?.Invoke();
 
         // 能量竞争会改变净能量结果，必须统一失效缓存
+        stage = "invalidate influence energy cache";
         scenario.InvalidateInfluenceEnergyCache();
 
         // 全图重算完成后统一刷新实体状态，避免部分势力更新导致的数据撕裂
+        stage = "apply architecture influence buff";
         scenario.Architectures.ApplyInfluenceBuff();
+        stage = "apply troop influence buff";
         scenario.Troops.ApplyInfluenceBuff();
+        }
+        catch (Exception ex)
+        {
+            string dateText = scenario == null || scenario.Date == null
+                ? "null"
+                : $"{scenario.Date.Year}-{scenario.Date.Month}-{scenario.Date.Day}";
+            System.Diagnostics.Debug.WriteLine(
+                $"[InfluenceUpdateManager.FinalizeGlobalRecalculation] stage={stage}, date={dateText}: {ex}");
+            throw;
+        }
     }
 
     /// <summary>

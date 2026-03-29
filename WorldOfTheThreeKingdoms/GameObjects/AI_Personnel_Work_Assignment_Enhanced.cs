@@ -31,29 +31,35 @@ namespace GameObjects
                 case ArchitectureWorkKind.农业: // 农业吃政治
                 case ArchitectureWorkKind.商业: // 商业吃政治
                     if (p.Politics < STAT_THRESHOLD) 
-                        return (p.Politics / 100.0f) * 0.6f; // 政治低给予惩罚，但允许工作
-                    return p.Politics / 100.0f;
+                        return (p.GetWorkAbility(kind) / 100.0f) * 0.6f; // 政治低给予惩罚，但允许工作
+                    return Math.Min(1.25f, p.GetWorkAbility(kind) / 100.0f);
                 
                 case ArchitectureWorkKind.技术: // 技术吃智力
                     if (p.Intelligence < STAT_THRESHOLD) 
-                        return (p.Intelligence / 100.0f) * 0.6f; // 智力低给予惩罚，但允许工作
-                    return p.Intelligence / 100.0f;
+                        return (p.GetWorkAbility(kind) / 100.0f) * 0.6f; // 智力低给予惩罚，但允许工作
+                    return Math.Min(1.25f, p.GetWorkAbility(kind) / 100.0f);
                 
                 case ArchitectureWorkKind.统治: // 统治吃魅力/统率
                 case ArchitectureWorkKind.民心: // 民心吃魅力
                     // 猛将也可以去巡查威慑
-                    return (p.Strength / 100.0f + p.Glamour / 100.0f) / 2.0f;
+                    return Math.Min(1.5f, p.GetWorkAbility(kind) / 200.0f);
                 
                 case ArchitectureWorkKind.耐久: // 修补吃统率/武力 (搬砖)
-                    return (p.Strength + p.Command) / 200.0f;
+                    return Math.Min(1.5f, p.GetWorkAbility(kind) / 200.0f);
                 
                 case ArchitectureWorkKind.训练: // 训练吃武力/统率
                     // 猛将的最爱，给予额外加成
-                    float trainScore = (p.Strength + p.Command) / 200.0f;
+                    float trainScore = Math.Min(1.5f, p.GetWorkAbility(kind) / 200.0f);
                     if (p.Strength > 80) 
-                        trainScore *= 2.0f; // 猛将训练权重翻倍
+                        trainScore *= 1.2f; // 猛将训练权重翻倍
                     return trainScore;
                 
+                case ArchitectureWorkKind.补充:
+                    return Math.Min(1.5f, p.GetWorkAbility(kind) / 200.0f);
+
+                case ArchitectureWorkKind.赈灾:
+                    return Math.Min(1.5f, p.GetWorkAbility(kind) / 200.0f);
+
                 default:
                     return 1.0f;
             }
@@ -141,7 +147,7 @@ namespace GameObjects
             
             // 定义工作权重数组
             // [0]=农业, [1]=商业, [2]=技术, [3]=统治, [4]=民心, [5]=耐久, [6]=训练
-            float[] workWeights = new float[7];
+            float[] workWeights = new float[9];
             
             // --- 农业检查 ---
             if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling)
@@ -244,6 +250,20 @@ namespace GameObjects
             // --- 特殊情况调整 ---
             
             // 最近被攻击：优先耐久修复
+            if (this.CanExecuteAIRecruitment(false) && this.RecruitmentAvail())
+            {
+                MilitaryList recruitmentMilitaryList = this.GetRecruitmentMilitaryList();
+                if (recruitmentMilitaryList.Count > 0)
+                {
+                    workWeights[7] = this.CalculateRecruitmentWorkWeight(recruitmentMilitaryList);
+                }
+            }
+
+            if (this.kezhenzai())
+            {
+                workWeights[8] = Math.Max(workWeights[8], 260.0f);
+            }
+
             if (this.RecentlyAttacked > 0)
             {
                 if (this.Endurance < this.EnduranceCeiling)
@@ -329,6 +349,8 @@ namespace GameObjects
                 }
             }
             
+            this.ApplyOperationalStateWorkBias(workWeights);
+
             return workWeights;
         }
 
@@ -348,6 +370,12 @@ namespace GameObjects
             {
                 if (workWeights[i] > 0)
                 {
+                    ArchitectureWorkKind workKind = (ArchitectureWorkKind)(i + 1);
+                    if (!this.CanAssignWorkForAI(p, workKind))
+                    {
+                        continue;
+                    }
+
                     // 使用现有的能力获取方法
                     float abilityWeight = GetPersonAbilityForWork(p, i);
                     adjustedWeights[i] = workWeights[i] * abilityWeight;
@@ -357,6 +385,10 @@ namespace GameObjects
             
             if (totalWeight == 0)
             {
+                if (this.TryAssignMaintenanceWork(p))
+                {
+                    return;
+                }
                 p.WorkKind = ArchitectureWorkKind.无;
                 return;
             }
@@ -372,22 +404,32 @@ namespace GameObjects
                     currentWeight += adjustedWeights[i];
                     if (randomValue <= currentWeight)
                     {
-                        AssignSpecificWork(p, i);
-                        return;
+                        if (this.AssignSpecificWork(p, i))
+                        {
+                            return;
+                        }
                     }
                 }
             }
+
             
             // 兜底：如果没有分配到工作，分配第一个可用的
             for (int i = 0; i < adjustedWeights.Length; i++)
             {
                 if (adjustedWeights[i] > 0)
                 {
-                    AssignSpecificWork(p, i);
-                    return;
+                    if (this.AssignSpecificWork(p, i))
+                    {
+                        return;
+                    }
                 }
             }
             
+            if (this.TryAssignMaintenanceWork(p))
+            {
+                return;
+            }
+
             p.WorkKind = ArchitectureWorkKind.无;
         }
 
@@ -396,25 +438,33 @@ namespace GameObjects
         /// </summary>
         private void AssignDefaultWork(Person p)
         {
-            if (this.GetTrainingMilitaryList().Count > 0)
+            if (this.TryAssignMaintenanceWork(p))
             {
-                p.WorkKind = ArchitectureWorkKind.训练;
+                if (SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AssignDefaultWork] {this.Name} - {p.Name} 使用默认工作: {p.WorkKind}");
+                }
+                return;
             }
-            else if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling)
+
+            if (this.GetAICityOperationalState() == AICityOperationalState.Recovery)
             {
-                p.WorkKind = ArchitectureWorkKind.农业;
-            }
-            else if (_architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling)
-            {
-                p.WorkKind = ArchitectureWorkKind.商业;
-            }
-            else if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling)
-            {
-                p.WorkKind = ArchitectureWorkKind.耐久;
-            }
-            else if (_architectureKind.HasMorale && this.Morale < this.MoraleCeiling)
-            {
-                p.WorkKind = ArchitectureWorkKind.民心;
+                if (_architectureKind.HasDomination)
+                {
+                    p.WorkKind = ArchitectureWorkKind.统治;
+                }
+                else if (_architectureKind.HasMorale)
+                {
+                    p.WorkKind = ArchitectureWorkKind.民心;
+                }
+                else if (this.GetTrainingMilitaryList().Count > 0)
+                {
+                    p.WorkKind = ArchitectureWorkKind.训练;
+                }
+                else
+                {
+                    p.WorkKind = ArchitectureWorkKind.无;
+                }
             }
             else
             {
@@ -424,6 +474,321 @@ namespace GameObjects
             if (SectionAIHelper.EnableDebugOutput)
             {
                 System.Diagnostics.Debug.WriteLine($"[AssignDefaultWork] {this.Name} - {p.Name} 使用默认工作: {p.WorkKind}");
+            }
+        }
+
+        private float CalculateRecruitmentWorkWeight(MilitaryList recruitmentMilitaryList)
+        {
+            if (recruitmentMilitaryList == null || recruitmentMilitaryList.Count <= 0)
+            {
+                return 0f;
+            }
+
+            float gapRatioSum = 0f;
+            for (int i = 0; i < recruitmentMilitaryList.Count; i++)
+            {
+                Military military = recruitmentMilitaryList[i] as Military;
+                if (military == null || military.Kind.MaxScale <= 0)
+                {
+                    continue;
+                }
+
+                gapRatioSum += (float)(military.Kind.MaxScale - military.Quantity) / military.Kind.MaxScale;
+            }
+
+            float averageGapRatio = gapRatioSum / recruitmentMilitaryList.Count;
+            float weight = 60f + averageGapRatio * 120f + this.CalculateRecruitmentReadinessScoreForAI() * 8f;
+
+            switch (this.GetAICityOperationalState())
+            {
+                case AICityOperationalState.Balanced:
+                    weight = Math.Min(weight, 135f);
+                    break;
+
+                case AICityOperationalState.MilitaryBuildUp:
+                    weight = Math.Max(weight, 165f);
+                    break;
+
+                case AICityOperationalState.WartimeOverdraft:
+                    weight = Math.Max(weight, 190f);
+                    break;
+            }
+
+            return weight;
+        }
+
+        private float CalculateRecruitmentPriorityForAI(Military military)
+        {
+            if (military == null || military.Kind.MaxScale <= 0)
+            {
+                return 0f;
+            }
+
+            float gapRatio = (float)(military.Kind.MaxScale - military.Quantity) / military.Kind.MaxScale;
+            float scaleWeight = 10000f / Math.Max(military.Kind.MaxScale, 10000);
+            float meritWeight = 1.0f + (military.Merit / 1000f) * 0.01f;
+            return gapRatio * scaleWeight * meritWeight;
+        }
+
+        private int GetOperationalReserveFundForAI()
+        {
+            int reserve = this.ExpectedSalary +
+                          this.FacilityMaintenanceCost * 10 +
+                          this.RoutewayActiveCost * 10 +
+                          this.InformationDayCost * 5;
+            reserve = Math.Max(this.ExpectedSalary, reserve);
+
+            int reserveCap = Math.Max(this.ExpectedSalary, (int)(this.EnoughFund * 0.55f));
+            return Math.Min(reserve, reserveCap);
+        }
+
+        private int GetPaidInternalWorkSlotsForAI()
+        {
+            int surplusFund = this.Fund - this.GetOperationalReserveFundForAI();
+            if (surplusFund <= 0)
+            {
+                return 0;
+            }
+
+            return surplusFund / Math.Max(1, this.InternalFundCost);
+        }
+
+        private int CountAssignedPaidInternalWorkersForAI()
+        {
+            int count = 0;
+            for (int i = 0; i < this.Persons.Count; i++)
+            {
+                Person person = this.Persons[i] as Person;
+                if (person == null || person.InternalNoFundNeeded)
+                {
+                    continue;
+                }
+
+                if (this.IsFundedInternalWorkForAI(person.WorkKind))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private int GetDynamicWorkDemandCountForAI()
+        {
+            int demand = 0;
+            float limit = this.InternalAffairSaturationThreshold;
+
+            if (_architectureKind.HasAgriculture && this.Agriculture < this.AgricultureCeiling * limit) demand++;
+            if (_architectureKind.HasCommerce && this.Commerce < this.CommerceCeiling * limit) demand++;
+            if (_architectureKind.HasTechnology && this.Technology < this.TechnologyCeiling * limit) demand++;
+            if (_architectureKind.HasDomination && this.Domination < this.DominationCeiling * limit) demand++;
+            if (_architectureKind.HasMorale && this.Morale < this.MoraleCeiling * limit) demand++;
+            if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling) demand++;
+            if (this.GetTrainingMilitaryList().Count > 0) demand++;
+            if (this.CanExecuteAIRecruitment(false) && this.RecruitmentAvail() && this.GetRecruitmentMilitaryList().Count > 0) demand++;
+            if (this.kezhenzai()) demand++;
+
+            return Math.Max(1, demand);
+        }
+
+        private bool HasSevereWorkforceShortageForAI()
+        {
+            return this.CountLocalActiveOfficersForAI() <= Math.Max(2, this.GetDynamicWorkDemandCountForAI());
+        }
+
+        private bool HasWorkforceSurplusForAI()
+        {
+            return this.CountLocalActiveOfficersForAI() >= Math.Max(4, this.GetDynamicWorkDemandCountForAI() * 2);
+        }
+
+        private int GetDynamicAbilityFloorForAI(ArchitectureWorkKind kind)
+        {
+            int floor = kind switch
+            {
+                ArchitectureWorkKind.农业 => 80,
+                ArchitectureWorkKind.商业 => 80,
+                ArchitectureWorkKind.技术 => 85,
+                ArchitectureWorkKind.统治 => 65,
+                ArchitectureWorkKind.民心 => 65,
+                ArchitectureWorkKind.耐久 => 60,
+                ArchitectureWorkKind.补充 => 70,
+                ArchitectureWorkKind.赈灾 => 55,
+                _ => 0
+            };
+
+            if (this.HasSevereWorkforceShortageForAI())
+            {
+                floor -= 30;
+            }
+            else if (this.HasWorkforceSurplusForAI())
+            {
+                floor += 10;
+            }
+
+            if (this.IsFundedInternalWorkForAI(kind) && this.GetPaidInternalWorkSlotsForAI() * 2 < Math.Max(1, this.CountLocalActiveOfficersForAI()))
+            {
+                floor += 10;
+            }
+
+            return Math.Max(0, floor);
+        }
+
+        private bool IsFundedInternalWorkForAI(ArchitectureWorkKind kind)
+        {
+            return kind == ArchitectureWorkKind.农业 ||
+                   kind == ArchitectureWorkKind.商业 ||
+                   kind == ArchitectureWorkKind.技术 ||
+                   kind == ArchitectureWorkKind.统治 ||
+                   kind == ArchitectureWorkKind.民心 ||
+                   kind == ArchitectureWorkKind.耐久 ||
+                   kind == ArchitectureWorkKind.赈灾;
+        }
+
+        private bool CanAssignWorkForAI(Person p, ArchitectureWorkKind kind)
+        {
+            if (p == null || kind == ArchitectureWorkKind.无)
+            {
+                return false;
+            }
+
+            if (kind == ArchitectureWorkKind.训练)
+            {
+                return this.GetTrainingMilitaryList().Count > 0;
+            }
+
+            if (kind == ArchitectureWorkKind.补充)
+            {
+                if (!this.CanExecuteAIRecruitment(false) || !this.RecruitmentAvail() || this.GetRecruitmentMilitaryList().Count <= 0)
+                {
+                    return false;
+                }
+
+                return this.GetAICityOperationalState() == AICityOperationalState.WartimeOverdraft ||
+                       this.Fund >= this.GetOperationalReserveFundForAI();
+            }
+
+            if (kind == ArchitectureWorkKind.赈灾 && !this.kezhenzai())
+            {
+                return false;
+            }
+
+            if (!this.IsFundedInternalWorkForAI(kind))
+            {
+                return true;
+            }
+
+            if (p.InternalNoFundNeeded)
+            {
+                return true;
+            }
+
+            if (this.CountAssignedPaidInternalWorkersForAI() >= this.GetPaidInternalWorkSlotsForAI())
+            {
+                return false;
+            }
+
+            return p.GetWorkAbility(kind) >= this.GetDynamicAbilityFloorForAI(kind);
+        }
+
+        private bool TryAssignRecruitmentWork(Person p)
+        {
+            if (p == null || !this.CanAssignWorkForAI(p, ArchitectureWorkKind.补充))
+            {
+                return false;
+            }
+
+            MilitaryList recruitmentMilitaryList = this.GetRecruitmentMilitaryList();
+            Military bestMilitary = null;
+            float bestPriority = float.MinValue;
+
+            for (int i = 0; i < recruitmentMilitaryList.Count; i++)
+            {
+                Military military = recruitmentMilitaryList[i] as Military;
+                if (military == null || military.RecruitmentPerson != null)
+                {
+                    continue;
+                }
+
+                float priority = this.CalculateRecruitmentPriorityForAI(military);
+                if (priority > bestPriority)
+                {
+                    bestPriority = priority;
+                    bestMilitary = military;
+                }
+            }
+
+            if (bestMilitary == null)
+            {
+                return false;
+            }
+
+            p.RecruitMilitary(bestMilitary);
+            return true;
+        }
+
+        private bool TryAssignMaintenanceWork(Person p)
+        {
+            if (p == null)
+            {
+                return false;
+            }
+
+            if (this.kezhenzai() && this.CanAssignWorkForAI(p, ArchitectureWorkKind.赈灾))
+            {
+                p.WorkKind = ArchitectureWorkKind.赈灾;
+                return true;
+            }
+
+            if (this.TryAssignRecruitmentWork(p))
+            {
+                return true;
+            }
+
+            ArchitectureWorkKind bestWorkKind = ArchitectureWorkKind.无;
+            float bestScore = float.MinValue;
+
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.统治, _architectureKind.HasDomination ? 1.30f : 0f, ref bestWorkKind, ref bestScore);
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.民心, _architectureKind.HasMorale ? 1.25f : 0f, ref bestWorkKind, ref bestScore);
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.耐久, _architectureKind.HasEndurance ? (this.RecentlyAttacked > 0 ? 1.30f : 1.10f) : 0f, ref bestWorkKind, ref bestScore);
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.农业, _architectureKind.HasAgriculture ? 1.00f : 0f, ref bestWorkKind, ref bestScore);
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.商业, _architectureKind.HasCommerce ? 1.00f : 0f, ref bestWorkKind, ref bestScore);
+            this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.技术, _architectureKind.HasTechnology ? 0.95f : 0f, ref bestWorkKind, ref bestScore);
+
+            if (this.GetTrainingMilitaryList().Count > 0)
+            {
+                this.ConsiderMaintenanceWork(p, ArchitectureWorkKind.训练, 1.20f, ref bestWorkKind, ref bestScore);
+            }
+
+            if (bestWorkKind == ArchitectureWorkKind.无)
+            {
+                return false;
+            }
+
+            p.WorkKind = bestWorkKind;
+            return true;
+        }
+
+        private void ConsiderMaintenanceWork(Person p, ArchitectureWorkKind kind, float bias, ref ArchitectureWorkKind bestWorkKind, ref float bestScore)
+        {
+            if (bias <= 0f || !this.CanAssignWorkForAI(p, kind))
+            {
+                return;
+            }
+
+            float score = this.GetPersonWorkEfficiency(p, kind) * bias;
+            if (this.HasWorkforceSurplusForAI())
+            {
+                score *= 0.75f + Math.Min(1.25f, p.GetWorkAbility(kind) / 100.0f);
+            }
+            else if (this.HasSevereWorkforceShortageForAI())
+            {
+                score *= 1.10f;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestWorkKind = kind;
             }
         }
     }
