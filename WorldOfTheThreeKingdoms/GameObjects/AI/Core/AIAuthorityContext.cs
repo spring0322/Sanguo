@@ -183,13 +183,22 @@ public sealed class AIAuthorityContext
                     Point projectedPosition = IsValidPosition(intent.Target.Position)
                         ? intent.Target.Position
                         : targetArchitecture.Position;
+                    bool intentUsesDefaultArchitecturePosition =
+                        !IsValidPosition(intent.Target.Position) ||
+                        intent.Target.Position == targetArchitecture.Position;
+                    bool preserveExplicitSiegePosition =
+                        preserveExplicitDestination &&
+                        troop.Command == TroopCommand.AttackArch &&
+                        intentUsesDefaultArchitecturePosition;
 
                     bool preserveLegacySiegePosition =
                         troop.Command == TroopCommand.AttackArch &&
                         !IsValidPosition(intent.Target.Position) &&
                         IsValidPosition(troop.RealDestination);
 
-                    if (!preserveLegacySiegePosition && IsValidPosition(projectedPosition))
+                    if (!preserveExplicitSiegePosition &&
+                        !preserveLegacySiegePosition &&
+                        IsValidPosition(projectedPosition))
                     {
                         troop.RealDestination = projectedPosition;
                     }

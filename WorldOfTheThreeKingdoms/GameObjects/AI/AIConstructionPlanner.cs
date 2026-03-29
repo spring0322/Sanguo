@@ -46,9 +46,6 @@ namespace GameObjects.AI
 
                 var faction = me.BelongedFaction;
 
-                faction.RemoveTroop(me);
-                scenario.Troops.Remove(me);
-
                 Architecture arch = new Architecture();
                 arch.ID = scenario.Architectures.GetFreeGameObjectID();
                 arch.BelongedFaction = faction;
@@ -57,6 +54,14 @@ namespace GameObjects.AI
 
                 scenario.Architectures.Add(arch);
                 faction.AddArchitecture(arch);
+
+                foreach (Person p in me.Persons)
+                {
+                    p.LocationArchitecture = arch;
+                    p.LocationTroop = null;
+                }
+
+                scenario.RetireTroopFromWorld(me);
 
                 // 【修复】Log 只传一个参数（拼接字符串），解决 Log 重载报错
                 AIHelper.Log("部队变身建筑ID: " + archId.ToString());

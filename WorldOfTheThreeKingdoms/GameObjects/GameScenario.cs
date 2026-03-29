@@ -3100,13 +3100,107 @@ namespace GameObjects
             
             try
             {
-                return this.MapTileData[position.X, position.Y].TileTroop;
+                Troop tileTroop = this.MapTileData[position.X, position.Y].TileTroop;
+                if (tileTroop == null)
+                {
+                    return null;
+                }
+
+                if (!IsTrackedTroopReference(tileTroop))
+                {
+                    ClearStaleTroopPosition(position, tileTroop);
+                    return null;
+                }
+
+                if (MapPositionCache.IsInitialized && MapPositionCache.GetTroopAt(position) != tileTroop)
+                {
+                    lock (_troopPositionLock)
+                    {
+                        if (this.MapTileData[position.X, position.Y].TileTroop == tileTroop)
+                        {
+                            MapPositionCache.SetTroopAt(position, tileTroop);
+                        }
+                    }
+                }
+
+                return tileTroop;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[GetTroopByPosition] 访问异常: {ex.Message}");
                 return null;
             }
+        }
+
+        private bool IsTrackedTroopReference(Troop troop)
+        {
+            if (troop == null || troop.Destroyed)
+            {
+                return false;
+            }
+
+            Troop trackedTroop = this.Troops.GetTroopSafe(troop.ID);
+            return trackedTroop == troop || this.Troops.Contains(troop);
+        }
+
+        private void ClearStaleTroopPosition(Point position, Troop staleTroop)
+        {
+            lock (_troopPositionLock)
+            {
+                if (this.PositionOutOfRange(position))
+                {
+                    return;
+                }
+
+                if (this.MapTileData[position.X, position.Y].TileTroop != staleTroop)
+                {
+                    return;
+                }
+
+                TileData data = this.MapTileData[position.X, position.Y];
+                if (data.TroopCount > 0)
+                {
+                    data.TroopCount--;
+                }
+
+                this.MapTileData[position.X, position.Y].TileTroop = null;
+                if (MapPositionCache.IsInitialized)
+                {
+                    MapPositionCache.RemoveTroopAt(position, staleTroop);
+                }
+
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine(
+                    $"[GetTroopByPosition] Cleared stale troop reference at {position}: {staleTroop.DisplayName}");
+#endif
+            }
+        }
+
+        public void RetireTroopFromWorld(Troop troop)
+        {
+            if (troop == null)
+            {
+                return;
+            }
+
+            troop.Destroy(false, false);
+
+            if (troop.Army != null && troop.Army.BelongedTroop == troop)
+            {
+                troop.Army.BelongedTroop = null;
+            }
+
+            if (troop.BelongedLegion != null)
+            {
+                troop.BelongedLegion.RemoveTroop(troop);
+            }
+
+            if (troop.BelongedFaction != null)
+            {
+                troop.BelongedFaction.RemoveTroop(troop);
+            }
+
+            this.Troops.RemoveTroop(troop);
         }
 
         public Troop GetTroopByPositionNoCheck(Point position)

@@ -969,6 +969,11 @@ public class CommandBufferScheduler
             
             if (!troop.Destroyed)
             {
+                if (IsValidCommandPosition(attackArchCmd.SiegePosition))
+                {
+                    troop.RealDestination = attackArchCmd.SiegePosition;
+                }
+
                 EnqueueTroop(troop);
                 ProcessedAttackArchCommands++;
                 return true;

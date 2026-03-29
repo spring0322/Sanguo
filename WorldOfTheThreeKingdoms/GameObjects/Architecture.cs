@@ -2271,7 +2271,11 @@ namespace GameObjects
                     {
                         // 资金或技巧点不足
                         // 技巧点不足时，尝试保存技巧点
-                        if (GameObject.Chance(0x21) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < this.PlanFacilityKind.PointCost))
+                        if (this.Fund < this.PlanFacilityKind.FundCost)
+                        {
+                            shouldClearPlan = true;
+                        }
+                        else if (GameObject.Chance(0x21) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < this.PlanFacilityKind.PointCost))
                         {
                             this.BelongedFaction.SaveTechniquePointForFacility(this.PlanFacilityKind.PointCost / this.PlanFacilityKind.Days);
                         }
@@ -7716,10 +7720,20 @@ namespace GameObjects
                     }
                 }
                 
-                if (value > 0 && value > maxValue)
+                if (value > 0 && this.ExpectedFund != 0)
                 {
+                    int fundMonthToWait = (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1;
+                    bool isPeaceful = this.RecentlyAttacked <= 0 && !this.HasHostileTroopsInView();
+                    bool chanceCheck = GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
+                    int effectiveEnoughFund = this.EnoughFund;
+
+                    if (isPeaceful)
+                    {
+                        chanceCheck = true;
+                        effectiveEnoughFund = (int)(this.EnoughFund * 0.7);
+                    }
                     // 检查空间是否足够
-                    if (this.FacilityPositionLeft >= kind.PositionOccupied)
+                    if (value > maxValue && chanceCheck && this.Fund - kind.FundCost > effectiveEnoughFund && this.FacilityPositionLeft >= kind.PositionOccupied)
                     {
                         maxValue = value;
                         toBuild = kind;

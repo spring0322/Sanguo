@@ -1,4 +1,4 @@
-﻿using GameFreeText;
+using GameFreeText;
 using WorldOfTheThreeKingdoms.GameGlobal;
 using GameManager;
 using GameObjects;
@@ -48,7 +48,7 @@ namespace TabListPlugin
         internal ITroopDetail iTroopDetail;
         internal PlatformTexture leftArrowTexture;
         internal List<ListKind> ListKinds;
-        private ListKind listKindToDisplay;
+        internal ListKind listKindToDisplay;
         internal bool MovingHorizontalScrollBar = false;
         internal bool MovingVerticalScrollBar = false;
         internal bool MultiSelecting = false;
@@ -350,15 +350,15 @@ namespace TabListPlugin
         /// - 描述列单行省略，完整内容在详情区显示
         /// 
         /// 白名单范围（当前）：
-        /// - ListKind: Title（称号列表）
-        /// - SelectedTab: Basic（基本信息页）
+        /// - ListKind: Title（称号列表）- SelectedTab: Basic
+        /// - ListKind: Facility（设施列表）- SelectedTab: Effect（效果）或 Condition（条件）
         /// 
         /// 扩展计划：
         /// - 验证稳定后，扩展到其他"长描述"类型列表（技能、影响、兵种等）
         /// - 最终抽象为通用模式，通过 XML 配置标记开启
         /// 
         /// 日期：2026-03-23
-        /// 需求：9.1, 9.5
+        /// 需求：9.1
         /// </summary>
         /// <returns>true 表示处于推荐版模式，false 表示使用原始布局</returns>
         internal bool IsRecommendedMode()
@@ -370,19 +370,33 @@ namespace TabListPlugin
                 return false;
             }
 
-            // 白名单判定：ListKind==Title && SelectedTab==Basic
-            return this.listKindToDisplay.Name == "Title" &&
-                   this.listKindToDisplay.SelectedTab.Name == "Basic";
+            // 白名单判定：
+            // 1. Title && SelectedTab==Basic
+            // 2. Facility && (SelectedTab==Effect 或 SelectedTab==Condition)
+            if (this.listKindToDisplay.Name == "Title" &&
+                this.listKindToDisplay.SelectedTab.Name == "Basic")
+            {
+                return true;
+            }
+
+            if (this.listKindToDisplay.Name == "Facility" &&
+                (this.listKindToDisplay.SelectedTab.Name == "Effect" ||
+                 this.listKindToDisplay.SelectedTab.Name == "Condition"))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
         /// 计算推荐版模式的容器分区布局
         /// 
         /// 将可视区域分为两部分：
-        /// 1. 表格区（上方）：显示列头和数据行
-        /// 2. 详情说明区（下方）：显示完整描述文本
+        /// 1. 表格区（左侧）：显示列头和数据行
+        /// 2. 详情说明区（右侧）：直接覆盖原列位置，无间隙
         /// 
-        /// 日期：2026-03-23
+        /// 日期：2026-03-29
         /// 需求：2.1, 2.3
         /// </summary>
         private void CalculateRecommendedLayout()
@@ -390,17 +404,24 @@ namespace TabListPlugin
             // 原可视区域（整个列表区域）
             Rectangle originalVisibleClient = base.RealClient;
 
-            // 🔥 右侧竖向布局：详情说明区占据右侧大部分空间
-            // 宽度扩展到接近右边界，只留 10px 间距
-            const int DETAIL_GAP = 10; // 与右边界的间距
-            const int TABLE_MIN_WIDTH = 600; // 表格最小宽度
+            // 🔥 根据不同列表类型调整布局比例
+            int tableAreaWidth;
+            int detailWidth;
 
-            // 详情说明区宽度 = 原可视区宽度 - 表格最小宽度 - 间距
-            int detailWidth = originalVisibleClient.Width - TABLE_MIN_WIDTH - DETAIL_GAP;
-            if (detailWidth < 200) detailWidth = 200; // 最小宽度保护
-
-            // 表格区宽度 = 原可视区宽度 - 详情说明区宽度 - 间距
-            int tableAreaWidth = originalVisibleClient.Width - detailWidth - DETAIL_GAP;
+            if (this.listKindToDisplay.Name == "Facility")
+            {
+                // 设施列表：表格区只需要显示"名称"列，宽度更小
+                tableAreaWidth = 200; // 名称列宽度
+                detailWidth = originalVisibleClient.Width - tableAreaWidth; // 无间隙
+            }
+            else
+            {
+                // 称号列表：使用原来的布局
+                const int TABLE_MIN_WIDTH = 600;
+                detailWidth = originalVisibleClient.Width - TABLE_MIN_WIDTH;
+                if (detailWidth < 200) detailWidth = 200;
+                tableAreaWidth = originalVisibleClient.Width - detailWidth;
+            }
 
             // 表格区矩形（左侧）
             Rectangle tableArea = new Rectangle(
@@ -410,11 +431,11 @@ namespace TabListPlugin
                 originalVisibleClient.Height
             );
 
-            // 详情说明区矩形（右侧，竖向）
+            // 🔥 详情说明区矩形（右侧）：X坐标减去分隔符宽度，直接覆盖分隔符位置
             this.detailDescriptionRect = new Rectangle(
-                originalVisibleClient.X + tableAreaWidth + DETAIL_GAP,
+                originalVisibleClient.X + tableAreaWidth - this.columnspliterWidth,
                 originalVisibleClient.Y,
-                detailWidth,
+                detailWidth + this.columnspliterWidth,
                 originalVisibleClient.Height
             );
 
@@ -426,10 +447,14 @@ namespace TabListPlugin
         /// 更新详情说明区的内容
         /// 
         /// 优先级：SelectedItem > FocusedObject > 空
-        /// 使用 StaticMethods.GetPropertyValue 获取 Description 属性
         /// 
-        /// 日期：2026-03-23
-        /// 需求：3.1, 3.2, 3.4
+        /// 称号列表：使用 Description 属性
+        /// 设施列表：根据当前Tab分别显示
+        ///   - Effect Tab：只显示效果（Description）
+        ///   - Condition Tab：只显示条件（ConditionString）
+        /// 
+        /// 日期：2026-03-29
+        /// 需求：3.1, 3.2
         /// </summary>
         private void UpdateDetailDescription()
         {
@@ -448,7 +473,41 @@ namespace TabListPlugin
                 return;
             }
 
-            // 获取描述文本（异常处理）
+            // 🔥 设施列表特殊处理：根据当前Tab分别显示效果或条件
+            if (this.listKindToDisplay.Name == "Facility")
+            {
+                string currentTabName = this.listKindToDisplay.SelectedTab.Name;
+                
+                try
+                {
+                    if (currentTabName == "Effect")
+                    {
+                        // 效果Tab：只显示效果
+                        object descObj = StaticMethods.GetPropertyValue(targetObject, "Description");
+                        this.detailDescriptionText = descObj?.ToString() ?? "";
+                    }
+                    else if (currentTabName == "Condition")
+                    {
+                        // 条件Tab：只显示条件
+                        object condObj = StaticMethods.GetPropertyValue(targetObject, "ConditionString");
+                        this.detailDescriptionText = condObj?.ToString() ?? "";
+                    }
+                    else
+                    {
+                        this.detailDescriptionText = "";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[TabListInFrame.UpdateDetailDescription] 获取设施描述失败: {ex.Message}");
+                    #endif
+                    this.detailDescriptionText = "";
+                }
+                return;
+            }
+
+            // 称号列表：使用 Description 属性
             try
             {
                 object descObj = StaticMethods.GetPropertyValue(targetObject, "Description");
@@ -537,16 +596,13 @@ namespace TabListPlugin
             );
             CacheManager.DrawString(Session.Current.Font, headerTitle, headPos, Color.Gold, 0f, Vector2.Zero, headerScale, SpriteEffects.None, 0.0349f);
 
-            // 2. 绘制内容区背景：使用半透明黑底，去掉生硬的黄边框
+            // 2. 绘制内容区：不绘制黑色背景，与其他UI背景保持一致
             Rectangle contentRect = new Rectangle(
                 this.detailDescriptionRect.X,
                 headerRect.Bottom,
                 this.detailDescriptionRect.Width,
                 this.detailDescriptionRect.Bottom - headerRect.Bottom
             );
-
-            PlatformTexture dummyTexture = GetDummyTexture();
-            CacheManager.Draw(dummyTexture, contentRect, null, new Color(0, 0, 0, 150), 0f, Vector2.Zero, SpriteEffects.None, 0.036f);
 
             // 3. 绘制排版规范的文本（彻底抛弃动态压缩行距的错误逻辑）
             int padding = 15;

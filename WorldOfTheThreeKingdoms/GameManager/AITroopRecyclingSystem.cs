@@ -103,9 +103,11 @@ namespace WorldOfTheThreeKingdoms.GameManager
                 {
                     victim.Leader.Status = PersonStatus.Normal;
                     victim.Leader.LocationArchitecture = architecture;
+                    victim.Leader.LocationTroop = null;
                 }
                 foreach (Person p in victim.Persons)
                 {
+                    p.LocationTroop = null;
                     if (p != victim.Leader)
                     {
                         p.Status = PersonStatus.Normal;
@@ -113,7 +115,7 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     }
                 }
 
-                global::GameManager.Session.Current.Scenario.Troops.RemoveTroop(victim);
+                global::GameManager.Session.Current.Scenario.RetireTroopFromWorld(victim);
                 
                 System.Diagnostics.Debug.WriteLine($"[RecycleWeakTroops] 城市 {architecture.Name} 人口不足，解散弱兵 {victim.DisplayName} (+{recoveredPopulation} 人口)");
             }

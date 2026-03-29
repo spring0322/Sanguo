@@ -52,8 +52,8 @@ namespace GameObjects.TroopDetail
 
         private void AddToOpenList(GameSquare square, bool useAStar)
         {
-            // 假设 GameSquare 内部逻辑 G/RealG 同步，F 为估值总和
-            int priority = useAStar ? (square.RealG + square.H) : square.RealG;
+            // A* 必须把 PenalizedCost 纳入优先级，否则高惩罚目标会退化成全图扩张。
+            int priority = useAStar ? square.F : square.RealG;
             openQueue.Enqueue(square, priority);
             openDictionary[square.Position] = square;
         }
@@ -262,12 +262,15 @@ namespace GameObjects.TroopDetail
             // 解决：使用更保守的迭代上限，快速失败
             int manhattanDist = Math.Abs(end.X - start.X) + Math.Abs(end.Y - start.Y);
             
-            // 🔥 新公式：基础 500 + 距离平方 × 50
-            // - 距离 2 格：500 + 4×50 = 700 次
-            // - 距离 5 格：500 + 25×50 = 1750 次
-            // - 距离 10 格：500 + 100×50 = 5500 次
-            // 如果超过这个次数还没找到路径，说明目标点实际上无法到达
-            int maxIterations = 500 + manhattanDist * manhattanDist * 50;
+            int directDistanceCost = distance(start, end);
+            int nearPathCostLimit = manhattanDist <= 4
+                ? Math.Max(360, directDistanceCost * 24)
+                : int.MaxValue;
+
+            // 近距离目标不应该跑成大范围盲搜，给更严格的迭代上限。
+            int maxIterations = manhattanDist <= 4
+                ? 256 + manhattanDist * 64
+                : 500 + manhattanDist * manhattanDist * 50;
             
             while (!flag && square.RealG < 0xdac)
             {
@@ -277,6 +280,24 @@ namespace GameObjects.TroopDetail
                 
                 square = this.AddToCloseList();
                 if (square == null) break;
+
+                if (square.G >= 0xdac)
+                {
+                    #if DEBUG
+                    string troopInfo = DebugTroopName ?? kind?.Name ?? "null";
+                    System.Diagnostics.Debug.WriteLine($"[寻路早退] {troopInfo}: {start}→{end}, bestG={square.G} >= 0xdac");
+                    #endif
+                    break;
+                }
+
+                if (square.F > nearPathCostLimit)
+                {
+                    #if DEBUG
+                    string troopInfo = DebugTroopName ?? kind?.Name ?? "null";
+                    System.Diagnostics.Debug.WriteLine($"[寻路早退] {troopInfo}: {start}→{end}, bestF={square.F} > nearLimit={nearPathCostLimit}");
+                    #endif
+                    break;
+                }
                 
                 flag = square.Position == end;
                 
@@ -366,12 +387,15 @@ namespace GameObjects.TroopDetail
         {
             while (openQueue.TryDequeue(out GameSquare square, out _))
             {
-                // 🔧 数据完整性断言：PriorityQueue 不应存储 null
-                System.Diagnostics.Debug.Assert(square != null, 
-                    $"[TierPathFinder] 严重错误：openQueue 中检测到 null 值！" +
-                    $"队列计数: {openQueue.Count}, 字典计数: {openDictionary.Count}");
-                
-                if (square == null) continue;
+                // 🔥 ANTI-BAND-AID：Fail Fast
+                // 日期：2026-03-29
+                // 原因：PriorityQueue 不应存储 null，如果出现说明数据损坏
+                if (square == null)
+                {
+                    throw new InvalidOperationException(
+                        $"[TierPathFinder] 数据损坏：openQueue 中检测到 null 值！" +
+                        $"队列计数: {openQueue.Count}, 字典计数: {openDictionary.Count}");
+                }
                 
                 // 🔥 2026-03-11 修复：跳过已在 closeList 中的节点
                 // 问题：惰性删除导致同一位置在队列中有多个副本

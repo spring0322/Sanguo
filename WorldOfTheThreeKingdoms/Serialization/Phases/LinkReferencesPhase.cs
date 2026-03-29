@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameObjects;
@@ -3391,12 +3391,14 @@ public static class TroopReferenceLinkerExtensions
                 {
                     System.Diagnostics.Debug.WriteLine($"[LinkArmy] WARNING: Troop {troop.ID} references Military {military.ID} with invalid KindID={military.RealKindID}; cleared.");
                     troop.Army = null;
+                    troop.MilitaryID = -1;  // 🔥 修复：重置 militaryID，避免延迟加载时重复查找
                 }
             }
             else
             {
                 System.Diagnostics.Debug.WriteLine($"鈿狅笍 Troop {troop.ID} 寮曠敤浜嗕笉瀛樺湪鐨?Military {troop.MilitaryID}");
                 troop.Army = null;
+                troop.MilitaryID = -1;  // 🔥 修复：重置 militaryID，避免延迟加载时重复查找
             }
         }
         

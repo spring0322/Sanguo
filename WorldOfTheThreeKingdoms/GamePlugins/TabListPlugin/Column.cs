@@ -144,7 +144,18 @@ namespace TabListPlugin
                     }
                     else
                     {
-                        DrawCellText(i, cellRect, hardLimitX);
+                        // 🔥 2026-03-29：设施列表的效果和条件列使用多行文本显示
+                        bool isMultiLineColumn = (this.Name == "Description" || this.Name == "ConditionString") &&
+                                                 this.tabList.listKindToDisplay?.Name == "Facility";
+                        
+                        if (isMultiLineColumn)
+                        {
+                            DrawMultiLineCellText(i, cellRect, hardLimitX);
+                        }
+                        else
+                        {
+                            DrawCellText(i, cellRect, hardLimitX);
+                        }
                     }
                 }
             }
@@ -313,6 +324,79 @@ namespace TabListPlugin
                 }
                 
                 yOffset += lineHeight;
+            }
+        }
+
+        /// <summary>
+        /// 绘制多行文本单元格（用于设施列表的效果和条件列）
+        /// 
+        /// 特性：
+        /// - 支持 • 分隔的多行文本
+        /// - 自动换行，确保内容不溢出列宽
+        /// - 超出行高时显示省略号
+        /// 
+        /// 日期：2026-03-29
+        /// </summary>
+        private void DrawMultiLineCellText(int index, Rectangle cellRect, float rightLimitX)
+        {
+            string fullText = this.ColumnTextList[index].Text;
+            
+            if (string.IsNullOrEmpty(fullText)) return;
+
+            // 如果起始位置就已经超过了硬性边界，直接放弃绘制
+            if (cellRect.X >= rightLimitX) return;
+
+            float cellWidth = this.DisplayPosition.Width - 20; // 留20px左右边距
+            float fontScale = 0.85f; // 稍微缩小字体，让长文本更精致
+            float lineHeight = 18 * fontScale;
+
+            // 🔥 关键：将 • 分隔的文本拆分为多行
+            string[] bulletPoints = fullText.Split('•', StringSplitOptions.RemoveEmptyEntries);
+            
+            Color rowColor = Color.White;
+            float yOffset = 2; // 顶部留2px边距
+            
+            // 计算可显示的最大行数
+            int maxLinesVisible = (int)((this.tabList.rowHeight - 4) / lineHeight);
+            if (maxLinesVisible < 1) maxLinesVisible = 1;
+            
+            int currentLine = 0;
+            
+            for (int bulletIdx = 0; bulletIdx < bulletPoints.Length; bulletIdx++)
+            {
+                string bullet = bulletPoints[bulletIdx].Trim();
+                if (string.IsNullOrEmpty(bullet)) continue;
+                
+                // 为每个要点添加 • 前缀
+                string bulletText = "•" + bullet;
+                
+                // 对每个要点进行换行处理
+                List<string> wrappedLines = GetWrappedLines(bulletText, cellWidth, this.ColumnTextList.Font, fontScale);
+                
+                for (int lineIdx = 0; lineIdx < wrappedLines.Count; lineIdx++)
+                {
+                    if (currentLine >= maxLinesVisible)
+                    {
+                        // 超出可显示行数，绘制省略号后退出
+                        var ellipsisPos = new Vector2(cellRect.X + 10, cellRect.Y + yOffset);
+                        CacheManager.DrawString(Session.Current.Font, "...", ellipsisPos, rowColor, 0f, Vector2.Zero, fontScale, SpriteEffects.None, 0.03499f);
+                        return;
+                    }
+                    
+                    string line = wrappedLines[lineIdx];
+                    var itemPos = new Vector2(cellRect.X + 10, cellRect.Y + yOffset);
+                    
+                    // 裁剪文本，确保不超出右边界
+                    string clippedLine = GetStrictClippedText(line, itemPos.X, rightLimitX, fontScale);
+                    
+                    if (!string.IsNullOrEmpty(clippedLine))
+                    {
+                        CacheManager.DrawString(Session.Current.Font, clippedLine, itemPos, rowColor, 0f, Vector2.Zero, fontScale, SpriteEffects.None, 0.03499f);
+                    }
+                    
+                    yOffset += lineHeight;
+                    currentLine++;
+                }
             }
         }
 

@@ -45,8 +45,13 @@ namespace GameObjects.AI
                     var scenario = AIHelper.GetScenario();
                     if (scenario != null)
                     {
-                        me.BelongedFaction.RemoveTroop(me);
-                        scenario.Troops.Remove(me);
+                        foreach (Person p in me.Persons)
+                        {
+                            p.LocationArchitecture = city;
+                            p.LocationTroop = null;
+                        }
+
+                        scenario.RetireTroopFromWorld(me);
                     }
                     return true;
                 }

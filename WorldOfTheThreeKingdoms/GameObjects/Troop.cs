@@ -2323,6 +2323,25 @@ namespace GameObjects
                 // --- 基础过滤 (保持原有逻辑) ---
                 if (Session.Current.Scenario.PositionOutOfRange(slot)) continue;
                 
+                int possibleMove = this.GetPossibleMoveByPosition(slot, this.Army.Kind);
+                bool blockedByHostileOccupier = false;
+                bool blockedByTerrain = false;
+                if (possibleMove >= 0xdac)
+                {
+                    Troop debugOccupier = Session.Current.Scenario.GetTroopByPosition(slot);
+                    if ((((this.BelongedFaction == null) && this.ViewArea.HasPoint(slot)) ||
+                         ((this.BelongedFaction != null) && this.BelongedFaction.IsPositionKnown(slot))) &&
+                        debugOccupier != null &&
+                        !debugOccupier.IsFriendly(this.BelongedFaction))
+                    {
+                        blockedByHostileOccupier = true;
+                    }
+                    else
+                    {
+                        blockedByTerrain = !IsTerrainPassableForYield(slot, this.Army.Kind);
+                    }
+                }
+
                 // 🔥 关键诊断：添加详细日志，找出为什么所有候选坑位被过滤
                 // 日期：2026-03-20
                 #if DEBUG
@@ -2338,30 +2357,27 @@ namespace GameObjects
                 {
                     throw new InvalidOperationException($"数据损坏：部队 {this.DisplayName}(ID:{this.ID}) 的 Army.Kind 为 null");
                 }
-                
-                int possibleMove = this.GetPossibleMoveByPosition(slot, this.Army.Kind);
-                if (possibleMove >= 0xdac)
+
+                if (blockedByHostileOccupier || blockedByTerrain)
                 {
+                    Troop debugOccupier = Session.Current.Scenario.GetTroopByPosition(slot);
                     System.Diagnostics.Debug.WriteLine($"[SmartSiege] {this.DisplayName} 候选坑位 {slot} 被过滤:");
                     System.Diagnostics.Debug.WriteLine($"   GetPossibleMoveByPosition 返回: {possibleMove:X} (>= 0xdac)");
                     System.Diagnostics.Debug.WriteLine($"   Movability: {this.Movability}");
-                    
-                    // 详细分析原因
-                    Troop debugOccupier = Session.Current.Scenario.GetTroopByPosition(slot);
-                    if (debugOccupier != null && !debugOccupier.IsFriendly(this.BelongedFaction))
+
+                    if (blockedByHostileOccupier)
                     {
                         System.Diagnostics.Debug.WriteLine($"   原因: 敌军占据 ({debugOccupier.DisplayName})");
                     }
                     else
                     {
-                        int tacticalCost = this.CalculateTacticalCost(this.Position, slot);
-                        System.Diagnostics.Debug.WriteLine($"   原因: 战术成本过高 (成本:{tacticalCost} > 移动力:{this.Movability})");
+                        System.Diagnostics.Debug.WriteLine("   原因: 地形或建筑不可通行");
                     }
                 }
                 #endif
                 
-                // 🔥 ANTI-BAND-AID：移除防御性空检查
-                if (this.GetPossibleMoveByPosition(slot, this.Army.Kind) >= 0xdac) continue; // 地形不可通行
+                // 围城选位允许跨回合目标，只过滤真正不可通行或被敌军占据的位置。
+                if (blockedByHostileOccupier || blockedByTerrain) continue;
                 
                 // 🔥 关键修复：如果是当前位置，不要被 takenPositions 过滤
                 if (slot != this.Position && takenPositions != null && takenPositions.Contains(slot)) continue;
@@ -20855,6 +20871,63 @@ namespace GameObjects
         /// <summary>
         /// 战斗意志综合评估系统：判定当前部队是否必须撤退
         /// </summary>
+        private bool HasReachableDailyFoodSupply(int requiredFoodCost)
+        {
+            if (requiredFoodCost <= 0)
+            {
+                return true;
+            }
+
+            if (this.StartingArchitecture != null &&
+                this.StartingArchitecture.BelongedFaction == this.BelongedFaction &&
+                this.StartingArchitecture.Food >= requiredFoodCost)
+            {
+                return true;
+            }
+
+            GameScenario scenario = Session.Current.Scenario;
+            if (scenario.MapTileData == null || scenario.PositionOutOfRange(this.Position))
+            {
+                return false;
+            }
+
+            TileData tileData = scenario.MapTileData[this.Position.X, this.Position.Y];
+            if (tileData.SupplyingArchitectures != null)
+            {
+                for (int i = 0; i < tileData.SupplyingArchitectures.Count; i++)
+                {
+                    Architecture architecture = tileData.SupplyingArchitectures[i];
+                    if (architecture.BelongedFaction == this.BelongedFaction &&
+                        architecture.Food >= requiredFoodCost)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (this.BelongedLegion != null &&
+                this.BelongedLegion.PreferredRouteway != null &&
+                this.BelongedLegion.PreferredRouteway.IsEnough(this.Position, requiredFoodCost))
+            {
+                return true;
+            }
+
+            if (tileData.SupplyingRoutePoints != null)
+            {
+                for (int i = 0; i < tileData.SupplyingRoutePoints.Count; i++)
+                {
+                    RoutePoint routePoint = tileData.SupplyingRoutePoints[i];
+                    if (routePoint.BelongedRouteway.IsSupporting(this.BelongedFaction) &&
+                        routePoint.BelongedRouteway.IsEnough(routePoint.ConsumptionRate, requiredFoodCost))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         public bool ShouldRetreat()
         {
             return EvaluateRetreatDecision();
@@ -20867,6 +20940,7 @@ namespace GameObjects
         {
             int actualFoodCost = CalculateActualFoodCost();
             bool isOutOfFood = this.Food < actualFoodCost;
+            bool isSupplyCutOff = !HasReachableDailyFoodSupply(actualFoodCost);
 
             // 1. 基础阈值判定（断粮现在作为触发深入思考的门槛之一）
             bool reachThreshold = this.Army.IsFewScaleNeedRetreat || 
@@ -20875,6 +20949,7 @@ namespace GameObjects
                                   isOutOfFood; // 缺粮触发检定
 
             // 未触底则正常战斗
+            reachThreshold = reachThreshold || isSupplyCutOff;
             if (!reachThreshold) return false;
 
             // 2. 触底反弹判定：计算性格与局势评分
@@ -20913,6 +20988,7 @@ namespace GameObjects
         {
             float score = 100f; // 基础撤退分
             int actualFoodCost = CalculateActualFoodCost();
+            bool isSupplyCutOff = !HasReachableDailyFoodSupply(actualFoodCost);
 
             // A. 断粮恐慌评估 (极大权重)
             if (this.Food < actualFoodCost)
@@ -20920,6 +20996,10 @@ namespace GameObjects
                 // 赋予200分的极高权重，意味着常规状态下断粮必退。
                 // 只有当 死战分 极高（如敌城即将告破 + 主将极度勇猛）时才能压倒此恐慌。
                 score += 200f;
+            }
+            else if (isSupplyCutOff)
+            {
+                score += 90f;
             }
 
             // B. 战损压力评估
@@ -28773,8 +28853,8 @@ namespace GameObjects
         {
 #if DEBUG
             // 🔥 修复：验证双重系统的一致性
-            Troop cachedTroop = MapPositionCache.GetTroopAt(position);
             Troop tileTroop = Session.Current.Scenario.GetTroopByPosition(position);
+            Troop cachedTroop = MapPositionCache.GetTroopAt(position);
             
             if (cachedTroop != tileTroop)
             {
