@@ -43,6 +43,15 @@ namespace GameObjects.TroopDetail
 
         private void AddToOpenList(AreaSquare square)
         {
+            // 🔥 参数验证：ANTI-BAND-AID 协议
+            // 日期：2026-03-29
+            // 原因：调用者可能传入 null，导致第 49 行 openList[x].F 抛出 NullReferenceException
+            if (square == null)
+            {
+                throw new ArgumentNullException(nameof(square), 
+                    "AreaSearcher.AddToOpenList: square 参数为 null，请检查 MakeSquare 中的 AreaSquare 创建逻辑");
+            }
+            
             this.openList.Add(square);
             int x = this.openList.Count - 1;
             square.Index = x;

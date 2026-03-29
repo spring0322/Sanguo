@@ -2543,6 +2543,89 @@ namespace GameObjects
         /// <summary>
         /// 【智能防卡】检查下一步是否被友军或目标建筑阻挡
         /// </summary>
+        private void ResetMovePathForResolvedDestination(Point resolvedDestination)
+        {
+            this.RealDestination = resolvedDestination;
+            this.Destination = resolvedDestination;
+            this.stuckedFor = 0;
+
+            if (this._cachedPath.Count > 0) this._cachedPath.Clear();
+            if (this._firstTierPath != null && this._firstTierPath.Count > 0)
+            {
+                this.ClearFirstTierPath();
+                this.FirstIndex = 0;
+            }
+
+            this.HasPath = false;
+            this.CurrentAIState = TroopAIState.Marching;
+        }
+
+        private bool TryResolveOccupiedSiegeDestination()
+        {
+            if (this.WillArchitecture == null || this.WillArchitecture.BelongedFaction == this.BelongedFaction) return false;
+            if (!IsValidDestination(this.RealDestination) || this.RealDestination == this.Position) return false;
+
+            Troop occupier = Session.Current.Scenario.GetTroopByPosition(this.RealDestination);
+            if (occupier == null || occupier == this) return false;
+
+            if (occupier.IsFriendly(this.BelongedFaction))
+            {
+                HashSet<Point> takenPositions = [occupier.Position];
+                Point reassignedSiegePosition = this.GetSmartSiegePosition(this.WillArchitecture, takenPositions);
+                if (!IsValidDestination(reassignedSiegePosition) || reassignedSiegePosition == this.RealDestination) return false;
+
+                ResetMovePathForResolvedDestination(reassignedSiegePosition);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 攻城位被友军 {occupier.DisplayName} 占用，改派新站位 {reassignedSiegePosition}");
+#endif
+                return true;
+            }
+
+            if (this.CanAttack(occupier))
+            {
+                this.TargetTroop = occupier;
+                this.RealDestination = this.Position;
+                this.Destination = this.Position;
+                if (this._cachedPath.Count > 0) this._cachedPath.Clear();
+                if (this._firstTierPath != null && this._firstTierPath.Count > 0)
+                {
+                    this.ClearFirstTierPath();
+                    this.FirstIndex = 0;
+                }
+                this.HasPath = false;
+                this.Action = TroopAction.Stop;
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 攻城位被敌军 {occupier.DisplayName} 抢先占据，改为就地交战");
+#endif
+                return true;
+            }
+
+            Point occupiedAttackPosition = this.OffenceRadius > 1
+                ? this.GetOptimalAttackPosition(occupier)
+                : this.FindNearestPassableToTarget(occupier.Position, 1);
+            if (IsValidDestination(occupiedAttackPosition)
+                && occupiedAttackPosition != occupier.Position
+                && occupiedAttackPosition != this.RealDestination)
+            {
+                this.TargetTroop = occupier;
+                ResetMovePathForResolvedDestination(occupiedAttackPosition);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 攻城位被敌军 {occupier.DisplayName} 抢先占据，改为逼近敌军位置 {occupiedAttackPosition}");
+#endif
+                return true;
+            }
+
+            HashSet<Point> hostileTakenPositions = [occupier.Position];
+            Point fallbackSiegePosition = this.GetSmartSiegePosition(this.WillArchitecture, hostileTakenPositions);
+            if (!IsValidDestination(fallbackSiegePosition) || fallbackSiegePosition == this.RealDestination) return false;
+
+            ResetMovePathForResolvedDestination(fallbackSiegePosition);
+#if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 攻城位被敌军 {occupier.DisplayName} 占据，改派备用站位 {fallbackSiegePosition}");
+#endif
+            return true;
+        }
+
         private bool IsBlockedByFriendlyOrTarget(Point nextPos)
         {
             if (nextPos == new Point(-1, -1) || nextPos == this.Position) return false;
@@ -23289,6 +23372,30 @@ namespace GameObjects
                     // 🔥 NEW: 使用异步移动系统
                     if (_currentMoveTask == null || _currentMoveTask.IsCompleted)
                     {
+                        if (!this.CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost))
+                        {
+#if DEBUG
+                            if (_currentMoveTask != null && _currentMoveTask.IsCompleted)
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"[UpdateMovementLogic] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
+                            }
+#endif
+                            this.ClearTransientExecutionState();
+                            break;
+                        }
+                        if (!this.CanStartMoveTurnTask(out nextPoint, out nextStepCost))
+                        {
+#if DEBUG
+                            if (_currentMoveTask != null && _currentMoveTask.IsCompleted)
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"[UpdateMovementLogic] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
+                            }
+#endif
+                            this.ClearTransientExecutionState();
+                            break;
+                        }
                         // 取消之前的任务（如果有）
                         CancelLegacyMoveTask();
                         _oldSystemMoveCts = new CancellationTokenSource();
@@ -23314,6 +23421,21 @@ namespace GameObjects
                         _actionLock = ActionLockState.MovingOnMap;
                         
                         // 🔥 修复：增加动画延迟，让玩家能清楚看到AI部队的移动路径
+                        if (!this.CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost))
+                        {
+#if DEBUG
+                            if (_currentMoveTask != null && _currentMoveTask.IsCompleted)
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"[UpdateMovementLogic] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
+                            }
+#endif
+                            _oldSystemMoveCts.Dispose();
+                            _oldSystemMoveCts = null;
+                            this.ClearTransientExecutionState();
+                            break;
+                        }
+
                         _currentMoveTask = ExecuteMoveTurnAsync(isAggressive: true, animationDelayPerStep: 400, cancellationToken: _oldSystemMoveCts.Token);
                     }
                     break;
@@ -23425,6 +23547,29 @@ namespace GameObjects
         /// </summary>
         /// <param name="nextPoint">目标点</param>
         /// <returns>移动消耗</returns>
+        private bool CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost)
+        {
+            nextPoint = Point.Zero;
+            nextStepCost = -1;
+
+            if (this.Destroyed || this.MovabilityLeft <= 0)
+            {
+                return false;
+            }
+
+            Point? nextPointOpt = this.GetNextPathPoint();
+            if (!nextPointOpt.HasValue)
+            {
+                return this.RealDestination != new Point(-1, -1)
+                    && this.RealDestination != Point.Zero
+                    && !IsAtPosition(this.RealDestination);
+            }
+
+            nextPoint = nextPointOpt.Value;
+            nextStepCost = this.GetMoveCost(nextPoint);
+            return this.MovabilityLeft >= nextStepCost;
+        }
+
         private int GetMoveCost(Point nextPoint)
         {
             return Session.Current.Scenario.GetMoveCost(this.Position, nextPoint, this);
@@ -23511,6 +23656,8 @@ namespace GameObjects
             {
                 this.Destination = this.RealDestination;
             }
+
+            this.TryResolveOccupiedSiegeDestination();
 
             // 🔥 修复：验证路径有效性，如果路径失效则重新寻路
             bool needPathfinding = false;
@@ -23633,12 +23780,23 @@ namespace GameObjects
                 if (cancellationToken.IsCancellationRequested || this.Destroyed) return movedAtLeastOnce;
 
                 safetyCounter++;
+                this.TryResolveOccupiedSiegeDestination();
 
                 // A. 获取路径的下一步
                 Point? nextPointOpt = this.GetNextPathPoint();
                 
                 if (nextPointOpt == null)
                 {
+                    if (this.WillArchitecture != null
+                        && this.WillArchitecture.BelongedFaction != this.BelongedFaction
+                        && this.CanAttack(this.WillArchitecture))
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 已进入可攻城位置，停止继续移动");
+#endif
+                        break;
+                    }
+
 #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 无路可走: FirstTierPath={this._firstTierPath.Count} CurrentPath count={(this.CurrentPath?.Count ?? -1)}");
                     System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 诊断信息: RealDest={this.RealDestination}, Dest={this.Destination}, AIState={this.CurrentAIState}, WillArch={this.WillArchitecture?.Name ?? "null"}");
@@ -23840,6 +23998,16 @@ namespace GameObjects
                         { 
                             return movedAtLeastOnce; 
                         }
+                    }
+
+                    if (this.WillArchitecture != null
+                        && this.WillArchitecture.BelongedFaction != this.BelongedFaction
+                        && this.CanAttack(this.WillArchitecture))
+                    {
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 移动后已可攻城，停止继续寻路");
+#endif
+                        break;
                     }
 
                     // F. 索敌判断 (非激进模式下，发现敌人则停止)

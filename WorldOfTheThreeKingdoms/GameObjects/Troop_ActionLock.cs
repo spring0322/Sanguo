@@ -49,7 +49,9 @@ namespace GameObjects
                 // 原因：CheckMovementCompleted 在移动力为0时重启任务，导致 ExecuteMoveTurnAsync 立即失败
                 //       形成死循环：分配目标 → 移动力不足 → 任务完成 → 重启任务 → 移动力不足
                 // 解决：如果移动力已耗尽，视为任务完成，等待下回合 InitializeInQueue 恢复移动力
-                if ((hasRemainingPath || notAtDestination) && this.MovabilityLeft > 0)
+                bool canRestartMoveTask = this.CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost);
+
+                if ((hasRemainingPath || notAtDestination) && canRestartMoveTask)
                 {
                     // 还有路径要走且有移动力，重新启动移动任务
                     _oldSystemMoveCts?.Dispose();
@@ -72,6 +74,15 @@ namespace GameObjects
                 }
                 
                 // 任务完成（已到达目标 或 移动力耗尽）
+                #if DEBUG
+                if ((hasRemainingPath || notAtDestination) && !canRestartMoveTask)
+                {
+                    Debug.WriteLine(
+                        $"[CheckMovementCompleted] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
+                }
+                #endif
+
+                this.ClearTransientExecutionState();
                 return true;
             }
 

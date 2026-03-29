@@ -62,6 +62,15 @@ namespace WorldOfTheThreeKingdoms.GameManager
                     "InkBleedRenderer: GraphicsDevice 已被释放，无法创建 RenderTarget2D");
             }
             
+            // 🔥 关键修复：检查 PresentationParameters 是否为 null
+            // 日期：2026-03-29
+            // 原因：RenderTarget2D 构造函数内部会访问 PresentationParameters，如果为 null 会抛出 NullReferenceException
+            if (graphicsDevice.PresentationParameters == null)
+            {
+                throw new InvalidOperationException(
+                    "InkBleedRenderer: GraphicsDevice.PresentationParameters 为 null，设备未正确初始化");
+            }
+            
             // 🔥 验证屏幕尺寸
             if (screenWidth <= 0 || screenHeight <= 0)
             {
@@ -151,6 +160,21 @@ namespace WorldOfTheThreeKingdoms.GameManager
         public void OnScreenResize(int newWidth, int newHeight)
         {
             _lowResTarget?.Dispose();
+            
+            // 🔥 关键修复：检查 GraphicsDevice 状态
+            // 日期：2026-03-29
+            // 原因：RenderTarget2D 构造函数内部会访问 GraphicsDevice，如果设备已释放或未初始化会抛出 NullReferenceException
+            if (_graphicsDevice.IsDisposed)
+            {
+                throw new ObjectDisposedException(nameof(_graphicsDevice),
+                    "InkBleedRenderer.OnScreenResize: GraphicsDevice 已被释放");
+            }
+            
+            if (_graphicsDevice.PresentationParameters == null)
+            {
+                throw new InvalidOperationException(
+                    "InkBleedRenderer.OnScreenResize: GraphicsDevice.PresentationParameters 为 null");
+            }
             
             int lowResWidth = newWidth / 8;
             int lowResHeight = newHeight / 8;

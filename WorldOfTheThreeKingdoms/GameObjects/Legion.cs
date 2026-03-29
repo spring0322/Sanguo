@@ -1255,7 +1255,9 @@ namespace GameObjects
         {
             if (this.WillArchitecture == null) return;
 
+            this.TakenPositions.Clear();
             HashSet<Point> takenPositions = [];
+            this.ReserveExternalSiegePositions(takenPositions);
             int assignedCount = 0;
 
             System.Diagnostics.Debug.WriteLine($"[SmartSiege] === 军团{this.Name} 开始分配攻击坑位，目标:{this.WillArchitecture.Name}，部队数:{this.Troops.Count} ===");
@@ -1351,6 +1353,35 @@ namespace GameObjects
             }
 
             System.Diagnostics.Debug.WriteLine($"[SmartSiege] === 军团{this.Name} 分配完成，成功{assignedCount}/{sortedTroops.Count}个部队 ===");
+        }
+
+        private void ReserveExternalSiegePositions(HashSet<Point> takenPositions)
+        {
+            GameScenario scenario = Session.Current?.Scenario ?? throw new InvalidOperationException($"状态损坏：军团 {this.Name}(ID:{this.ID}) 在攻城位分配时 Scenario 为 null。");
+            GameArea architectureArea = this.WillArchitecture?.ArchitectureArea ?? throw new InvalidOperationException($"状态损坏：军团 {this.Name}(ID:{this.ID}) 的目标建筑 {this.WillArchitecture?.Name ?? "null"} ArchitectureArea 为 null。");
+            GameArea contactArea = architectureArea.GetContactArea(false);
+            GameObjectList allTroops = scenario.Troops.GetList();
+            int troopCount = allTroops.Count;
+
+            for (int i = 0; i < troopCount; i++)
+            {
+                Troop troop = allTroops[i] as Troop;
+                if (troop == null || troop.Destroyed || troop.BelongedLegion == this) continue;
+                if (troop.WillArchitecture != this.WillArchitecture) continue;
+                if (troop.BelongedFaction == this.WillArchitecture.BelongedFaction) continue;
+                if (this.BelongedFaction == null || !this.BelongedFaction.IsFriendly(troop.BelongedFaction)) continue;
+
+                if (contactArea.HasPoint(troop.Position) || troop.CanAttack(this.WillArchitecture))
+                {
+                    takenPositions.Add(troop.Position);
+                }
+
+                Point reservedPosition = troop.RealDestination;
+                if (reservedPosition.X < 0 || reservedPosition.Y < 0 || reservedPosition == Point.Zero || reservedPosition == troop.Position) continue;
+                if (architectureArea.HasPoint(reservedPosition)) continue;
+
+                takenPositions.Add(reservedPosition);
+            }
         }
         
         /// <summary>

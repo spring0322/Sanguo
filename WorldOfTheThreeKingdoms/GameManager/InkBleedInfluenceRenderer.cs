@@ -85,6 +85,15 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
                 "InkBleedInfluenceRenderer: GraphicsDevice 已被释放，无法创建 RenderTarget2D");
         }
         
+        // 🔥 关键修复：检查 PresentationParameters 是否为 null
+        // 日期：2026-03-29
+        // 原因：RenderTarget2D 构造函数内部会访问 PresentationParameters，如果为 null 会抛出 NullReferenceException
+        if (graphicsDevice.PresentationParameters == null)
+        {
+            throw new InvalidOperationException(
+                "InkBleedInfluenceRenderer: GraphicsDevice.PresentationParameters 为 null，设备未正确初始化");
+        }
+        
         if (inkBleedEffect == null)
         {
             throw new ArgumentNullException(nameof(inkBleedEffect),
@@ -537,6 +546,15 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
     public void RebuildRenderTarget()
     {
         _lowResTarget?.Dispose();
+        
+        // 🔥 关键修复：检查 PresentationParameters 是否为 null
+        // 日期：2026-03-29
+        // 原因：RenderTarget2D 构造函数内部会访问 PresentationParameters，如果为 null 会抛出 NullReferenceException
+        if (_graphicsDevice.PresentationParameters == null)
+        {
+            throw new InvalidOperationException(
+                "InkBleedInfluenceRenderer.RebuildRenderTarget: GraphicsDevice.PresentationParameters 为 null");
+        }
         
         int screenWidth = _graphicsDevice.PresentationParameters.BackBufferWidth;
         int screenHeight = _graphicsDevice.PresentationParameters.BackBufferHeight;

@@ -7,7 +7,9 @@
 using WorldOfTheThreeKingdoms.GameGlobal;
 using System;
 using System.Linq;
+using GameManager;
 using GameObjects.ArchitectureDetail;
+using GameObjects.PersonDetail;
 using GameObjects.TroopDetail;
 
 namespace GameObjects
@@ -133,6 +135,77 @@ namespace GameObjects
                 System.Diagnostics.Debug.WriteLine($"[AIWorkSmart Enhanced] {p.Name} 在 {this.Name} 被分配工作: {p.WorkKind} " +
                     $"(武力:{p.Strength} 智力:{p.Intelligence} 政治:{p.Politics} 魅力:{p.Glamour})");
             }
+        }
+
+        internal void RefreshIdleWorkAfterDailyDevelop()
+        {
+            this.RefreshIdleWorkForAI();
+        }
+
+        internal void RefreshIdleWorkForAI()
+        {
+            if (!this.ShouldRunLocalDailyWorkRefresh())
+            {
+                return;
+            }
+
+            bool hasIdleOfficer = false;
+            for (int i = 0; i < this.Persons.Count; i++)
+            {
+                Person person = this.Persons[i] as Person;
+                if (this.CanUseOfficerForDailyWorkRefresh(person) && person.WorkKind == ArchitectureWorkKind.无)
+                {
+                    hasIdleOfficer = true;
+                    break;
+                }
+            }
+
+            if (!hasIdleOfficer)
+            {
+                return;
+            }
+
+            this.EnsureMilitaryWorkTargetsForAI();
+
+            for (int i = 0; i < this.Persons.Count; i++)
+            {
+                Person person = this.Persons[i] as Person;
+                if (!this.CanUseOfficerForDailyWorkRefresh(person) || person.WorkKind != ArchitectureWorkKind.无)
+                {
+                    continue;
+                }
+
+                this.AIWorkSmart(person);
+                if (person.WorkKind == ArchitectureWorkKind.无)
+                {
+                    this.AssignDefaultWork(person);
+                }
+            }
+        }
+
+        private bool ShouldRunLocalDailyWorkRefresh()
+        {
+            if (this.BelongedFaction == null || !this.HasPerson())
+            {
+                return false;
+            }
+
+            if (!Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            {
+                return true;
+            }
+
+            return this.BelongedSection?.AIDetail?.AutoRun == true;
+        }
+
+        private bool CanUseOfficerForDailyWorkRefresh(Person p)
+        {
+            return p != null &&
+                   p.Alive &&
+                   !p.IsCaptive &&
+                   p.BelongedCaptive == null &&
+                   p.Status == PersonStatus.Normal &&
+                   p.LocationArchitecture == this;
         }
 
         /// <summary>
@@ -447,6 +520,15 @@ namespace GameObjects
                 return;
             }
 
+            if (this.TryAssignGenericIdleWork(p))
+            {
+                if (SectionAIHelper.EnableDebugOutput)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[AssignDefaultWork] {this.Name} - {p.Name} 浣跨敤閫氱敤鍏滃簳宸ヤ綔: {p.WorkKind}");
+                }
+                return;
+            }
+
             if (this.GetAICityOperationalState() == AICityOperationalState.Recovery)
             {
                 if (_architectureKind.HasDomination)
@@ -474,6 +556,90 @@ namespace GameObjects
             if (SectionAIHelper.EnableDebugOutput)
             {
                 System.Diagnostics.Debug.WriteLine($"[AssignDefaultWork] {this.Name} - {p.Name} 使用默认工作: {p.WorkKind}");
+            }
+        }
+
+        private bool TryAssignGenericIdleWork(Person p)
+        {
+            if (p == null)
+            {
+                return false;
+            }
+
+/*
+                p.WorkKind = ArchitectureWorkKind.璁粌;
+                return true;
+            }
+
+            bool canUsePaidInternal = p.InternalNoFundNeeded ||
+                                      this.CountAssignedPaidInternalWorkersForAI() < this.GetPaidInternalWorkSlotsForAI();
+            ArchitectureWorkKind bestWorkKind = ArchitectureWorkKind.鏃?;
+            int bestAbility = int.MinValue;
+
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.缁熸不, _architectureKind.HasDomination, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.姘戝績, _architectureKind.HasMorale, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.鑰愪箙, _architectureKind.HasEndurance, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.鍐滀笟, _architectureKind.HasAgriculture, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.鍟嗕笟, _architectureKind.HasCommerce, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, ArchitectureWorkKind.鎶€鏈? _architectureKind.HasTechnology, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+
+            if (bestWorkKind == ArchitectureWorkKind.鏃?)
+            {
+                return false;
+            }
+
+            p.WorkKind = bestWorkKind;
+            return true;
+*/
+            if (this.TryAssignRecruitmentWork(p))
+            {
+                return true;
+            }
+
+            if (this.GetTrainingMilitaryList().Count > 0)
+            {
+                p.WorkKind = (ArchitectureWorkKind)7;
+                return true;
+            }
+
+            bool canUsePaidInternal = p.InternalNoFundNeeded ||
+                                      this.CountAssignedPaidInternalWorkersForAI() < this.GetPaidInternalWorkSlotsForAI();
+            ArchitectureWorkKind bestWorkKind = (ArchitectureWorkKind)0;
+            int bestAbility = int.MinValue;
+
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)4, _architectureKind.HasDomination, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)5, _architectureKind.HasMorale, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)6, _architectureKind.HasEndurance, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)1, _architectureKind.HasAgriculture, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)2, _architectureKind.HasCommerce, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)3, _architectureKind.HasTechnology, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+
+            if (bestWorkKind == (ArchitectureWorkKind)0)
+            {
+                return false;
+            }
+
+            p.WorkKind = bestWorkKind;
+            return true;
+        }
+
+        private void ConsiderGenericIdleWork(Person p, ArchitectureWorkKind kind, bool isAvailable, bool canUsePaidInternal, ref ArchitectureWorkKind bestWorkKind, ref int bestAbility)
+        {
+            if (!isAvailable)
+            {
+                return;
+            }
+
+            if (this.IsFundedInternalWorkForAI(kind) && !canUsePaidInternal)
+            {
+                return;
+            }
+
+            int ability = p.GetWorkAbility(kind);
+            if (ability > bestAbility)
+            {
+                bestAbility = ability;
+                bestWorkKind = kind;
             }
         }
 
@@ -586,9 +752,52 @@ namespace GameObjects
             if (_architectureKind.HasEndurance && this.Endurance < this.EnduranceCeiling) demand++;
             if (this.GetTrainingMilitaryList().Count > 0) demand++;
             if (this.CanExecuteAIRecruitment(false) && this.RecruitmentAvail() && this.GetRecruitmentMilitaryList().Count > 0) demand++;
+            if (this.ShouldBootstrapMilitaryWorkForAI()) demand++;
             if (this.kezhenzai()) demand++;
 
             return Math.Max(1, demand);
+        }
+
+        private bool HasImmediateMilitaryWorkTargetsForAI()
+        {
+            if (this.GetTrainingMilitaryList().Count > 0)
+            {
+                return true;
+            }
+
+            return this.CanExecuteAIRecruitment(false) &&
+                   this.RecruitmentAvail() &&
+                   this.GetRecruitmentMilitaryList().Count > 0;
+        }
+
+        private bool ShouldBootstrapMilitaryWorkForAI()
+        {
+            if (!this.HasPerson() || this.HasImmediateMilitaryWorkTargetsForAI())
+            {
+                return false;
+            }
+
+            if (!_architectureKind.HasPopulation || !this.NewMilitaryAvail() || !this.CanExecuteAIRecruitment(true))
+            {
+                return false;
+            }
+
+            if (this.CountLocalActiveOfficersForAI() < 3)
+            {
+                return false;
+            }
+
+            return this.Fund > Math.Max(this.ExpectedSalary, this.GetOperationalReserveFundForAI());
+        }
+
+        private void EnsureMilitaryWorkTargetsForAI()
+        {
+            if (!this.ShouldBootstrapMilitaryWorkForAI())
+            {
+                return;
+            }
+
+            this.AIRecruitMilitary();
         }
 
         private bool HasSevereWorkforceShortageForAI()
@@ -687,7 +896,47 @@ namespace GameObjects
                 return false;
             }
 
-            return p.GetWorkAbility(kind) >= this.GetDynamicAbilityFloorForAI(kind);
+            int ability = p.GetWorkAbility(kind);
+            int preferredFloor = this.GetDynamicAbilityFloorForAI(kind);
+            if (ability >= preferredFloor)
+            {
+                return true;
+            }
+
+            return this.CanFallbackToLowSkillInternalWorkForAI(kind, ability, preferredFloor);
+        }
+
+        private bool CanFallbackToLowSkillInternalWorkForAI(ArchitectureWorkKind kind, int ability, int preferredFloor)
+        {
+            if (!this.IsFundedInternalWorkForAI(kind) || this.HasImmediateMilitaryWorkTargetsForAI())
+            {
+                return false;
+            }
+
+            int minimumFloor = kind switch
+            {
+                ArchitectureWorkKind.农业 => 45,
+                ArchitectureWorkKind.商业 => 45,
+                ArchitectureWorkKind.技术 => 50,
+                ArchitectureWorkKind.赈灾 => 40,
+                _ => 30
+            };
+
+            int fallbackFloor = kind switch
+            {
+                ArchitectureWorkKind.统治 => preferredFloor - 35,
+                ArchitectureWorkKind.民心 => preferredFloor - 35,
+                ArchitectureWorkKind.耐久 => preferredFloor - 35,
+                ArchitectureWorkKind.赈灾 => preferredFloor - 20,
+                _ => preferredFloor - 10
+            };
+
+            if (this.HasSevereWorkforceShortageForAI())
+            {
+                fallbackFloor -= 10;
+            }
+
+            return ability >= Math.Max(minimumFloor, fallbackFloor);
         }
 
         private bool TryAssignRecruitmentWork(Person p)

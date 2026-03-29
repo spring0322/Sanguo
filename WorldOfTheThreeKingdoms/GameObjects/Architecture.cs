@@ -1629,6 +1629,7 @@ namespace GameObjects
             try { WTKGameManager.AITroopRecyclingSystem.Instance.RecycleWeakTroopsForManpower(this); } catch { }
             this.OutsideTacticsAI();
             this.InsideTacticsAI();
+            this.RefreshIdleWorkForAI();
         }
 
         public void AI()
@@ -3736,6 +3737,7 @@ namespace GameObjects
         {
             this.StopAllWork();
             if (!this.HasPerson()) return;
+            this.EnsureMilitaryWorkTargetsForAI();
 
             // 🔥 资金不足时的应急策略：全员训练
             if ((!this.IsFundEnough && this.RecentlyAttacked <= 0) || 
@@ -10159,6 +10161,7 @@ namespace GameObjects
             }
             this.DevelopArmy();
             this.ClearWork();
+            this.RefreshIdleWorkAfterDailyDevelop();
         }
 
         public void DevelopDayNoFaction()
