@@ -4,6 +4,7 @@ using GameObjects.Conditions;
 using System;
 using System.Collections.Generic;
 using System.Runtime.Serialization;
+using System.Text;
 using WorldOfTheThreeKingdoms.GameGlobal;  // 🔥 2026-03-05 添加：支持 [GenerateUIAccessor] 特性
 
 namespace GameObjects
@@ -172,6 +173,16 @@ namespace GameObjects
 
         public event ApplyEvent OnApplyEvent;
 
+        private enum DialogContentKind
+        {
+            Dialog,
+            YesDialog,
+            NoDialog
+        }
+
+        private static readonly char[] StringSeparators = [' ', '\n', '\r', '\t'];
+        private static readonly char[] DialogLineSeparators = ['\r', '\n'];
+
         public void Init()
         {
             yesEffect = new Dictionary<int, List<EventEffect>>();
@@ -202,6 +213,155 @@ namespace GameObjects
             {
                 scenBiography = new List<PersonIdDialog>();
             }
+        }
+
+        private static string[] SplitTokens(string data)
+        {
+            return string.IsNullOrWhiteSpace(data) ? [] : data.Split(StringSeparators, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private void ValidatePairTokenCount(string fieldName, string[] strArray)
+        {
+            if ((strArray.Length & 1) != 0)
+            {
+                throw new FormatException($"Event {this.ID} field {fieldName} contains {strArray.Length} tokens and cannot be parsed as key/value pairs.");
+            }
+        }
+
+        private bool TryGetDialogSpeakerId(string token, out int speakerId)
+        {
+            if (!int.TryParse(token, out speakerId))
+            {
+                return false;
+            }
+
+            return this.person == null || this.person.Count == 0 || this.person.ContainsKey(speakerId);
+        }
+
+        private static void AddDialogEntry(List<PersonIdDialog> result, int speakerId, string text, DialogContentKind contentKind)
+        {
+            PersonIdDialog item = new PersonIdDialog();
+            item.id = speakerId;
+            switch (contentKind)
+            {
+                case DialogContentKind.YesDialog:
+                    item.yesdialog = text;
+                    break;
+                case DialogContentKind.NoDialog:
+                    item.nodialog = text;
+                    break;
+                default:
+                    item.dialog = text;
+                    break;
+            }
+            result.Add(item);
+        }
+
+        private bool TryParseStructuredDialogEntries(string data, string fieldName, DialogContentKind contentKind, List<PersonIdDialog> result)
+        {
+            if (data.IndexOf('\t') < 0)
+            {
+                return false;
+            }
+
+            string[] lines = data.Split(DialogLineSeparators, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                int separatorIndex = line.IndexOf('\t');
+                if (separatorIndex <= 0)
+                {
+                    throw new FormatException($"Event {this.ID} field {fieldName} contains a malformed dialog record on line {i + 1}.");
+                }
+
+                string speakerToken = line[..separatorIndex];
+                if (!TryGetDialogSpeakerId(speakerToken, out int speakerId))
+                {
+                    throw new FormatException($"Event {this.ID} field {fieldName} contains invalid speaker token '{speakerToken}' on line {i + 1}.");
+                }
+
+                AddDialogEntry(result, speakerId, line[(separatorIndex + 1)..], contentKind);
+            }
+            return true;
+        }
+
+        private List<PersonIdDialog> ParseDialogEntries(string data, string fieldName, DialogContentKind contentKind)
+        {
+            List<PersonIdDialog> result = new List<PersonIdDialog>();
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                return result;
+            }
+
+            if (TryParseStructuredDialogEntries(data, fieldName, contentKind, result))
+            {
+                return result;
+            }
+
+            string[] strArray = SplitTokens(data);
+            int index = 0;
+            while (index < strArray.Length)
+            {
+                if (!TryGetDialogSpeakerId(strArray[index], out int speakerId))
+                {
+                    throw new FormatException($"Event {this.ID} field {fieldName} expected a speaker token at position {index}, but found '{strArray[index]}'.");
+                }
+
+                int textStart = index + 1;
+                if (textStart >= strArray.Length)
+                {
+                    throw new FormatException($"Event {this.ID} field {fieldName} is missing dialog text after speaker {speakerId}.");
+                }
+
+                int nextSpeakerIndex = strArray.Length;
+                for (int i = textStart + 1; i < strArray.Length; i++)
+                {
+                    if (TryGetDialogSpeakerId(strArray[i], out _))
+                    {
+                        nextSpeakerIndex = i;
+                        break;
+                    }
+                }
+
+                AddDialogEntry(result, speakerId, string.Join(" ", strArray, textStart, nextSpeakerIndex - textStart), contentKind);
+                index = nextSpeakerIndex;
+            }
+
+            return result;
+        }
+
+        private static string GetDialogText(PersonIdDialog dialogEntry, DialogContentKind contentKind)
+        {
+            return contentKind switch
+            {
+                DialogContentKind.YesDialog => dialogEntry.yesdialog ?? string.Empty,
+                DialogContentKind.NoDialog => dialogEntry.nodialog ?? string.Empty,
+                _ => dialogEntry.dialog ?? string.Empty
+            };
+        }
+
+        private static string NormalizeSerializedDialogText(string text)
+        {
+            return string.IsNullOrEmpty(text) ? string.Empty : text.Replace('\r', ' ').Replace('\n', ' ');
+        }
+
+        private static string SerializeDialogEntries(List<PersonIdDialog> dialogEntries, DialogContentKind contentKind)
+        {
+            if (dialogEntries == null || dialogEntries.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < dialogEntries.Count; i++)
+            {
+                PersonIdDialog dialogEntry = dialogEntries[i];
+                builder.Append(dialogEntry.id);
+                builder.Append('\t');
+                builder.Append(NormalizeSerializedDialogText(GetDialogText(dialogEntry, contentKind)));
+                builder.Append('\n');
+            }
+            return builder.ToString();
         }
 
         public void ApplyEventDialogs(Architecture a, Screen screen)
@@ -618,10 +778,10 @@ namespace GameObjects
 
         public void LoadPersonIdFromString(PersonList persons, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
 
             this.person = new Dictionary<int, List<Person>>();
+            ValidatePairTokenCount(nameof(personString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 int n = int.Parse(strArray[i]);
@@ -656,10 +816,10 @@ namespace GameObjects
 
         public void LoadPersonCondFromString(ConditionTable allConds, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
 
             this.personCond = new Dictionary<int, List<Condition>>();
+            ValidatePairTokenCount(nameof(PersonCondString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 int n = int.Parse(strArray[i]);
@@ -758,110 +918,50 @@ namespace GameObjects
 
         public void LoadDialogFromString(string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-
-            this.dialog = new List<PersonIdDialog>();
-            for (int i = 0; i < strArray.Length; i += 2)
-            {
-                PersonIdDialog d = new PersonIdDialog();
-                d.id = int.Parse(strArray[i]);
-                d.dialog = strArray[i + 1];
-                this.dialog.Add(d);
-            }
+            this.dialog = ParseDialogEntries(data, nameof(dialogString), DialogContentKind.Dialog);
         }
 
         public void LoadyesDialogFromString(string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-
-            this.yesdialog = new List<PersonIdDialog>();
-            for (int i = 0; i < strArray.Length; i += 2)
-            {
-                PersonIdDialog d = new PersonIdDialog();
-                d.id = int.Parse(strArray[i]);
-                d.yesdialog = strArray[i + 1];
-                this.yesdialog.Add(d);
-            }
+            this.yesdialog = ParseDialogEntries(data, nameof(yesdialogString), DialogContentKind.YesDialog);
         }
 
         public void LoadnoDialogFromString(string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-
-            this.nodialog = new List<PersonIdDialog>();
-            for (int i = 0; i < strArray.Length; i += 2)
-            {
-                PersonIdDialog d = new PersonIdDialog();
-                d.id = int.Parse(strArray[i]);
-                d.nodialog = strArray[i + 1];
-                this.nodialog.Add(d);
-            }
+            this.nodialog = ParseDialogEntries(data, nameof(nodialogString), DialogContentKind.NoDialog);
         }
         
         public void LoadScenBiographyFromString(string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-
-            this.scenBiography = new List<PersonIdDialog>();
-            for (int i = 0; i < strArray.Length; i += 2)
-            {
-                PersonIdDialog d = new PersonIdDialog();
-                d.id = int.Parse(strArray[i]);
-                d.dialog = strArray[i + 1];
-                this.scenBiography.Add(d);
-            }
+            this.scenBiography = ParseDialogEntries(data, nameof(scenBiographyString), DialogContentKind.Dialog);
         }
 
         public string SaveDialogToString()
         {
-            string result = "";
-            foreach (PersonIdDialog i in this.dialog)
-            {
-                result += i.id + " " + i.dialog + " ";
-            }
-            return result;
+            return SerializeDialogEntries(this.dialog, DialogContentKind.Dialog);
         }
 
         public string SaveyesDialogToString()
         {
-            string result = "";
-            foreach (PersonIdDialog i in this.yesdialog)
-            {
-                result += i.id + " " + i.yesdialog + " ";
-            }
-            return result;
+            return SerializeDialogEntries(this.yesdialog, DialogContentKind.YesDialog);
         }
 
         public string SavenoDialogToString()
         {
-            string result = "";
-            foreach (PersonIdDialog i in this.nodialog)
-            {
-                result += i.id + " " + i.nodialog + " ";
-            }
-            return result;
+            return SerializeDialogEntries(this.nodialog, DialogContentKind.NoDialog);
         }
         
         public string SaveScenBiographyToString()
         {
-            string result = "";
-            foreach (PersonIdDialog i in this.scenBiography)
-            {
-                result += i.id + " " + i.dialog + " ";
-            }
-            return result;
+            return SerializeDialogEntries(this.scenBiography, DialogContentKind.Dialog);
         }
 
         public void LoadEffectFromString(EventEffectTable allEffect, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
 
             this.effect = new Dictionary<int, List<EventEffect>>();
+            ValidatePairTokenCount(nameof(effectString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 int n = int.Parse(strArray[i]);
@@ -890,10 +990,10 @@ namespace GameObjects
 
         public void LoadYesEffectFromString(EventEffectTable allEffect, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
 
             this.yesEffect = new Dictionary<int, List<EventEffect>>();
+            ValidatePairTokenCount(nameof(yesEffectString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 int n = int.Parse(strArray[i]);
@@ -922,10 +1022,10 @@ namespace GameObjects
 
         public void LoadNoEffectFromString(EventEffectTable allEffect, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
 
             this.noEffect = new Dictionary<int, List<EventEffect>>();
+            ValidatePairTokenCount(nameof(noEffectString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 int n = int.Parse(strArray[i]);

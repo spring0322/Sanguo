@@ -224,6 +224,64 @@ namespace GameObjects
                 || category == ActiveAbilityCategory.SelfBuffDefense;
         }
 
+        private static bool DescriptionContainsCue(string description, string cue)
+        {
+            return !string.IsNullOrEmpty(description) &&
+                description.IndexOf(cue, StringComparison.Ordinal) >= 0;
+        }
+
+        private static ActiveAbilityCategory InferCombatMethodCategoryFromData(CombatMethod method)
+        {
+            if (method.ViewingHostile || method.ArchitectureTarget || method.AttackDefaultString != 0)
+            {
+                return ActiveAbilityCategory.EnemyTargetedOffense;
+            }
+
+            string description = method.Description;
+            if (DescriptionContainsCue(description, "\u653b\u51fb")
+                || DescriptionContainsCue(description, "\u66b4\u51fb")
+                || DescriptionContainsCue(description, "\u4f24\u5bb3")
+                || DescriptionContainsCue(description, "\u81f4\u4e71")
+                || DescriptionContainsCue(description, "\u58eb\u6c14\u51cf")
+                || DescriptionContainsCue(description, "\u706b\u4f24")
+                || DescriptionContainsCue(description, "\u706b\u7130")
+                || DescriptionContainsCue(description, "\u6563\u5c04")
+                || DescriptionContainsCue(description, "\u8d2f\u7a7f")
+                || DescriptionContainsCue(description, "\u65e0\u8bef\u4f24"))
+            {
+                return ActiveAbilityCategory.SelfBuffOffense;
+            }
+
+            if (DescriptionContainsCue(description, "\u9632\u5fa1")
+                || DescriptionContainsCue(description, "\u6062\u590d")
+                || DescriptionContainsCue(description, "\u4f24\u5175"))
+            {
+                return ActiveAbilityCategory.SelfBuffDefense;
+            }
+
+            return ActiveAbilityCategory.Utility;
+        }
+
+        private static ActiveAbilityCategory GetEffectiveCombatMethodCategory(CombatMethod method)
+        {
+            return GetEffectiveCombatMethodCategory(method, out _);
+        }
+
+        private static ActiveAbilityCategory GetEffectiveCombatMethodCategory(CombatMethod method, out string source)
+        {
+            if (AIRoleConfigManager.TryGetCombatMethodCategory(method.ID, out var category))
+            {
+                source = "AIRoleConfig";
+                return category;
+            }
+
+            category = InferCombatMethodCategoryFromData(method);
+            source = category == (method.ViewingHostile ? ActiveAbilityCategory.EnemyTargetedOffense : ActiveAbilityCategory.Utility)
+                ? "Fallback(ViewingHostile)"
+                : "Fallback(DataHeuristic)";
+            return category;
+        }
+
         private static ActiveAbilityCategory GetEffectiveStuntCategory(int stuntID)
         {
             return AIRoleConfigManager.TryGetStuntCategory(stuntID, out var category)
@@ -294,6 +352,8 @@ namespace GameObjects
             _activePathfindingTask = null;
             _isPathfinding = false;
             _pathfindingCooldown = 0f;
+            _legacySyncRepathTurn = int.MinValue;
+            _legacySyncRepathCount = 0;
             _stuckCounter = 0;
         }
 
@@ -1330,6 +1390,21 @@ namespace GameObjects
         /// 异步寻路系统：250ms 内最多发起一次寻路
         /// </summary>
         private const double REPATH_INTERVAL = 0.25f;
+
+        /// <summary>
+        /// 旧同步移动链：记录本回合同步重寻路预算的所属回合。
+        /// </summary>
+        private int _legacySyncRepathTurn = int.MinValue;
+
+        /// <summary>
+        /// 旧同步移动链：当前回合已消耗的同步重寻路次数。
+        /// </summary>
+        private byte _legacySyncRepathCount = 0;
+
+        /// <summary>
+        /// 旧同步移动链：每回合最多允许一次初始寻路和一次恢复寻路。
+        /// </summary>
+        private const byte MAX_LEGACY_SYNC_REPATHS_PER_TURN = 2;
         
         /// <summary>
         /// 异步寻路系统：卡死计数器，用于触发强行重寻路
@@ -2564,6 +2639,9 @@ namespace GameObjects
             this.RealDestination = resolvedDestination;
             this.Destination = resolvedDestination;
             this.stuckedFor = 0;
+            this._friendlyBlockWaitUntilTurn = -1;
+            ClearCompatStuckCounter();
+            this.ClearCurrentPath();
 
             if (this._cachedPath.Count > 0) this._cachedPath.Clear();
             if (this._firstTierPath != null && this._firstTierPath.Count > 0)
@@ -2574,6 +2652,13 @@ namespace GameObjects
 
             this.HasPath = false;
             this.CurrentAIState = TroopAIState.Marching;
+        }
+
+        private void ResetLegacyMoveTaskDestination(Point resolvedDestination)
+        {
+            TroopAIState currentState = this.CurrentAIState;
+            ResetMovePathForResolvedDestination(resolvedDestination);
+            this.CurrentAIState = currentState;
         }
 
         private bool TryResolveOccupiedSiegeDestination()
@@ -6292,17 +6377,18 @@ namespace GameObjects
                 if (this.Food >= actualFoodCost)
                 {
                     this.Food -= actualFoodCost;
-                    this.RefillFood();
+                    this.RefillFood(actualFoodCost);
                 }
                 else
                 {
-                    this.RefillFood();
+                    this.RefillFood(actualFoodCost);
                     if (this.Food >= actualFoodCost)
                     {
                         this.Food -= actualFoodCost;
                     }
                 }
 
+                HandleSupplyFailureAfterRefill(actualFoodCost);
                 HandleOutOfFoodAfterRefill(actualFoodCost);
                 if (this.BelongedFaction != null)
                 {
@@ -6393,6 +6479,33 @@ namespace GameObjects
             */
         }
 
+        private void HandleSupplyFailureAfterRefill(int requiredFoodCost)
+        {
+            if (this.ManualControl || this.BelongedLegion == null || this.BelongedLegion.IsRetreating())
+            {
+                return;
+            }
+
+            if (HasReachableDailyFoodSupply(requiredFoodCost))
+            {
+                return;
+            }
+
+            bool shouldRetreat = EvaluateRetreatDecision(requiredFoodCost);
+
+            #if DEBUG
+            string startArchName = this.StartingArchitecture != null ? this.StartingArchitecture.Name : "null";
+            int startArchFood = this.StartingArchitecture != null ? this.StartingArchitecture.Food : -1;
+            System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.DisplayName} 补给失败提前评估撤退: Food={this.Food}, ActualFoodCost={requiredFoodCost}, StartArch={startArchName}, StartArchFood={startArchFood}, EvaluateRetreatDecision={shouldRetreat}");
+            #endif
+
+            if (shouldRetreat)
+            {
+                System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.DisplayName} 补给失败且评估确认撤退");
+                EnterRetreatMode();
+            }
+        }
+
         private void HandleOutOfFoodAfterRefill(int requiredFoodCost)
         {
             if (this.Food >= requiredFoodCost)
@@ -6421,7 +6534,7 @@ namespace GameObjects
 
             if (!this.ManualControl && this.BelongedLegion != null && !this.BelongedLegion.IsRetreating())
             {
-                if (EvaluateRetreatDecision())
+                if (EvaluateRetreatDecision(requiredFoodCost))
                 {
                     System.Diagnostics.Debug.WriteLine($"[DayEvent] {this.DisplayName} 断粮且评估确认撤退");
                     EnterRetreatMode();
@@ -6429,17 +6542,17 @@ namespace GameObjects
             }
         }
 
-        private void RefillFood()
+        private void RefillFood(int requiredFoodCost)
         {
             if (Session.GlobalVariables.LiangdaoXitong == true)
             {
-                this.RefillFoodByRouteway();
+                this.RefillFoodByRouteway(requiredFoodCost);
             }
             else
             {
-                this.RefillFoodByStartArchitecture();
+                this.RefillFoodByStartArchitecture(requiredFoodCost);
             }
-            this.RefillFoodByArchitecture();
+            this.RefillFoodByArchitecture(requiredFoodCost);
         }
 
         public bool DaysToReachPosition(Point position, int days)
@@ -7674,6 +7787,9 @@ namespace GameObjects
                         {
                             continue;
                         }
+
+                        this.stuckedFor += 10;
+                        SyncCompatStuckCounter(pathFailEvent: true);
                     }
                     else if (this.IsFriendly(troop2.BelongedFaction))
                     {
@@ -12512,7 +12628,7 @@ namespace GameObjects
             ExtensionInterface.call("TroopReceiveFireDamage", new Object[] { Session.Current.Scenario, this, decrement });
         }
 
-        private void RefillFoodByStartArchitecture()
+        private void RefillFoodByStartArchitecture(int requiredFoodCost)
         {
             //if (Session.GlobalVariables.LiangdaoXitong == true) return;
             if ((this.BelongedFaction != null) && !this.Destroyed && !this.IsTransport)
@@ -12520,8 +12636,6 @@ namespace GameObjects
                 int increment = this.FoodMax - this.Food;
                 if (increment > 0)
                 {
-                    int requiredFoodCost = this.GetCurrentActualFoodCost();
-
                     #if DEBUG
                     // 🔥 调试日志：追踪出发城池补给过程
                     // 日期：2026-03-07
@@ -12580,15 +12694,13 @@ namespace GameObjects
             }
         }
 
-        private void RefillFoodByArchitecture()
+        private void RefillFoodByArchitecture(int requiredFoodCost)
         {
             if ((this.BelongedFaction != null) && !this.Destroyed && !this.IsTransport)
             {
                 int increment = this.FoodMax - this.Food;
                 if (increment > 0)
                 {
-                    int requiredFoodCost = this.GetCurrentActualFoodCost();
-
                     ArchitectureList supplyArchitecturesByPositionAndFaction = Session.Current.Scenario.GetSupplyArchitecturesByPositionAndFaction(this.Position, this.BelongedFaction);
                     
                     #if DEBUG
@@ -12637,7 +12749,7 @@ namespace GameObjects
             }
         }
 
-        private void RefillFoodByRouteway()
+        private void RefillFoodByRouteway(int requiredFoodCost)
         {
             //if (Session.GlobalVariables.LiangdaoXitong == false) return;
             if (!this.IsTransport)
@@ -12645,7 +12757,6 @@ namespace GameObjects
                 int num = this.FoodMax - this.Food;
                 if (num > 0)
                 {
-                    int requiredFoodCost = this.GetCurrentActualFoodCost();
                     List<RoutePoint> supplyRoutePointsByPositionAndFaction = Session.Current.Scenario.GetSupplyRoutePointsByPositionAndFaction(this.Position, this.BelongedFaction);
                     if (supplyRoutePointsByPositionAndFaction.Count != 0)
                     {
@@ -12700,13 +12811,13 @@ namespace GameObjects
             _needsInfluenceBuffBootstrapFromSave = true;
         }
 
-        public void ApplyInfluenceBuff()
+        public bool ApplyInfluenceBuff()
         {
             // 🔥 ANTI-BAND-AID：检查数据源
             if (this.BelongedFaction == null)
             {
                 // 无归属势力的部队（如野怪）不获得增益
-                return;
+                return false;
             }
             
             // 🔥 初始化顺序容错：GlobalInfluenceMap 在 InfluenceUpdateManager.Initialize() 中初始化
@@ -12715,7 +12826,7 @@ namespace GameObjects
             if (this.BelongedFaction.GlobalInfluenceMap is not { Length: > 0 })
             {
                 // 跳过增益应用，等待 InfluenceUpdateManager.Initialize() 完成后再次调用
-                return;
+                return false;
             }
             
             // 1. 获取当前位置的净能量
@@ -12730,10 +12841,22 @@ namespace GameObjects
             float defenseMultiplier = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateDefenseBonus(netEnergy, isArchitecture: false);
             float newDefenceDelta = defenseMultiplier > 1.0f ? defenseMultiplier - 1.0f : 0f;
 
+            float oldOffenceDelta = _appliedInfluenceOffenceDelta;
+            float oldDefenceDelta = _appliedInfluenceDefenceDelta;
             int newVisionDelta = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: false);
             int oldVisionDelta = _appliedInfluenceVisionDelta;
+            int newEffectiveViewRadius = this.ViewRadius + newVisionDelta;
+            bool hasStateChanged = oldOffenceDelta != newOffenceDelta ||
+                oldDefenceDelta != newDefenceDelta ||
+                oldVisionDelta != newVisionDelta ||
+                _cachedEffectiveViewRadius != newEffectiveViewRadius;
 
             // 3. 读档兼容：旧存档里的 RateOfOffence/RateOfDefence 可能已包含一次能量增量
+            if (!hasStateChanged && !_needsInfluenceBuffBootstrapFromSave)
+            {
+                return false;
+            }
+
             if (_needsInfluenceBuffBootstrapFromSave)
             {
                 this.RateOfOffence -= newOffenceDelta;
@@ -12742,8 +12865,8 @@ namespace GameObjects
             }
 
             // 4. 撤销旧增益，再应用新增益，保证幂等
-            this.RateOfOffence -= _appliedInfluenceOffenceDelta;
-            this.RateOfDefence -= _appliedInfluenceDefenceDelta;
+            this.RateOfOffence -= oldOffenceDelta;
+            this.RateOfDefence -= oldDefenceDelta;
 
             _appliedInfluenceOffenceDelta = newOffenceDelta;
             _appliedInfluenceDefenceDelta = newDefenceDelta;
@@ -12753,8 +12876,8 @@ namespace GameObjects
             this.RateOfDefence += _appliedInfluenceDefenceDelta;
 
             // 5. 更新视野缓存，并在半径变化时重建视野登记
-            int oldEffectiveViewRadius = this.ViewRadius + oldVisionDelta;
-            _cachedEffectiveViewRadius = this.ViewRadius + _appliedInfluenceVisionDelta;
+            int oldEffectiveViewRadius = _cachedEffectiveViewRadius;
+            _cachedEffectiveViewRadius = newEffectiveViewRadius;
 
             if (this.viewArea != null && oldEffectiveViewRadius != _cachedEffectiveViewRadius)
             {
@@ -12763,15 +12886,19 @@ namespace GameObjects
 
             // 6. 记录调试信息
             #if DEBUG
-            if (_appliedInfluenceOffenceDelta > 0f || _appliedInfluenceDefenceDelta > 0f)
+            if (oldOffenceDelta != _appliedInfluenceOffenceDelta ||
+                oldDefenceDelta != _appliedInfluenceDefenceDelta ||
+                oldVisionDelta != _appliedInfluenceVisionDelta)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[Troop.ApplyInfluenceBuff] 部队 {this.DisplayName} 获得增益：" +
+                    $"[Troop.ApplyInfluenceBuff] 部队 {this.DisplayName} 刷新增益：" +
                     $"攻击+{_appliedInfluenceOffenceDelta * 100:F1}%，" +
                     $"防御+{_appliedInfluenceDefenceDelta * 100:F1}%，" +
                     $"视野={_cachedEffectiveViewRadius}");
             }
             #endif
+
+            return hasStateChanged;
         }
         
         /// <summary>
@@ -16254,8 +16381,48 @@ namespace GameObjects
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool ReportBlockedIntentFailure()
+        private bool IsFriendlyBlockWaitActive()
         {
+            if (this.CurrentAIState != TroopAIState.Waiting)
+            {
+                return false;
+            }
+
+            int currentTurn = Session.Current?.Scenario?.DaySince ?? -1;
+            return currentTurn >= 0 && this._friendlyBlockWaitUntilTurn >= currentTurn;
+        }
+
+        private void EnterFriendlyBlockWaitState()
+        {
+            this._friendlyBlockWaitUntilTurn = Session.Current?.Scenario?.DaySince ?? 0;
+            this.stuckedFor = 1;
+            this.Action = TroopAction.Stop;
+            this.HasPath = false;
+            this.ClearCurrentPath();
+
+            if (this._cachedPath.Count > 0)
+            {
+                this._cachedPath.Clear();
+            }
+
+            if (this._firstTierPath != null && this._firstTierPath.Count > 0)
+            {
+                this.ClearFirstTierPath();
+                this.FirstIndex = 0;
+            }
+
+            this.CurrentAIState = TroopAIState.Waiting;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool ReportBlockedIntentFailure(bool incrementFriendlyBlockEscalation = false)
+        {
+            if (incrementFriendlyBlockEscalation)
+            {
+                IncrementCompatWaitCount();
+            }
+
+            EnterFriendlyBlockWaitState();
             SyncCompatStuckCounter();
             ValidateIntentCheckpoint(IntentCheckpointKind.AfterBlocked);
             return false;
@@ -20878,9 +21045,12 @@ namespace GameObjects
                 return true;
             }
 
-            if (this.StartingArchitecture != null &&
+            bool useRoutewaySupply = Session.GlobalVariables.LiangdaoXitong == true;
+            if (!useRoutewaySupply &&
+                this.StartingArchitecture != null &&
                 this.StartingArchitecture.BelongedFaction == this.BelongedFaction &&
-                this.StartingArchitecture.Food >= requiredFoodCost)
+                this.StartingArchitecture.Food > 0 &&
+                (this.StartingArchitecture.Food + this.Food) >= requiredFoodCost)
             {
                 return true;
             }
@@ -20898,11 +21068,17 @@ namespace GameObjects
                 {
                     Architecture architecture = tileData.SupplyingArchitectures[i];
                     if (architecture.BelongedFaction == this.BelongedFaction &&
-                        architecture.Food >= requiredFoodCost)
+                        architecture.Food > 0 &&
+                        (architecture.Food + this.Food) >= requiredFoodCost)
                     {
                         return true;
                     }
                 }
+            }
+
+            if (!useRoutewaySupply)
+            {
+                return false;
             }
 
             if (this.BelongedLegion != null &&
@@ -20938,7 +21114,11 @@ namespace GameObjects
         /// </summary>
         public bool EvaluateRetreatDecision()
         {
-            int actualFoodCost = CalculateActualFoodCost();
+            return EvaluateRetreatDecision(CalculateActualFoodCost());
+        }
+
+        private bool EvaluateRetreatDecision(int actualFoodCost)
+        {
             bool isOutOfFood = this.Food < actualFoodCost;
             bool isSupplyCutOff = !HasReachableDailyFoodSupply(actualFoodCost);
 
@@ -20953,7 +21133,7 @@ namespace GameObjects
             if (!reachThreshold) return false;
 
             // 2. 触底反弹判定：计算性格与局势评分
-            float retreatScore = CalculateRetreatScore();
+            float retreatScore = CalculateRetreatScore(actualFoodCost, isSupplyCutOff);
             float fightScore = CalculateFightScore();
 
             // 3. 意志检定
@@ -20969,7 +21149,7 @@ namespace GameObjects
                 {
 #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[死战触发] {this.DisplayName} (主将:{this.Leader?.Name}) 拒绝撤退！" +
-                        $"断粮状态: {isOutOfFood} 继续战斗评分:{fightScore:F1} 撤退评分:{retreatScore:F1} 检定率:{determinationChance:F1}%");
+                        $"断粮状态: {isOutOfFood} 补给中断: {isSupplyCutOff} 继续战斗评分:{fightScore:F1} 撤退评分:{retreatScore:F1} 检定率:{determinationChance:F1}%");
 #endif
                     // 无视阈值，继续战斗
                     // 给予破釜沉舟的士气补偿，防止在死战状态下士气立刻归零导致溃散
@@ -20984,11 +21164,9 @@ namespace GameObjects
         /// <summary>
         /// 计算撤退意愿评分：注重生存与止损
         /// </summary>
-        private float CalculateRetreatScore()
+        private float CalculateRetreatScore(int actualFoodCost, bool isSupplyCutOff)
         {
             float score = 100f; // 基础撤退分
-            int actualFoodCost = CalculateActualFoodCost();
-            bool isSupplyCutOff = !HasReachableDailyFoodSupply(actualFoodCost);
 
             // A. 断粮恐慌评估 (极大权重)
             if (this.Food < actualFoodCost)
@@ -22925,7 +23103,9 @@ namespace GameObjects
             // 日期：2026-03-09
             if (this.BelongedLegion.IsOffensive())
             {
+                int actualFoodCost = CalculateActualFoodCost();
                 bool hasCapability = CheckOffensiveCapability();
+                bool isSupplyCutOff = !HasReachableDailyFoodSupply(actualFoodCost);
                 
                 #if DEBUG
                 if (this.Food < this.FoodCostPerDay)
@@ -22936,6 +23116,24 @@ namespace GameObjects
                 
                 if (hasCapability)
                 {
+                    if (isSupplyCutOff)
+                    {
+                        bool shouldRetreatForSupply = EvaluateRetreatDecision(actualFoodCost);
+
+                        #if DEBUG
+                        string startArchName = this.StartingArchitecture != null ? this.StartingArchitecture.Name : "null";
+                        int startArchFood = this.StartingArchitecture != null ? this.StartingArchitecture.Food : -1;
+                        System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 补给失效提前评估撤退: Food={this.Food}, ActualFoodCost={actualFoodCost}, StartArch={startArchName}, StartArchFood={startArchFood}, EvaluateRetreatDecision={shouldRetreatForSupply}");
+                        #endif
+
+                        if (shouldRetreatForSupply)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 补给失效且评估确认撤退");
+                            EnterRetreatMode();
+                            return;
+                        }
+                    }
+
                     // 🔥 优化：使用 CachedEnvironment 避免重复遍历
                     CachedEnvironment cache = new CachedEnvironment(this);
 
@@ -22965,7 +23163,7 @@ namespace GameObjects
                 }
                 else
                 {
-                    bool shouldRetreat = EvaluateRetreatDecision();
+                    bool shouldRetreat = EvaluateRetreatDecision(actualFoodCost);
                     
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 进攻能力不足: Food={this.Food}, EvaluateRetreatDecision={shouldRetreat}");
@@ -23526,6 +23724,10 @@ namespace GameObjects
                     break;
 
                 case TroopAIState.Waiting:
+                    if (this.IsFriendlyBlockWaitActive())
+                    {
+                        break;
+                    }
                     // 🔥 修复：Waiting 状态恢复机制
                     // 等待一段时间后尝试恢复，避免永久卡死
                     
@@ -23601,17 +23803,17 @@ namespace GameObjects
                 {
                     this.stuckedFor++;
                     
-                    // 🔥 修复：卡住时清空路径，强制下次重新寻路
-                    if (this.stuckedFor > 1 && this._firstTierPath != null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ExecuteTactics] {this.DisplayName} 卡住{this.stuckedFor}次，清空路径强制重新寻路");
-                        this.ClearFirstTierPath();
-                    }
-                    
                     if (this.stuckedFor > 5) // 增加容错次数：3 → 5
                     {
                         System.Diagnostics.Debug.WriteLine($"[ExecuteTactics] {this.DisplayName} 卡住超过5次，切换到Waiting状态");
                         this.CurrentAIState = TroopAIState.Waiting;
+                    }
+                    // 🔥 修复：卡住时清空路径，强制下次重新寻路
+                    else if (this.stuckedFor > 1 && this._firstTierPath.Count > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ExecuteTactics] {this.DisplayName} 卡住{this.stuckedFor}次，清空路径强制重新寻路");
+                        this._friendlyBlockWaitUntilTurn = -1;
+                        this.ClearFirstTierPath();
                     }
                 }
                 else
@@ -23627,12 +23829,99 @@ namespace GameObjects
         /// </summary>
         /// <param name="nextPoint">目标点</param>
         /// <returns>移动消耗</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool HasReachedEffectiveLegacyDestination()
+        {
+            Point realDestination = this.RealDestination;
+            if (!IsValidDestination(realDestination))
+            {
+                return false;
+            }
+
+            if (IsAtPosition(realDestination))
+            {
+                return true;
+            }
+
+            Troop targetTroop = this.TargetTroop;
+            if (targetTroop != null && !targetTroop.Destroyed && this.CanAttack(targetTroop))
+            {
+                return true;
+            }
+
+            Architecture targetArchitecture = this.TargetArchitecture;
+            if (targetArchitecture != null && targetArchitecture.Endurance > 0 && this.CanAttack(targetArchitecture))
+            {
+                return true;
+            }
+
+            Architecture willArchitecture = this.WillArchitecture;
+            return willArchitecture != null
+                && willArchitecture.BelongedFaction != this.BelongedFaction
+                && willArchitecture.Endurance > 0
+                && this.CanAttack(willArchitecture);
+        }
+
+        private bool TryResolveAdjacentBlockedLegacyDestination()
+        {
+            Point realDestination = this.RealDestination;
+            if (!IsValidDestination(realDestination) || realDestination == this.Position)
+            {
+                return false;
+            }
+
+            if (GetChebyshevDistance(this.Position, realDestination) > 1 || CanStopAtStrict(realDestination))
+            {
+                return false;
+            }
+
+            Point resolvedDestination = this.FindNearestPassableToTarget(realDestination, 1);
+            if (resolvedDestination == realDestination)
+            {
+                resolvedDestination = this.Position;
+            }
+
+            ResetLegacyMoveTaskDestination(resolvedDestination);
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool HasLegacySyncRepathBudget()
+        {
+            int currentTurn = Session.Current?.Scenario?.DaySince ?? int.MinValue;
+            if (this._legacySyncRepathTurn != currentTurn)
+            {
+                return true;
+            }
+
+            return this._legacySyncRepathCount < MAX_LEGACY_SYNC_REPATHS_PER_TURN;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool TryConsumeLegacySyncRepathBudget()
+        {
+            int currentTurn = Session.Current?.Scenario?.DaySince ?? int.MinValue;
+            if (this._legacySyncRepathTurn != currentTurn)
+            {
+                this._legacySyncRepathTurn = currentTurn;
+                this._legacySyncRepathCount = 0;
+            }
+
+            if (this._legacySyncRepathCount >= MAX_LEGACY_SYNC_REPATHS_PER_TURN)
+            {
+                return false;
+            }
+
+            this._legacySyncRepathCount++;
+            return true;
+        }
+
         private bool CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost)
         {
             nextPoint = Point.Zero;
             nextStepCost = -1;
 
-            if (this.Destroyed || this.MovabilityLeft <= 0)
+            if (this.Destroyed || this.MovabilityLeft <= 0 || this.CurrentAIState == TroopAIState.Waiting)
             {
                 return false;
             }
@@ -23640,9 +23929,33 @@ namespace GameObjects
             Point? nextPointOpt = this.GetNextPathPoint();
             if (!nextPointOpt.HasValue)
             {
-                return this.RealDestination != new Point(-1, -1)
-                    && this.RealDestination != Point.Zero
-                    && !IsAtPosition(this.RealDestination);
+                if (!IsValidDestination(this.RealDestination))
+                {
+                    return false;
+                }
+
+                if (this.HasReachedEffectiveLegacyDestination())
+                {
+                    ResetLegacyMoveTaskDestination(this.Position);
+                    return false;
+                }
+
+                if (this.TryResolveAdjacentBlockedLegacyDestination())
+                {
+                    return this.RealDestination != this.Position;
+                }
+
+                if (this.stuckedFor >= 10)
+                {
+                    return false;
+                }
+
+                if (!this.HasLegacySyncRepathBudget())
+                {
+                    return false;
+                }
+
+                return !IsAtPosition(this.RealDestination);
             }
 
             nextPoint = nextPointOpt.Value;
@@ -23811,6 +24124,22 @@ namespace GameObjects
                     this.RealDestination = pathTarget;
                     System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 修正寻路目标: 原={this.RealDestination}, 修正后={pathTarget}, CanAttack={canAttackTarget}");
                 }
+
+                if (pathTarget == this.Position)
+                {
+                    ResetLegacyMoveTaskDestination(this.Position);
+                    this.Action = TroopAction.Stop;
+                    return false;
+                }
+
+                if (!this.TryConsumeLegacySyncRepathBudget())
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 同步寻路预算耗尽，跳过本回合额外寻路: {this.Position} -> {pathTarget}");
+#endif
+                    return false;
+                }
+
                 bool pathFound = pathFinder.GetFirstTierPath(this.Position, pathTarget, armyKind);
 #if DEBUG
                 if (!pathFound)
@@ -23831,7 +24160,9 @@ namespace GameObjects
                     Point simpleNext = new Point(this.Position.X + dx, this.Position.Y + dy);
                     
                     // 如果简单移动的目标点可达，创建单步路径
-                    if (dx != 0 || dy != 0)
+                    if ((dx != 0 || dy != 0)
+                        && this.CanStopAtStrict(simpleNext)
+                        && this.GetMoveCost(simpleNext) < 0xdac)
                     {
                         this._firstTierPath = [simpleNext]; // C# 12 集合表达式
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 寻路失败，尝试简单移动到{simpleNext}");
@@ -23883,6 +24214,22 @@ namespace GameObjects
 #endif
                     
                     // 🔥 新增：路径走完但还没到目标，尝试重新寻路
+                    if (this.HasReachedEffectiveLegacyDestination())
+                    {
+                        ResetLegacyMoveTaskDestination(this.Position);
+                        break;
+                    }
+
+                    if (this.TryResolveAdjacentBlockedLegacyDestination())
+                    {
+                        if (this.RealDestination == this.Position)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+
                     if (!IsAtPosition(this.RealDestination) 
                         && this.RealDestination != new Point(-1, -1)
                         && this.RealDestination != Point.Zero
@@ -23919,6 +24266,14 @@ namespace GameObjects
                             this.RealDestination = retryTarget;
                         }
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 路径走完但未到达目标，重新寻路: {this.Position} -> {retryTarget}");
+
+                        if (!this.TryConsumeLegacySyncRepathBudget())
+                        {
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 同步寻路预算耗尽，停止本回合重复重寻路");
+#endif
+                            break;
+                        }
                         
                         bool pathFound = pathFinder.GetFirstTierPath(this.Position, retryTarget, armyKind);
                         
@@ -23931,6 +24286,9 @@ namespace GameObjects
                             // 寻路成功，继续移动
                             continue;
                         }
+
+                        this.stuckedFor += 10;
+                        SyncCompatStuckCounter(pathFailEvent: true);
                     }
                     
                     // 无路可走（路径走完了，或者没路径）
@@ -24343,8 +24701,7 @@ namespace GameObjects
                     }
                     
                     // 所有策略都失败，记录等待次数，下次尝试换位
-                    IncrementCompatWaitCount();
-                    return this.ReportBlockedIntentFailure();
+                    return this.ReportBlockedIntentFailure(incrementFriendlyBlockEscalation: true);
                 }
             }
 
@@ -24355,14 +24712,14 @@ namespace GameObjects
             if (chain.Contains(this.ID))
             {
                 System.Diagnostics.Debug.WriteLine($"[协同] {this.DisplayName} 检测到循环推动链，中止推动");
-                return this.ReportBlockedIntentFailure();
+                return this.ReportBlockedIntentFailure(incrementFriendlyBlockEscalation: true);
             }
             
             // 限制推动链长度，防止过长的连锁推动
             if (chain.Count >= 3)
             {
                 System.Diagnostics.Debug.WriteLine($"[协同] {this.DisplayName} 推动链长度已达{chain.Count}，防止过度连锁");
-                return this.ReportBlockedIntentFailure();
+                return this.ReportBlockedIntentFailure(incrementFriendlyBlockEscalation: true);
             }
 
             // 1. 【让路逻辑 Yield】: 请求前方友军让路
@@ -24426,7 +24783,7 @@ namespace GameObjects
                 return true;
             }
 
-            return this.ReportBlockedIntentFailure();
+            return this.ReportBlockedIntentFailure(incrementFriendlyBlockEscalation: true);
         }
 
         /// <summary>
@@ -24965,6 +25322,7 @@ namespace GameObjects
         /// 等待计数器（用于友军碰撞处理）
         /// </summary>
         private int WaitCount = 0;
+        private int _friendlyBlockWaitUntilTurn = -1;
 
         /// <summary>
         /// 换位冷却：记录上次换位的回合数，防止频繁换位
@@ -26324,14 +26682,7 @@ namespace GameObjects
                 // 1. 基础门槛：战气/士气不够？CD没好？直接跳过
                 bool isCastable = this.HasCombatMethod(method.ID);
                 if (!isCastable) continue;
-                bool hasConfiguredMethodCategory = AIRoleConfigManager.TryGetCombatMethodCategory(method.ID, out ActiveAbilityCategory methodCategory);
-                if (!hasConfiguredMethodCategory)
-                {
-                    methodCategory = method.ViewingHostile
-                        ? ActiveAbilityCategory.EnemyTargetedOffense
-                        : ActiveAbilityCategory.Utility;
-                }
-                string methodCategorySource = hasConfiguredMethodCategory ? "AIRoleConfig" : "Fallback(ViewingHostile)";
+                ActiveAbilityCategory methodCategory = GetEffectiveCombatMethodCategory(method, out string methodCategorySource);
 
                 // 2. 攻击类战法
                 // 使用 ViewingHostile 判断是否为针对敌人的战法
@@ -26580,7 +26931,7 @@ namespace GameObjects
             var config = AITacticalConfigManager.GetCombatMethodScoringConfig();
 
             string roleKey = this.CurrentRole.ToString();
-            ActiveAbilityCategory methodCategory = AIRoleConfigManager.GetCombatMethodCategory(method.ID, method.ViewingHostile);
+            ActiveAbilityCategory methodCategory = GetEffectiveCombatMethodCategory(method);
             string methodCategoryKey = methodCategory.ToString();
 
             System.Diagnostics.Debug.Assert(config.RoleModifiers.ContainsKey(roleKey),
@@ -27650,7 +28001,7 @@ namespace GameObjects
                         continue;
                     }
 
-                    ActiveAbilityCategory linkedMethodCategory = AIRoleConfigManager.GetCombatMethodCategory(linkedMethod.ID, linkedMethod.ViewingHostile);
+                    ActiveAbilityCategory linkedMethodCategory = GetEffectiveCombatMethodCategory(linkedMethod);
                     if (!IsOffensiveAbilityCategory(linkedMethodCategory))
                     {
 #if DEBUG

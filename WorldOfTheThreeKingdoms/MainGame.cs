@@ -952,6 +952,15 @@ namespace WorldOfTheThreeKingdoms
                 WebTools.TakeWarnMsg("SpriteBatch.End 出错", "", ex);
             }
 
+            try
+            {
+                CacheManager.ProcessPendingTempCleanup();
+            }
+            catch (System.Exception ex)
+            {
+                WebTools.TakeWarnMsg("Temp cleanup failed", "CacheManager.ProcessPendingTempCleanup", ex);
+            }
+
             if (takePicture == true && String.IsNullOrEmpty(err))
             {
                 takePicture = false;

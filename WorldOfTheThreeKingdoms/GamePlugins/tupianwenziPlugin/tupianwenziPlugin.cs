@@ -450,6 +450,18 @@ namespace tupianwenziPlugin
             }
             set
             {
+                if (value &&
+                    !this.tupianwenzi.IsShowing &&
+                    this.tupianwenzi.DisplayQueue.Count > 0 &&
+                    WorldOfTheThreeKingdoms.GameScreens.MainGameScreen.IsTupianwenziDeferralActive())
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[tupianwenziPlugin] Deferred dialog show during logic execution. Pending={this.tupianwenzi.DisplayQueue.Count}");
+#endif
+                    return;
+                }
+
                 this.tupianwenzi.IsShowing = value;
             }
         }

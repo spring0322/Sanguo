@@ -58,6 +58,11 @@ public static class InfluenceBuffCalculator
         // 🔥 日期：2026-03-16
         // 🔥 重构：使用 EffectiveTotalEnergy
         int index = TerrainCostCache.GetIndex(position.X, position.Y);
+        if ((uint)index >= (uint)faction.GlobalInfluenceMap.Length)
+        {
+            throw new InvalidOperationException(
+                $"[GetNetInfluenceAt] 势力 {faction.Name} 的 GlobalInfluenceMap 长度异常，index={index}，length={faction.GlobalInfluenceMap.Length}");
+        }
         int friendlyEnergy = faction.GlobalInfluenceMap[index].EffectiveTotalEnergy;
         
         // 🔥 查询所有敌对势力的能量（O(势力数)）
@@ -86,6 +91,11 @@ public static class InfluenceBuffCalculator
             {
                 throw new InvalidOperationException(
                     $"[GetNetInfluenceAt] 势力 {otherFaction.Name} 的 GlobalInfluenceMap 未初始化");
+            }
+            if ((uint)index >= (uint)otherFaction.GlobalInfluenceMap.Length)
+            {
+                throw new InvalidOperationException(
+                    $"[GetNetInfluenceAt] 势力 {otherFaction.Name} 的 GlobalInfluenceMap 长度异常，index={index}，length={otherFaction.GlobalInfluenceMap.Length}");
             }
             
             // 🔥 O(1) 查询敌方能量

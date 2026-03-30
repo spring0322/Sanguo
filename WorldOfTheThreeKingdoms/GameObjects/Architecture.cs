@@ -5716,13 +5716,13 @@ namespace GameObjects
         /// 🧊 Cold Path：势力范围更新或读档后调用
         /// 日期：2026-03-16
         /// </summary>
-        public void ApplyInfluenceBuff()
+        public bool ApplyInfluenceBuff()
         {
             // 🔥 ANTI-BAND-AID：检查数据源
             if (this.BelongedFaction == null)
             {
                 // 无归属势力的城池（如中立城池）不获得增益
-                return;
+                return false;
             }
             
             if (this.ArchitectureArea == null)
@@ -5737,7 +5737,7 @@ namespace GameObjects
             if (this.BelongedFaction.GlobalInfluenceMap is not { Length: > 0 })
             {
                 // 跳过增益应用，等待 InfluenceUpdateManager.Initialize() 完成后再次调用
-                return;
+                return false;
             }
             
             // 1. 获取城池中心位置的净能量
@@ -5760,13 +5760,26 @@ namespace GameObjects
                 netEnergy,
                 isArchitecture: true);
             float newFoodReduceRateDelta = foodConsumptionMultiplier - 1.0f;
+            float oldArchitectureCounterDamageDelta = _appliedInfluenceArchitectureCounterDamageDelta;
+            float oldEnduranceDropDelta = _appliedInfluenceEnduranceDropDelta;
+            float oldFoodReduceRateDelta = _appliedInfluenceFoodReduceRateDelta;
             int newVisionDelta = WorldOfTheThreeKingdoms.GameManager.InfluenceBuffCalculator.CalculateVisionRange(netEnergy, isArchitecture: true);
             int oldVisionDelta = _appliedInfluenceVisionDelta;
+            int newEffectiveViewDistance = this.ViewDistance + newVisionDelta;
+
+            if (oldArchitectureCounterDamageDelta == newArchitectureCounterDamageDelta &&
+                oldEnduranceDropDelta == newEnduranceDropDelta &&
+                oldFoodReduceRateDelta == newFoodReduceRateDelta &&
+                oldVisionDelta == newVisionDelta &&
+                _cachedEffectiveViewDistance == newEffectiveViewDistance)
+            {
+                return false;
+            }
 
             // 3. 撤销旧增益，再应用新增益，保证幂等
-            this.RateOfArchitectureCounterDamage -= _appliedInfluenceArchitectureCounterDamageDelta;
-            this.enduranceDecreaseRateDrop -= _appliedInfluenceEnduranceDropDelta;
-            this.RateOfFoodReduceRate -= _appliedInfluenceFoodReduceRateDelta;
+            this.RateOfArchitectureCounterDamage -= oldArchitectureCounterDamageDelta;
+            this.enduranceDecreaseRateDrop -= oldEnduranceDropDelta;
+            this.RateOfFoodReduceRate -= oldFoodReduceRateDelta;
 
             _appliedInfluenceArchitectureCounterDamageDelta = newArchitectureCounterDamageDelta;
             _appliedInfluenceEnduranceDropDelta = newEnduranceDropDelta;
@@ -5777,9 +5790,9 @@ namespace GameObjects
             this.RateOfFoodReduceRate += _appliedInfluenceFoodReduceRateDelta;
 
             // 4. 更新视野缓存，并在半径变化时重建视野登记
-            int oldEffectiveViewDistance = this.ViewDistance + oldVisionDelta;
+            int oldEffectiveViewDistance = _cachedEffectiveViewDistance;
             _appliedInfluenceVisionDelta = newVisionDelta;
-            _cachedEffectiveViewDistance = this.ViewDistance + _appliedInfluenceVisionDelta;
+            _cachedEffectiveViewDistance = newEffectiveViewDistance;
 
             if ((this.viewArea != null || this.longViewArea != null) && oldEffectiveViewDistance != _cachedEffectiveViewDistance)
             {
@@ -5788,18 +5801,21 @@ namespace GameObjects
 
             // 5. 记录调试信息
             #if DEBUG
-            if (_appliedInfluenceArchitectureCounterDamageDelta != 0f ||
-                _appliedInfluenceEnduranceDropDelta != 0f ||
-                _appliedInfluenceFoodReduceRateDelta != 0f)
+            if (oldArchitectureCounterDamageDelta != _appliedInfluenceArchitectureCounterDamageDelta ||
+                oldEnduranceDropDelta != _appliedInfluenceEnduranceDropDelta ||
+                oldFoodReduceRateDelta != _appliedInfluenceFoodReduceRateDelta ||
+                oldVisionDelta != _appliedInfluenceVisionDelta)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 获得增益：" +
+                    $"[Architecture.ApplyInfluenceBuff] 城池 {this.Name} 刷新增益：" +
                     $"反击+{_appliedInfluenceArchitectureCounterDamageDelta * 100:F1}%，" +
                     $"减伤+{_appliedInfluenceEnduranceDropDelta * 100:F1}%，" +
                     $"粮耗{_appliedInfluenceFoodReduceRateDelta * 100:F1}%，" +
                     $"视野={_cachedEffectiveViewDistance}");
             }
             #endif
+
+            return true;
         }
         
         /// <summary>
@@ -6258,7 +6274,37 @@ namespace GameObjects
             return Math.Min(Math.Max(score / denominator, 0f), 1.0f);
         }
 
-        private bool CheckOffensiveCapability(Troop troop)
+        private int GetOffensiveCityFoodBudgetDays(Troop troop, Architecture targetArchitecture, out int estimatedMarchDays)
+        {
+            estimatedMarchDays = 0;
+            if (targetArchitecture == null)
+            {
+                return 15;
+            }
+
+            double distance = Session.Current.Scenario.GetDistance(this.ArchitectureArea, targetArchitecture.ArchitectureArea);
+            estimatedMarchDays = troop.Army.TransferDays(distance);
+            if (estimatedMarchDays < 1)
+            {
+                estimatedMarchDays = 1;
+            }
+
+            int budgetDays = (int)Math.Ceiling(estimatedMarchDays * 1.5);
+            if (budgetDays < 6)
+            {
+                budgetDays = 6;
+            }
+
+            int rationDays = troop.Army.RationDays;
+            if (rationDays > 0 && budgetDays > rationDays)
+            {
+                budgetDays = rationDays;
+            }
+
+            return budgetDays;
+        }
+
+        private bool CheckOffensiveCapability(Troop troop, Architecture targetArchitecture = null)
         {
             System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] 开始检查 {troop.DisplayName}: Food={troop.Food}, CityFood={this.Food}, Qty={troop.Army?.Quantity}");
             
@@ -6313,12 +6359,13 @@ namespace GameObjects
             int effectiveFoodCost = troop.Army.Kind.FoodPerSoldier * 
                 (troop.Army.Quantity + troop.Army.InjuryQuantity / 2);
             
-            // 要求 15 天粮草（降低要求，因为可以途中补给）
-            int requiredFood = effectiveFoodCost * 15;
+            int estimatedMarchDays;
+            int requiredFoodDays = GetOffensiveCityFoodBudgetDays(troop, targetArchitecture, out estimatedMarchDays);
+            int requiredFood = effectiveFoodCost * requiredFoodDays;
             
             if (this.Food < requiredFood)
             {
-                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {requiredFood} (健康兵={troop.Army.Quantity}, 伤兵={troop.Army.InjuryQuantity}, 有效消耗={effectiveFoodCost}/天)");
+                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {requiredFood} (目标={targetArchitecture?.Name ?? "未知"}, 预估行军={estimatedMarchDays}天, 预算={requiredFoodDays}天, 健康兵={troop.Army.Quantity}, 伤兵={troop.Army.InjuryQuantity}, 有效消耗={effectiveFoodCost}/天)");
                 return false;
             }
 
@@ -6427,6 +6474,19 @@ namespace GameObjects
             // 🧠 AI New Formation Logic Integration
             System.Diagnostics.Debug.WriteLine($"[BuildOffensiveTroop] 检查新AI逻辑: AIUseNewFormationLogic={Session.Parameters.AIUseNewFormationLogic}, offensive={offensive}");
             // 🔥 修改：防守出兵也使用新AI逻辑
+            if (offensive)
+            {
+                var sortiePrecheck = global::GameObjects.AI.AssaultSortiePrecheckService.EvaluateOffensiveSortie(this, destination, 800, 0);
+                if (!sortiePrecheck.Passed)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[BuildOffensiveTroop] skip offensive build for {this.Name}->{destination?.Name ?? "null"}: " +
+                        $"reason={sortiePrecheck.FailureReason}, morale={sortiePrecheck.BestMobilizableMorale}, " +
+                        $"requiredFood={sortiePrecheck.RequiredFoodLock}, cityFood={this.Food}");
+                    return false;
+                }
+            }
+
             if (Session.Parameters.AIUseNewFormationLogic)
             {
 #if !DISABLE_AI_FORMATION
@@ -6445,6 +6505,12 @@ namespace GameObjects
                     LegionKind kind = LegionKind.AI;
                     LegionMission mission = (destination == this) ? LegionMission.Defend : LegionMission.Attack;
                     targetLegion = this.BelongedFaction.GetOrCreateLegion(destination, kind, mission);
+                }
+
+                if (targetLegion != null)
+                {
+                    targetLegion.StartArchitecture = this;
+                    targetLegion.StartArchitectureString = this.ID;
                 }
 
                 // Create manager
@@ -6639,7 +6705,7 @@ namespace GameObjects
                         // 🔥 AI Dispatch Capability Check
                         if (offensive) 
                         {
-                            if (!CheckOffensiveCapability(t)) 
+                            if (!CheckOffensiveCapability(t, destination)) 
                             {
 #if DEBUG
                                 System.Diagnostics.Debug.WriteLine($"[AI Dispatch] Refused Offensive: {t.DisplayName} (Cap:{GetLeaderCapabilityFactor(t):F2}, Qty:{t.Army.Quantity})");
@@ -9902,6 +9968,11 @@ namespace GameObjects
                                 Person leader = troop.Candidates[0] as Person;
                                 PersonList candidates = i.A.SelectSubOfficersToTroop(troop);
                                 troop2 = i.A.CreateTroop(candidates, leader, troop.Army, -1, nullable.Value);
+                                if (troop2 == null)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[DefensiveCampaign] Support CreateTroop returned null, skip support troop.");
+                                    continue;
+                                }
                                 // 🔧 FIX: 不再设置 WillArchitecture = this，避免援军自杀
                                 // troop2.WillArchitecture = this; // ❌ 已删除
                                 Legion defensiveLegion = this.GetOrCreateDefensiveLegion();

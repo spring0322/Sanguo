@@ -93,6 +93,7 @@ namespace GameManager
         // 回退纹理和设备丢失处理
         public static Texture2D _fallbackTexture;
         private static bool _isDeviceLost = false;
+        private static bool _pendingTempCleanup = false;
 
         // === GPU 设备丢失处理 ===
         /// <summary>
@@ -787,7 +788,7 @@ namespace GameManager
                     }
                 }
             }
-            if (type == CacheType.Page || type == CacheType.Scene)
+            if (type == CacheType.Scene)
             {
                 try
                 {
@@ -1960,12 +1961,55 @@ namespace GameManager
         /// <param name="type">默认类型</param>
         /// <param name="shape">形状</param>
         // 性能优化：减少频繁的缓存检查
+        private static int _lastTempCleanupRequestTick = 0;
         private static int _lastCacheCheckFrame = 0;
-        private static readonly int CACHE_CHECK_INTERVAL = 60; // 每60帧检查一次缓存
+        private const int TempCleanupRequestIntervalMs = 60;
+        private const int TempCleanupRequestThreshold = 100;
         
         // 预加载机制
         private static readonly HashSet<string> _preloadedTextures = new HashSet<string>();
         private static readonly object _preloadLock = new object();
+
+        private static void RequestTempCleanupIfNeeded()
+        {
+            int tempCount;
+            lock (TextureTempDics)
+            {
+                tempCount = TextureTempDics.Count;
+            }
+
+            if (tempCount <= TempCleanupRequestThreshold)
+            {
+                return;
+            }
+
+            int currentTick = Environment.TickCount;
+            lock (CacheLock)
+            {
+                if (currentTick - _lastTempCleanupRequestTick <= TempCleanupRequestIntervalMs)
+                {
+                    return;
+                }
+
+                _lastTempCleanupRequestTick = currentTick;
+                _pendingTempCleanup = true;
+            }
+        }
+
+        public static void ProcessPendingTempCleanup()
+        {
+            bool shouldClear;
+            lock (CacheLock)
+            {
+                shouldClear = _pendingTempCleanup;
+                _pendingTempCleanup = false;
+            }
+
+            if (shouldClear)
+            {
+                Clear(CacheType.Temp);
+            }
+        }
 
         public static void DrawZhsanAvatar(Person person, Rectangle pos, float depth, PortraitSize size = PortraitSize.Medium, Color? color = null, PortraitDefaultType? type = null, TextureShape shape = TextureShape.None)
         {
@@ -1973,10 +2017,11 @@ namespace GameManager
             {
                 var path = GetPersonPortraitPath(person, type, size);
                 var drawColor = color ?? Color.White;
+                RequestTempCleanupIfNeeded();
 
                 // 性能优化：减少频繁的缓存清理检查
                 var currentFrame = Environment.TickCount;
-                if (currentFrame - _lastCacheCheckFrame > CACHE_CHECK_INTERVAL)
+                if (false)
                 {
                     _lastCacheCheckFrame = currentFrame;
                     
@@ -2031,10 +2076,11 @@ namespace GameManager
             {
                 var path = GetPersonPortraitPath(index, type, size);
                 var drawColor = color ?? Color.White;
+                RequestTempCleanupIfNeeded();
 
                 // 使用相同的优化缓存检查逻辑
                 var currentFrame = Environment.TickCount;
-                if (currentFrame - _lastCacheCheckFrame > CACHE_CHECK_INTERVAL)
+                if (false)
                 {
                     _lastCacheCheckFrame = currentFrame;
                     

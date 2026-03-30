@@ -1,20 +1,27 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 
 namespace GameObjects.AI;
 
 public sealed class LegionIntentPlanner
 {
+    private readonly Dictionary<int, AttackFoodReservation> _attackReservationsByLegion = new();
+    private readonly Dictionary<int, int> _lockedFoodByArchitecture = new();
+
     public LegionIntent BuildLegionIntent(GameScenario scenario, Legion legion, FactionIntent factionIntent, int issuedTick, int version)
     {
         if (scenario == null) throw new ArgumentNullException(nameof(scenario));
         if (legion == null) throw new ArgumentNullException(nameof(legion));
         if (factionIntent == null) throw new ArgumentNullException(nameof(factionIntent));
 
+        ReleaseAttackLock(legion.ID);
+
         FactionDecisionPersonalityProfile personalityProfile = FactionDecisionPersonalityResolver.Resolve(in factionIntent);
         LegionFrontRole frontRole = ResolveFrontRole(legion, factionIntent, issuedTick, personalityProfile);
         LegionIntentKind kind = ResolveStrategicKind(legion, factionIntent, frontRole);
         bool attackAuthorized = ResolveAttackAuthorization(kind, frontRole, factionIntent);
+        Architecture sourceArchitecture = AssaultSortiePrecheckService.ResolveSourceArchitecture(legion);
 
         IntentTargetRef target = IntentTargetRef.None;
         TheaterTargetScore targetScore = TheaterTargetScore.None;
@@ -26,6 +33,7 @@ public sealed class LegionIntentPlanner
                 frontRole,
                 issuedTick,
                 personalityProfile,
+                sourceArchitecture,
                 out target,
                 out targetScore))
         {
@@ -49,9 +57,35 @@ public sealed class LegionIntentPlanner
                 : TheaterTargetScore.None;
         }
 
+        int logisticsPriorityBias = 0;
+        if (ShouldEvaluateAssaultGate(legion, kind, frontRole, target))
+        {
+            AssaultSortiePrecheckResult sortieGate = EvaluateAssaultGate(
+                scenario,
+                sourceArchitecture,
+                target,
+                factionIntent);
+
+            if (!sortieGate.Passed)
+            {
+                attackAuthorized = false;
+                frontRole = LegionFrontRole.Reserve;
+                kind = LegionIntentKind.Recover;
+                targetScore = TheaterTargetScore.None;
+                target = ResolveRecoveryTarget(sourceArchitecture, factionIntent.SourceFactionId);
+            }
+            else if (attackAuthorized)
+            {
+                AcquireAttackLock(legion.ID, sortieGate.SourceArchitectureId, sortieGate.RequiredFoodLock);
+                Architecture targetArchitecture = scenario.Architectures.GetGameObject(target.TargetId) as Architecture;
+                logisticsPriorityBias = sortieGate.ResolveScoreBias(targetArchitecture?.Morale ?? 0);
+            }
+        }
+
         int priority = Math.Max(ResolvePriority(kind), factionIntent.Priority - 5);
         priority += ResolvePriorityBias(targetScore);
         priority += ResolveFrontRolePriorityBias(frontRole);
+        priority += logisticsPriorityBias;
         if (!attackAuthorized)
         {
             priority -= 6;
@@ -85,13 +119,20 @@ public sealed class LegionIntentPlanner
             factionIntent.ReserveRatioPermille);
     }
 
-    private static bool TryResolveStrategicTarget(
+    public void ResetPlanningState()
+    {
+        _attackReservationsByLegion.Clear();
+        _lockedFoodByArchitecture.Clear();
+    }
+
+    private bool TryResolveStrategicTarget(
         GameScenario scenario,
         Legion legion,
         FactionIntent factionIntent,
         LegionFrontRole frontRole,
         int issuedTick,
         in FactionDecisionPersonalityProfile personalityProfile,
+        Architecture sourceArchitecture,
         out IntentTargetRef target,
         out TheaterTargetScore targetScore)
     {
@@ -117,6 +158,12 @@ public sealed class LegionIntentPlanner
         for (int i = 0; i < candidateCount; i++)
         {
             int architectureId = candidateIds[i];
+            Architecture targetArchitecture = scenario.Architectures.GetGameObject(architectureId) as Architecture;
+            if (targetArchitecture == null)
+            {
+                continue;
+            }
+
             TheaterTargetScore baseScore = TheaterPlanningService.EvaluateLegionTarget(
                 scenario,
                 legion,
@@ -131,6 +178,27 @@ public sealed class LegionIntentPlanner
             int adjustedScore = baseScore.Score;
             adjustedScore += ResolveFrontRoleTargetBias(frontRole, architectureId, in factionIntent);
             adjustedScore += ResolveTargetPersonalityBias(frontRole, in personalityProfile, in baseScore);
+
+            if (focusMode == TheaterFocusMode.Assault && targetArchitecture.BelongedFaction != legion.BelongedFaction)
+            {
+                if (sourceArchitecture == null)
+                {
+                    continue;
+                }
+
+                AssaultSortiePrecheckResult sortieGate = AssaultSortiePrecheckService.EvaluateOffensiveSortie(
+                    sourceArchitecture,
+                    targetArchitecture,
+                    factionIntent.SortieBudgetPermille,
+                    GetLockedFood(sourceArchitecture.ID));
+
+                if (!sortieGate.Passed)
+                {
+                    continue;
+                }
+
+                adjustedScore += sortieGate.ResolveScoreBias(targetArchitecture.Morale);
+            }
 
             if (expectedTargetId >= 0 && architectureId == expectedTargetId)
             {
@@ -749,4 +817,113 @@ public sealed class LegionIntentPlanner
             _ => 0
         };
     }
+
+    private AssaultSortiePrecheckResult EvaluateAssaultGate(
+        GameScenario scenario,
+        Architecture sourceArchitecture,
+        IntentTargetRef target,
+        FactionIntent factionIntent)
+    {
+        if (sourceArchitecture == null)
+        {
+            return AssaultSortiePrecheckService.EvaluateOffensiveSortie(null, null, factionIntent.SortieBudgetPermille, 0);
+        }
+
+        Architecture targetArchitecture = scenario.Architectures.GetGameObject(target.TargetId) as Architecture;
+        return AssaultSortiePrecheckService.EvaluateOffensiveSortie(
+            sourceArchitecture,
+            targetArchitecture,
+            factionIntent.SortieBudgetPermille,
+            GetLockedFood(sourceArchitecture.ID));
+    }
+
+    private void ReleaseAttackLock(int legionId)
+    {
+        if (!_attackReservationsByLegion.TryGetValue(legionId, out AttackFoodReservation reservation))
+        {
+            return;
+        }
+
+        _attackReservationsByLegion.Remove(legionId);
+        if (!_lockedFoodByArchitecture.TryGetValue(reservation.SourceArchitectureId, out int currentLockedFood))
+        {
+            return;
+        }
+
+        int remainingLockedFood = currentLockedFood - reservation.ReservedFood;
+        if (remainingLockedFood > 0)
+        {
+            _lockedFoodByArchitecture[reservation.SourceArchitectureId] = remainingLockedFood;
+        }
+        else
+        {
+            _lockedFoodByArchitecture.Remove(reservation.SourceArchitectureId);
+        }
+    }
+
+    private void AcquireAttackLock(int legionId, int sourceArchitectureId, int reservedFood)
+    {
+        if (sourceArchitectureId < 0 || reservedFood <= 0)
+        {
+            return;
+        }
+
+        _attackReservationsByLegion[legionId] = new AttackFoodReservation(sourceArchitectureId, reservedFood);
+        if (_lockedFoodByArchitecture.TryGetValue(sourceArchitectureId, out int currentLockedFood))
+        {
+            _lockedFoodByArchitecture[sourceArchitectureId] = currentLockedFood + reservedFood;
+        }
+        else
+        {
+            _lockedFoodByArchitecture[sourceArchitectureId] = reservedFood;
+        }
+    }
+
+    private int GetLockedFood(int sourceArchitectureId)
+    {
+        if (sourceArchitectureId < 0)
+        {
+            return 0;
+        }
+
+        return _lockedFoodByArchitecture.TryGetValue(sourceArchitectureId, out int lockedFood)
+            ? lockedFood
+            : 0;
+    }
+
+    private static bool ShouldEvaluateAssaultGate(
+        Legion legion,
+        LegionIntentKind kind,
+        LegionFrontRole frontRole,
+        IntentTargetRef target)
+    {
+        if (target.Kind != IntentTargetKind.Architecture || target.TargetId < 0)
+        {
+            return false;
+        }
+
+        if (target.OwnerFactionId == legion.BelongedFaction?.ID)
+        {
+            return false;
+        }
+
+        return legion.Mission == LegionMission.Attack ||
+               kind == LegionIntentKind.Assault ||
+               frontRole is LegionFrontRole.MainAssault or LegionFrontRole.Diversion;
+    }
+
+    private static IntentTargetRef ResolveRecoveryTarget(Architecture sourceArchitecture, int ownerFactionId)
+    {
+        if (sourceArchitecture == null)
+        {
+            return IntentTargetRef.None;
+        }
+
+        return IntentTargetRef.ForArchitecture(
+            sourceArchitecture.ID,
+            sourceArchitecture.Position,
+            sourceArchitecture.BelongedFaction?.ID ?? ownerFactionId);
+    }
+
+    private readonly record struct AttackFoodReservation(int SourceArchitectureId, int ReservedFood);
 }

@@ -42,6 +42,7 @@ public sealed class AIAuthorityContext
         _factionIntents.Clear();
         _legionIntents.Clear();
         _executionStateByTroop.Clear();
+        _legionIntentPlanner.ResetPlanningState();
 
         BuildIntentHierarchy(scenario);
         FeedbackQueue.Clear();

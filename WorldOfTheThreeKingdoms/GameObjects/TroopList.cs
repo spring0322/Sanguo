@@ -629,12 +629,13 @@ namespace GameObjects
         /// 🧊 Cold Path：势力范围更新或读档后调用
         /// 日期：2026-03-16
         /// </summary>
-        public void ApplyInfluenceBuff()
+        public int ApplyInfluenceBuff()
         {
             GameObjectList troops = this.GetList();
             int troopCount = troops.Count;
+            int changedCount = 0;
             
-            if (troopCount == 0) return;
+            if (troopCount == 0) return 0;
             
             // 🔥 使用 for 循环，避免 LINQ
             for (int i = 0; i < troopCount; i++)
@@ -647,7 +648,10 @@ namespace GameObjects
 
                 try
                 {
-                    troop.ApplyInfluenceBuff();
+                    if (troop.ApplyInfluenceBuff())
+                    {
+                        changedCount++;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -657,6 +661,8 @@ namespace GameObjects
                     throw;
                 }
             }
+
+            return changedCount;
         }
     }
 }

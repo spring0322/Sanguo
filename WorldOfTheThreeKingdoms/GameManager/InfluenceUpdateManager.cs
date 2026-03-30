@@ -31,6 +31,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
     
     // 🔥 新增：暂停标志（回合切换时暂停分帧重算）
     private bool _isPaused = false;
+    private bool _hasPendingForcedFullUpdate = false;
     
     // 能量竞争前后事件（用于渲染器与诊断模块）
     public event Action? OnBeforeEnergyCompetition;
@@ -357,6 +358,11 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
     /// </summary>
     public void ForceUpdateAll()
     {
+        if (_hasPendingForcedFullUpdate)
+        {
+            return;
+        }
+
         // 🧊 Cold Path：回合结束时可以接受短暂卡顿
         for (int i = 0; i < _architectures.Count; i++)
         {
@@ -366,6 +372,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
         // 🔥 关键：触发分帧重算，确保能量情报更新
         // 日期：2026-03-20
         // 说明：回合结束时需要重新计算所有势力的能量和视野
+        _hasPendingForcedFullUpdate = true;
         MarkAllFactionsDirty();
     }
 
@@ -430,6 +437,7 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             }
             catch (Exception ex)
             {
+                _hasPendingForcedFullUpdate = false;
                 string factionName = faction == null ? "null" : faction.Name;
                 string factionId = faction == null ? "null" : faction.ID.ToString();
                 System.Diagnostics.Debug.WriteLine(
@@ -448,12 +456,14 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
             }
             catch (Exception ex)
             {
+                _hasPendingForcedFullUpdate = false;
                 System.Diagnostics.Debug.WriteLine(
                     $"[InfluenceUpdateManager.UpdateFactionRecalculation] finalize failed after processing {_factionsToRecalculate.Length} factions: {ex}");
                 throw;
             }
             
             // 算完了
+            _hasPendingForcedFullUpdate = false;
             _needsFullRecalculation = false;
             _factionCalculationIndex = 0;
             _factionsToRecalculate = [];  // 🔥 C# 12 集合表达式：字段类型已明确为 Faction[]
@@ -511,9 +521,17 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
 
         // 全图重算完成后统一刷新实体状态，避免部分势力更新导致的数据撕裂
         stage = "apply architecture influence buff";
-        scenario.Architectures.ApplyInfluenceBuff();
+        int changedArchitectureBuffCount = scenario.Architectures.ApplyInfluenceBuff();
         stage = "apply troop influence buff";
-        scenario.Troops.ApplyInfluenceBuff();
+        int changedTroopBuffCount = scenario.Troops.ApplyInfluenceBuff();
+        #if DEBUG
+        if (changedArchitectureBuffCount > 0 || changedTroopBuffCount > 0)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[InfluenceUpdateManager.FinalizeGlobalRecalculation] architectureBuffChanged={changedArchitectureBuffCount}/{scenario.Architectures.Count}, " +
+                $"troopBuffChanged={changedTroopBuffCount}/{scenario.Troops.Count}");
+        }
+        #endif
         }
         catch (Exception ex)
         {

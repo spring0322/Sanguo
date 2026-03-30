@@ -11212,6 +11212,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         try
                         {
                             this.Plugins.DateRunnerPlugin.DateStop();
+                            this.TryShowDeferredTupianwenziDialogs();
                         }
                         catch (Exception ex)
                         {
@@ -12044,6 +12045,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                                     try
                                     {
                                         this.Plugins.DateRunnerPlugin.DateStop();
+                                        this.TryShowDeferredTupianwenziDialogs();
                                     }
                                     catch (Exception ex)
                                     {

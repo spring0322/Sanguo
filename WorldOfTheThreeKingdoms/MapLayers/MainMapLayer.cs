@@ -487,8 +487,6 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             
             // 🔥 Content.Unload() 已释放 InkBleed effect 和 XuanPaperNoise 纹理
             // 必须重建 _inkRenderer，否则下一帧 DrawOverlay 会 ObjectDisposedException
-            Session.MainGame.mainGameScreen.InitializeInkBleedRenderer();
-
             if (gc)
             {
                 GC.Collect();

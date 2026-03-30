@@ -67,8 +67,10 @@ namespace GameObjects
         /// 🧊 Cold Path：势力范围更新或读档后调用
         /// 日期：2026-03-16
         /// </summary>
-        public void ApplyInfluenceBuff()
+        public int ApplyInfluenceBuff()
         {
+            int changedCount = 0;
+
             // 🔥 AOT 修复：显式类型转换，避免隐式转换失败
             // 日期：2026-03-21
             // 原因：AOT 环境下 foreach (Architecture in List<GameObject>) 隐式转换失败
@@ -82,7 +84,10 @@ namespace GameObjects
                 }
                 try
                 {
-                    architecture.ApplyInfluenceBuff();
+                    if (architecture.ApplyInfluenceBuff())
+                    {
+                        changedCount++;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -92,6 +97,8 @@ namespace GameObjects
                     throw;
                 }
             }
+
+            return changedCount;
         }
 
         private void architecture_OnBeginRecentlyAttacked(Architecture architecture)

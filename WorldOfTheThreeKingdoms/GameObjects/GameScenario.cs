@@ -262,6 +262,58 @@ namespace GameObjects
             influenceUpdateManager.SyncAfterFactionTopologyChange(reason);
         }
 
+        private bool NeedsFactionInfluenceTopologySync(out string invalidReason)
+        {
+            if (this.ScenarioMap == null)
+            {
+                throw new InvalidOperationException(
+                    "[GameScenario] ScenarioMap is null while validating faction influence maps.");
+            }
+
+            int mapWidth = this.ScenarioMap.MapDimensions.X;
+            int mapHeight = this.ScenarioMap.MapDimensions.Y;
+            if (mapWidth <= 0 || mapHeight <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"[GameScenario] Invalid map size while validating faction influence maps: {mapWidth}x{mapHeight}");
+            }
+
+            int expectedLength = mapWidth * mapHeight;
+            var factions = this.Factions.GetList();
+            int factionCount = factions.Count;
+
+            for (int i = 0; i < factionCount; i++)
+            {
+                if (factions[i] is not Faction faction)
+                {
+                    throw new InvalidOperationException(
+                        $"[GameScenario] Factions contains invalid entry at index {i} while validating influence maps.");
+                }
+
+                int actualLength = faction.GlobalInfluenceMap == null ? -1 : faction.GlobalInfluenceMap.Length;
+                if (actualLength != expectedLength)
+                {
+                    invalidReason = $"{faction.ID}:{actualLength}->{expectedLength}";
+                    return true;
+                }
+            }
+
+            invalidReason = string.Empty;
+            return false;
+        }
+
+        private void SyncFactionInfluenceTopologyIfNeeded(string reason)
+        {
+            if (!this.NeedsFactionInfluenceTopologySync(out string invalidReason))
+            {
+                return;
+            }
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[GameScenario] Detected invalid faction influence map before sync: {reason}, detail={invalidReason}");
+            this.SyncInfluenceAfterFactionTopologyChange($"{reason}:{invalidReason}");
+        }
+
         [DataMember]
         public FactionListWithQueue Factions = new FactionListWithQueue();
 
@@ -1650,6 +1702,7 @@ namespace GameObjects
             // System.Diagnostics.Debug.WriteLine("[DayPassedEvent] 8. 开始 NewFaction");
             this.NewFaction();
             // System.Diagnostics.Debug.WriteLine("[DayPassedEvent] 8. 完成 NewFaction");
+            this.SyncFactionInfluenceTopologyIfNeeded("DayPassedEvent.AfterNewFaction");
 
             // System.Diagnostics.Debug.WriteLine("[DayPassedEvent] 9. 开始外交关系处理");
             //this.GameProgressCaution.Text = "运行外交";
@@ -1748,6 +1801,7 @@ namespace GameObjects
                 }
             }
             // System.Diagnostics.Debug.WriteLine("[DayPassedEvent] 12. 完成所有路径DayEvent");
+            this.SyncFactionInfluenceTopologyIfNeeded("DayPassedEvent.BeforeLegionDayEvent");
             
             // System.Diagnostics.Debug.WriteLine($"[DayPassedEvent] 13. 开始军团DayEvent（共 {this.Legions.Count} 个军团）");
             foreach (GameObject obj in this.Legions.GetRandomList())

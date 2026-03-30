@@ -282,6 +282,11 @@ public sealed class TileInfluenceInfoPlugin : GameObject, ITileInfluenceInfo, IB
                 throw new InvalidOperationException(
                     $"[TileInfluenceInfoPlugin] 势力 {factionObj.Name} 的 GlobalInfluenceMap 为 null");
             }
+            if ((uint)index >= (uint)factionObj.GlobalInfluenceMap.Length)
+            {
+                throw new InvalidOperationException(
+                    $"[TileInfluenceInfoPlugin] 势力 {factionObj.Name} 的 GlobalInfluenceMap 长度异常，index={index}，length={factionObj.GlobalInfluenceMap.Length}");
+            }
             
             // 🔥 关键：使用标准索引读取能量值（与 InfluenceRenderer 一致）
             // 🔥 日期：2026-03-16
@@ -322,6 +327,16 @@ public sealed class TileInfluenceInfoPlugin : GameObject, ITileInfluenceInfo, IB
         // 🔥 日期：2026-03-16
         // 🔥 重构：使用 EffectiveTotalEnergy
         int index = WTKGameManager.TerrainCostCache.GetIndex(mapX, mapY);
+        if (scenario.CurrentPlayer.GlobalInfluenceMap == null)
+        {
+            throw new InvalidOperationException(
+                $"[TileInfluenceInfoPlugin] 当前玩家 {scenario.CurrentPlayer.Name} 的 GlobalInfluenceMap 为 null");
+        }
+        if ((uint)index >= (uint)scenario.CurrentPlayer.GlobalInfluenceMap.Length)
+        {
+            throw new InvalidOperationException(
+                $"[TileInfluenceInfoPlugin] 当前玩家 {scenario.CurrentPlayer.Name} 的 GlobalInfluenceMap 长度异常，index={index}，length={scenario.CurrentPlayer.GlobalInfluenceMap.Length}");
+        }
         int playerEnergy = scenario.CurrentPlayer.GlobalInfluenceMap[index].EffectiveTotalEnergy;
         
         if (playerEnergy > 0)

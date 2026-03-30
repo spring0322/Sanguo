@@ -6,12 +6,16 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
+using System.Text;
 
 namespace GameObjects
 {
     [DataContract]
     public partial class TroopEvent : GameObject
     {
+        private static readonly char[] StringSeparators = [' ', '\n', '\r', '\t'];
+        private static readonly char[] DialogLineSeparators = ['\r', '\n'];
+
         [DataMember]
         public int AfterEventHappened = -1;
 
@@ -91,6 +95,106 @@ namespace GameObjects
             {
                 Dialogs = new List<PersonDialog>();
             }
+        }
+
+        private static string[] SplitTokens(string data)
+        {
+            return string.IsNullOrWhiteSpace(data) ? [] : data.Split(StringSeparators, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private void ValidatePairTokenCount(string fieldName, string[] strArray)
+        {
+            if ((strArray.Length & 1) != 0)
+            {
+                throw new FormatException($"TroopEvent {this.ID} field {fieldName} contains {strArray.Length} tokens and cannot be parsed as key/value pairs.");
+            }
+        }
+
+        private static bool TryGetDialogSpeakerId(Dictionary<int, Person> persons, string token, out int speakerId)
+        {
+            if (!int.TryParse(token, out speakerId))
+            {
+                return false;
+            }
+
+            return speakerId < 0 || persons == null || persons.ContainsKey(speakerId);
+        }
+
+        private List<PersonDialog> ParseDialogEntries(Dictionary<int, Person> persons, string data, string fieldName)
+        {
+            List<PersonDialog> result = new List<PersonDialog>();
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                return result;
+            }
+
+            if (data.IndexOf('\t') >= 0)
+            {
+                string[] lines = data.Split(DialogLineSeparators, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i];
+                    int separatorIndex = line.IndexOf('\t');
+                    if (separatorIndex <= 0)
+                    {
+                        throw new FormatException($"TroopEvent {this.ID} field {fieldName} contains a malformed dialog record on line {i + 1}.");
+                    }
+
+                    string speakerToken = line[..separatorIndex];
+                    if (!TryGetDialogSpeakerId(persons, speakerToken, out int speakerId))
+                    {
+                        throw new FormatException($"TroopEvent {this.ID} field {fieldName} contains invalid speaker token '{speakerToken}' on line {i + 1}.");
+                    }
+
+                    PersonDialog item = new PersonDialog();
+                    item.SpeakingPersonID = speakerId;
+                    item.SpeakingPerson = speakerId >= 0 && persons != null && persons.ContainsKey(speakerId) ? persons[speakerId] : null;
+                    item.Text = line[(separatorIndex + 1)..];
+                    result.Add(item);
+                }
+
+                return result;
+            }
+
+            string[] strArray = SplitTokens(data);
+            int index = 0;
+            while (index < strArray.Length)
+            {
+                if (!TryGetDialogSpeakerId(persons, strArray[index], out int speakerId))
+                {
+                    throw new FormatException($"TroopEvent {this.ID} field {fieldName} expected a speaker token at position {index}, but found '{strArray[index]}'.");
+                }
+
+                int textStart = index + 1;
+                if (textStart >= strArray.Length)
+                {
+                    throw new FormatException($"TroopEvent {this.ID} field {fieldName} is missing dialog text after speaker {speakerId}.");
+                }
+
+                int nextSpeakerIndex = strArray.Length;
+                for (int i = textStart + 1; i < strArray.Length; i++)
+                {
+                    if (TryGetDialogSpeakerId(persons, strArray[i], out _))
+                    {
+                        nextSpeakerIndex = i;
+                        break;
+                    }
+                }
+
+                PersonDialog item = new PersonDialog();
+                item.SpeakingPersonID = speakerId;
+                item.SpeakingPerson = speakerId >= 0 && persons != null && persons.ContainsKey(speakerId) ? persons[speakerId] : null;
+                item.Text = string.Join(" ", strArray, textStart, nextSpeakerIndex - textStart);
+                result.Add(item);
+                index = nextSpeakerIndex;
+            }
+
+            return result;
+        }
+
+        private static string NormalizeSerializedDialogText(string text)
+        {
+            return string.IsNullOrEmpty(text) ? string.Empty : text.Replace('\r', ' ').Replace('\n', ' ');
         }
 
         public void ApplyEventDialogs(Troop troop)
@@ -342,33 +446,14 @@ namespace GameObjects
         public void LoadDialogFromString(Dictionary<int, Person> persons, string data)
         {
             if (data == null) return;
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
-            this.Dialogs.Clear();
-            for (int i = 0; i < strArray.Length; i += 2)
-            {
-                PersonDialog item = new PersonDialog();
-                int num2 = int.Parse(strArray[i]);
-                if (num2 >= 0 && !persons.ContainsKey(num2)) continue;
-                if (num2 >= 0)
-                {
-                    item.SpeakingPerson = persons[num2];
-                    item.SpeakingPersonID = num2;
-                } else
-                {
-                    item.SpeakingPerson = null;
-                    item.SpeakingPersonID = -1;
-                }
-                item.Text = strArray[i + 1];
-                this.Dialogs.Add(item);
-            }
+            this.Dialogs = ParseDialogEntries(persons, data, nameof(dialogString));
         }
 
         public void LoadEffectAreaFromString(EventEffectTable eventEffects, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
             this.EffectAreas.Clear();
+            ValidatePairTokenCount(nameof(EffectAreasString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 TroopEffectArea item = new TroopEffectArea();
@@ -380,9 +465,9 @@ namespace GameObjects
 
         public void LoadEffectPersonFromString(Dictionary<int, Person> persons, EventEffectTable eventEffects, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
             this.EffectPersons.Clear();
+            ValidatePairTokenCount(nameof(EffectPersonsString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 if (!persons.ContainsKey(int.Parse(strArray[i]))) continue;
@@ -410,9 +495,9 @@ namespace GameObjects
 
         public void LoadTargetPersonFromString(Dictionary<int, Person> persons, string data)
         {
-            char[] separator = new char[] { ' ', '\n', '\r', '\t' };
-            string[] strArray = data.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+            string[] strArray = SplitTokens(data);
             this.TargetPersons.Clear();
+            ValidatePairTokenCount(nameof(TargetPersonsString), strArray);
             for (int i = 0; i < strArray.Length; i += 2)
             {
                 if (!persons.ContainsKey(int.Parse(strArray[i + 1]))) continue;
@@ -425,22 +510,20 @@ namespace GameObjects
 
         public string SaveDialogToString()//剧本的部队事件的对话武将默认全部变成了0，而且目前源码转换中，并没有这一块的安排
         {
-            string str = "";
+            if (this.Dialogs == null || this.Dialogs.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new StringBuilder();
             foreach (PersonDialog dialog in this.Dialogs)
             {
-                object obj2;
-                if (dialog.SpeakingPerson != null)
-                {
-                    obj2 = str;
-                    str = string.Concat(new object[] { obj2, dialog.SpeakingPerson.ID, " ", dialog.Text, " " });
-                }
-                else
-                {
-                    obj2 = str;
-                    str = string.Concat(new object[] { obj2, -1, " ", dialog.Text, " " });
-                }
+                builder.Append(dialog.SpeakingPerson != null ? dialog.SpeakingPerson.ID : -1);
+                builder.Append('\t');
+                builder.Append(NormalizeSerializedDialogText(dialog.Text));
+                builder.Append('\n');
             }
-            return str;
+            return builder.ToString();
         }
 
         public string SaveEffectAreaToString()

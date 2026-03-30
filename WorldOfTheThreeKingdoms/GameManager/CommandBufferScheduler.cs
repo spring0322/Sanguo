@@ -110,6 +110,10 @@ public class CommandBufferScheduler
         int validCommands = 0;
         int playerTroops = 0;
         int aiTroops = 0;
+        AIAuthorityContext authorityContext =
+            Session.GlobalVariables != null && Session.GlobalVariables.EnableAIAuthorityPhase1
+                ? scenario.EnsureAIAuthorityContext()
+                : null;
         
         try
         {
@@ -121,8 +125,9 @@ public class CommandBufferScheduler
                 
                 totalTroops++;
                 if (troop.ManualControl) playerTroops++; else aiTroops++;
+                TroopCommand resolvedCommand = ResolveCommandForBufferBuild(scenario, troop, authorityContext);
                 
-                switch (troop.Command)
+                switch (resolvedCommand)
                 {
                     case TroopCommand.Move:
                         GenerateMoveCommand(troop);
@@ -1162,6 +1167,134 @@ public class CommandBufferScheduler
     private static bool IsValidCommandPosition(Point position)
     {
         return position.X >= 0 && position.Y >= 0;
+    }
+
+    private TroopCommand ResolveCommandForBufferBuild(
+        GameScenario scenario,
+        Troop troop,
+        AIAuthorityContext authorityContext)
+    {
+        TroopCommand command = troop.Command;
+        if (command != TroopCommand.None)
+        {
+            return command;
+        }
+
+        if (authorityContext != null && authorityContext.TryGetIntent(troop.ID, out TroopIntent intent))
+        {
+            authorityContext.ApplyIntentProjection(scenario, troop);
+            command = MaterializeCommandFromIntent(scenario, troop, intent);
+            if (command != TroopCommand.None)
+            {
+                troop.SetCommand(command);
+                return command;
+            }
+        }
+
+        command = MaterializeCommandFromLegacyState(troop);
+        if (command != TroopCommand.None)
+        {
+            troop.SetCommand(command);
+        }
+
+        return command;
+    }
+
+    private static TroopCommand MaterializeCommandFromIntent(
+        GameScenario scenario,
+        Troop troop,
+        TroopIntent intent)
+    {
+        SyncIntentTargetReferences(scenario, troop, intent);
+
+        return intent.Kind switch
+        {
+            TroopIntentKind.EnterCity => troop.TargetArchitecture != null ? TroopCommand.Enter : TroopCommand.None,
+            TroopIntentKind.AttackArchitecture => troop.TargetArchitecture != null ? TroopCommand.AttackArch : TroopCommand.None,
+            TroopIntentKind.AttackTroop => troop.TargetTroop != null && !troop.TargetTroop.Destroyed
+                ? (troop.CurrentStratagem != null ? TroopCommand.Stratagem : TroopCommand.AttackTroop)
+                : ResolveMoveFallback(troop),
+            TroopIntentKind.March => ResolveMoveFallback(troop),
+            TroopIntentKind.Withdraw => ResolveMoveFallback(troop),
+            _ => TroopCommand.None
+        };
+    }
+
+    private static TroopCommand MaterializeCommandFromLegacyState(Troop troop)
+    {
+        return troop.CurrentAIState switch
+        {
+            TroopAIState.EnterCity => troop.TargetArchitecture != null ? TroopCommand.Enter : TroopCommand.None,
+            TroopAIState.Sieging => troop.TargetArchitecture != null ? TroopCommand.AttackArch : TroopCommand.None,
+            TroopAIState.Combat => ResolveLegacyCombatCommand(troop),
+            TroopAIState.Marching => ResolveMoveFallback(troop),
+            TroopAIState.Retreating => ResolveMoveFallback(troop),
+            _ => TroopCommand.None
+        };
+    }
+
+    private static void SyncIntentTargetReferences(
+        GameScenario scenario,
+        Troop troop,
+        TroopIntent intent)
+    {
+        switch (intent.Target.Kind)
+        {
+            case IntentTargetKind.Architecture:
+                if (intent.Target.TargetId >= 0)
+                {
+                    troop.TargetArchitecture = scenario.Architectures.GetGameObject(intent.Target.TargetId) as Architecture;
+                }
+
+                if (IsValidCommandPosition(intent.Target.Position))
+                {
+                    troop.RealDestination = intent.Target.Position;
+                }
+                break;
+
+            case IntentTargetKind.Troop:
+                if (intent.Target.TargetId >= 0)
+                {
+                    troop.TargetTroop = scenario.Troops.GetGameObject(intent.Target.TargetId) as Troop;
+                }
+                break;
+
+            case IntentTargetKind.Position:
+                if (IsValidCommandPosition(intent.Target.Position))
+                {
+                    troop.RealDestination = intent.Target.Position;
+                }
+                break;
+        }
+    }
+
+    private static TroopCommand ResolveLegacyCombatCommand(Troop troop)
+    {
+        if (troop.CurrentStratagem != null &&
+            troop.TargetTroop != null &&
+            !troop.TargetTroop.Destroyed)
+        {
+            return TroopCommand.Stratagem;
+        }
+
+        if (troop.TargetArchitecture != null && troop.TargetArchitecture.Endurance > 0)
+        {
+            return TroopCommand.AttackArch;
+        }
+
+        if (troop.TargetTroop != null && !troop.TargetTroop.Destroyed)
+        {
+            return TroopCommand.AttackTroop;
+        }
+
+        return ResolveMoveFallback(troop);
+    }
+
+    private static TroopCommand ResolveMoveFallback(Troop troop)
+    {
+        return IsValidCommandPosition(troop.RealDestination) && troop.RealDestination != troop.Position
+            ? TroopCommand.Move
+            : TroopCommand.None;
     }
     
     private void GenerateMoveCommand(Troop troop)
