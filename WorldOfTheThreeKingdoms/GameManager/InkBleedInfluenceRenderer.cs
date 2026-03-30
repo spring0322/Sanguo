@@ -39,9 +39,9 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
     // 🔥 低分屏缩放比例缓存（分辨率变化时在 RebuildRenderTarget 中更新，避免每帧重算）
     private float _scaleX;
     private float _scaleY;
-    private int _lowResTileW;   // 预计算的低分屏格子宽（依赖 tileSize，UpdateRenderTarget 传入时更新）
-    private int _lowResTileH;
-    private int _cachedTileSize = -1;  // 上次计算 _lowResTileW/H 时的 tileSize
+    private Matrix _prepassScaleMatrix;
+    private int _overlayWidth;
+    private int _overlayHeight;
     
     // 🔥 水墨侵蚀着色器
     private readonly Effect _inkBleedEffect;
@@ -151,6 +151,9 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
         // 🔥 初始化低分屏缩放比例缓存
         _scaleX = (float)_lowResTarget.Width / screenWidth;
         _scaleY = (float)_lowResTarget.Height / screenHeight;
+        _prepassScaleMatrix = Matrix.CreateScale(_scaleX, _scaleY, 1f);
+        _overlayWidth = screenWidth;
+        _overlayHeight = screenHeight;
         
         // 🔥 创建 1x1 像素纹理
         _pixelTexture = new(graphicsDevice, 1, 1);  // ✅ C# 12 目标类型推断
@@ -386,12 +389,17 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
     public void UpdateRenderTarget(
         SpriteBatch spriteBatch,
         Rectangle viewport,
-        int tileSize,
+        int tileWidth,
+        int tileHeight,
         int leftEdge,
-        int topEdge)
+        int topEdge,
+        int overlayWidth,
+        int overlayHeight)
     {
         // 🔥 F12 关闭时直接返回
         if (!IsEnabled) return;
+
+        EnsureOverlayViewportSize(overlayWidth, overlayHeight);
         
         var scenario = global::GameManager.Session.Current.Scenario;
         if (scenario == null)
@@ -417,21 +425,12 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
             SpriteSortMode.Deferred,
             BlendState.AlphaBlend,
             SamplerState.PointClamp,
-            null, null, null, null);
+            null, null, null, _prepassScaleMatrix);
         
         int startX = Math.Max(0, viewport.Left);
         int startY = Math.Max(0, viewport.Top);
         int endX = Math.Min(_mapWidth, viewport.Right + 1);
         int endY = Math.Min(_mapHeight, viewport.Bottom + 1);
-        
-        // 🔥 低分屏缩放比例从缓存字段读取（在构造函数和 RebuildRenderTarget 中更新）
-        // tileSize 变化时（缩放地图）才重算格子尺寸
-        if (tileSize != _cachedTileSize)
-        {
-            _lowResTileW = Math.Max(1, (int)(tileSize * _scaleX));
-            _lowResTileH = Math.Max(1, (int)(tileSize * _scaleY));
-            _cachedTileSize = tileSize;
-        }
         
         for (int y = startY; y < endY; y++)
         {
@@ -455,16 +454,15 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
                 float alpha = _visualInfluenceMap[index];
                 if (alpha < 0.01f) continue;
                 
-                // 🔥 先算全分辨率屏幕坐标，再整体乘以缩放比例映射到低分屏
-                int screenX = x * tileSize + leftEdge;
-                int screenY = y * tileSize + topEdge;
-                int lowResX = (int)(screenX * _scaleX);
-                int lowResY = (int)(screenY * _scaleY);
+                // 🔥 关键修复：直接在屏幕坐标系下构造矩形，通过缩放矩阵投射到低分屏。
+                // 这样可以保留相机的子像素相位，避免手工取整后放大造成的上下错位。
+                int screenLeft = x * tileWidth + leftEdge;
+                int screenTop = y * tileHeight + topEdge;
                 
                 Color color = _factionColorCache[factionID] * (alpha * 0.4f);
                 spriteBatch.Draw(
                     _pixelTexture,
-                    new Rectangle(lowResX, lowResY, _lowResTileW, _lowResTileH),
+                    new Rectangle(screenLeft, screenTop, tileWidth, tileHeight),
                     color);
             }
         }
@@ -510,8 +508,7 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
         // 原因：支持窗口大小动态改变和时间动画效果
 
         // 1. 视口大小（支持窗口缩放）
-        Viewport viewport = _graphicsDevice.Viewport;
-        Vector2 screenSize = new(viewport.Width, viewport.Height);
+        Vector2 screenSize = new(_overlayWidth, _overlayHeight);
         _inkBleedEffect.Parameters["ViewportSize"]?.SetValue(screenSize);
 
         // 2. 游戏运行时间（用于动态水墨流变效果）
@@ -532,7 +529,7 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
         // Draw(Texture2D, Rectangle, Color)
         spriteBatch.Draw(
             _lowResTarget,
-            _graphicsDevice.Viewport.Bounds,
+            new Rectangle(0, 0, _overlayWidth, _overlayHeight),
             new Color(255, 255, 255, 102));  // 40% 透明度
 
         spriteBatch.End();
@@ -545,8 +542,6 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
     /// </summary>
     public void RebuildRenderTarget()
     {
-        _lowResTarget?.Dispose();
-        
         // 🔥 关键修复：检查 PresentationParameters 是否为 null
         // 日期：2026-03-29
         // 原因：RenderTarget2D 构造函数内部会访问 PresentationParameters，如果为 null 会抛出 NullReferenceException
@@ -556,24 +551,49 @@ public sealed class InkBleedInfluenceRenderer : IDisposable
                 "InkBleedInfluenceRenderer.RebuildRenderTarget: GraphicsDevice.PresentationParameters 为 null");
         }
         
-        int screenWidth = _graphicsDevice.PresentationParameters.BackBufferWidth;
-        int screenHeight = _graphicsDevice.PresentationParameters.BackBufferHeight;
-        
-        _lowResTarget = new RenderTarget2D(
-            _graphicsDevice,
-            screenWidth / 2,
-            screenHeight / 2,
-            false,
-            SurfaceFormat.Color,
-            DepthFormat.None);
-        
-        // 🔥 分辨率变化时更新缩放比例缓存，同时使 tileSize 缓存失效
-        _scaleX = (float)_lowResTarget.Width / screenWidth;
-        _scaleY = (float)_lowResTarget.Height / screenHeight;
-        _cachedTileSize = -1;  // 强制下一帧重算 _lowResTileW/H
+        int screenWidth = _overlayWidth > 0 ? _overlayWidth : _graphicsDevice.PresentationParameters.BackBufferWidth;
+        int screenHeight = _overlayHeight > 0 ? _overlayHeight : _graphicsDevice.PresentationParameters.BackBufferHeight;
+
+        RebuildRenderTarget(screenWidth, screenHeight);
         
         System.Diagnostics.Debug.WriteLine(
             $"[InkBleedInfluenceRenderer] 重建低分屏画布：{_lowResTarget.Width}×{_lowResTarget.Height}");
+    }
+
+    private void EnsureOverlayViewportSize(int overlayWidth, int overlayHeight)
+    {
+        if (overlayWidth <= 0 || overlayHeight <= 0)
+        {
+            throw new InvalidOperationException(
+                $"InkBleedInfluenceRenderer: 无效的主视口尺寸 {overlayWidth}×{overlayHeight}");
+        }
+
+        if (_overlayWidth == overlayWidth && _overlayHeight == overlayHeight)
+        {
+            return;
+        }
+
+        RebuildRenderTarget(overlayWidth, overlayHeight);
+    }
+
+    private void RebuildRenderTarget(int overlayWidth, int overlayHeight)
+    {
+        _lowResTarget?.Dispose();
+
+        _overlayWidth = overlayWidth;
+        _overlayHeight = overlayHeight;
+
+        _lowResTarget = new RenderTarget2D(
+            _graphicsDevice,
+            Math.Max(1, overlayWidth / 2),
+            Math.Max(1, overlayHeight / 2),
+            false,
+            SurfaceFormat.Color,
+            DepthFormat.None);
+
+        _scaleX = (float)_lowResTarget.Width / overlayWidth;
+        _scaleY = (float)_lowResTarget.Height / overlayHeight;
+        _prepassScaleMatrix = Matrix.CreateScale(_scaleX, _scaleY, 1f);
     }
     
     /// <summary>

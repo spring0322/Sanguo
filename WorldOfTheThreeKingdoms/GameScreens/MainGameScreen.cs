@@ -140,6 +140,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         /// 军师推荐系统
         /// </summary>
         private WorldOfTheThreeKingdoms.GameManager.AdvisorRecommendationSystem _advisorRecommendationSystem;
+        private bool _advisorRecommendationEventsRegistered;
 
         #endregion
 
@@ -1601,8 +1602,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     spriteBatch,
                     viewport,
                     this.mainMapLayer.TileWidth,
+                    this.mainMapLayer.TileHeight,
                     this.mainMapLayer.LeftEdge,
-                    this.mainMapLayer.TopEdge);
+                    this.mainMapLayer.TopEdge,
+                    base.viewportSize.X,
+                    base.viewportSize.Y);
             }
 
             // ==========================================
@@ -4533,6 +4537,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
+                CheckAdvisorRecommendation();
+                return;
                 System.Diagnostics.Debug.WriteLine("[OnYearPassed] 年份变化，检查军师推荐");
                 
                 // 使用安全的后台操作，避免 Fire-and-Forget 警告
@@ -4554,6 +4560,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             try
             {
+                if (_advisorRecommendationEventsRegistered)
+                {
+                    return;
+                }
+
+                ScenarioEvents.OnYearPassed += OnYearPassed_CheckAdvisorRecommendation;
+                _advisorRecommendationEventsRegistered = true;
+                System.Diagnostics.Debug.WriteLine("[RegisterAdvisorRecommendationEvents] 年份事件注册成功（主线程）");
+                return;
                 // 使用安全的异步初始化模式
                 AsyncWarningsFix.InitializeAsync(async () =>
                 {
@@ -11644,12 +11659,20 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         _influenceUpdateManager = new WorldOfTheThreeKingdoms.GameManager.InfluenceUpdateManager(architectures);
                         _influenceUpdateManager.Initialize();  // 🆕 阶段 1：初始化地形代价缓存
                         
-                        // 🔥 订阅能量竞争后的事件（用于水墨渲染器）
-                        // 日期：2026-03-27
-                        // 原因：水墨目标层必须读取结算后的最终能量状态
+                        // 🔥 订阅能量竞争后的事件（用于水墨渲染器和小地图）
+                        // 日期：2026-03-30
+                        // 原因：水墨目标层和小地图必须读取结算后的最终能量状态
                         _influenceUpdateManager.OnAfterEnergyCompetition += () =>
                         {
                             _inkRenderer?.UpdateInfluenceMap();
+                            
+                            // 🆕 Phase 0：结算完成后刷新小地图
+                            // 日期：2026-03-30
+                            // 原因：小地图必须显示结算后的最终战略归属，不能停留在"加载时截图"
+                            if (this.Plugins?.AirViewPlugin is AirViewPlugin.AirViewPlugin airView)
+                            {
+                                airView.CreateStrategicMinimap(Session.Current.Scenario);
+                            }
                         };
                         
                         // 🔥 关键：初始化后立即完成一次全局能量重算并统一回灌实体状态

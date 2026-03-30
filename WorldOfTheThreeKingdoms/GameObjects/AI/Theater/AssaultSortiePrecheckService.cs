@@ -115,7 +115,7 @@ internal static class AssaultSortiePrecheckService
         for (int i = 0; i < source.Militaries.Count; i++)
         {
             Military military = source.Militaries[i] as Military;
-            if (!IsEligibleMilitary(military))
+            if (!IsMobilizableMilitary(military))
             {
                 continue;
             }
@@ -242,7 +242,7 @@ internal static class AssaultSortiePrecheckService
             estimatedMarchDays);
     }
 
-    private static bool IsEligibleMilitary(Military military)
+    internal static bool IsMobilizableMilitary(Military military)
     {
         return military != null &&
                military.Kind != null &&

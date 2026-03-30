@@ -13,6 +13,19 @@ namespace GameObjects
         WartimeOverdraft
     }
 
+    internal readonly record struct AISortieMoraleRecoverySnapshot(
+        int EligibleMilitaryCount,
+        int SortieReadyMilitaryCount,
+        int BestMobilizableMorale,
+        int ReserveFoodFloor,
+        int AvailableFoodAfterReserve)
+    {
+        internal bool NeedsTrainingPriority =>
+            EligibleMilitaryCount > 0 &&
+            SortieReadyMilitaryCount == 0 &&
+            AvailableFoodAfterReserve > 0;
+    }
+
     public partial class Architecture
     {
         internal AICityOperationalState GetAICityOperationalState()
@@ -301,6 +314,11 @@ namespace GameObjects
                 return true;
             }
 
+            if (this.NeedsSortieMoraleRecoveryForAI())
+            {
+                return false;
+            }
+
             int dominationMargin = this.GetRecruitmentDominationMarginForAI();
             float moraleRatio = this.GetMoraleHealthRatioForAI();
             AICityOperationalState state = this.GetAICityOperationalState();
@@ -326,6 +344,12 @@ namespace GameObjects
             if (workWeights == null || workWeights.Length < 9)
             {
                 return;
+            }
+
+            if (this.NeedsSortieMoraleRecoveryForAI())
+            {
+                workWeights[6] = Math.Max(workWeights[6], 260f);
+                workWeights[7] = 0f;
             }
 
             switch (this.GetAICityOperationalState())
@@ -424,6 +448,62 @@ namespace GameObjects
             return !_architectureKind.HasMorale || this.MoraleCeiling <= 0
                 ? 1f
                 : (float)this.Morale / this.MoraleCeiling;
+        }
+
+        internal bool NeedsSortieMoraleRecoveryForAI()
+        {
+            if (this.BelongedFaction == null || Session.Current == null || Session.Current.Scenario.IsPlayer(this.BelongedFaction))
+            {
+                return false;
+            }
+
+            if (!this.IsFoodAbundant || this.HasHostileTroopsInView() || this.RecentlyAttacked > 0)
+            {
+                return false;
+            }
+
+            return this.EvaluateSortieMoraleRecoveryForAI().NeedsTrainingPriority;
+        }
+
+        internal AISortieMoraleRecoverySnapshot EvaluateSortieMoraleRecoveryForAI()
+        {
+            int eligibleMilitaryCount = 0;
+            int sortieReadyMilitaryCount = 0;
+            int bestMobilizableMorale = 0;
+
+            for (int i = 0; i < this.Militaries.Count; i++)
+            {
+                Military military = this.Militaries[i] as Military;
+                if (!global::GameObjects.AI.AssaultSortiePrecheckService.IsMobilizableMilitary(military))
+                {
+                    continue;
+                }
+
+                eligibleMilitaryCount++;
+                if (military.Morale > bestMobilizableMorale)
+                {
+                    bestMobilizableMorale = military.Morale;
+                }
+
+                if (military.Morale >= global::GameObjects.AI.AssaultSortiePrecheckService.MinAssaultMorale)
+                {
+                    sortieReadyMilitaryCount++;
+                }
+            }
+
+            int reserveFoodFloor = global::GameObjects.AI.AssaultSortiePrecheckService.ResolveReserveFoodFloor(this);
+            int emergencyReserveFoodFloor = this.GetEmergencyFoodReserveFloor();
+            if (emergencyReserveFoodFloor > reserveFoodFloor)
+            {
+                reserveFoodFloor = emergencyReserveFoodFloor;
+            }
+
+            return new AISortieMoraleRecoverySnapshot(
+                eligibleMilitaryCount,
+                sortieReadyMilitaryCount,
+                bestMobilizableMorale,
+                reserveFoodFloor,
+                this.Food - reserveFoodFloor);
         }
 
         internal int CountLocalActiveOfficersForAI()

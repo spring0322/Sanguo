@@ -2395,6 +2395,8 @@ namespace GameObjects
                 : InvalidPosition;
             SmartSiegeHysteresisConfig smartSiegeHysteresis =
                 AITacticalConfigManager.Config.TacticalPositioning.SmartSiegeHysteresis;
+            TroopPathFinder smartSiegePathFinder = this.pathFinder
+                ?? throw new InvalidOperationException($"状态损坏：部队 {this.DisplayName}(ID:{this.ID}) 在 SmartSiege 选位时 pathFinder 为 null。");
 
             // 3. 评分并收集所有候选点
             // 🔥 性能优化：预分配容量，避免动态扩容
@@ -2477,7 +2479,13 @@ namespace GameObjects
                 if (distToCity > myAttackRange) continue;
 
                 // --- 评分计算 (保持原有逻辑) ---
-                int distToTarget = Math.Abs(this.Position.X - slot.X) + Math.Abs(this.Position.Y - slot.Y);
+                int distToTarget = 0;
+                if (slot != this.Position)
+                {
+                    List<Point> simulatedPath = smartSiegePathFinder.GetFirstTierSimulatePath(this.Position, slot, this.Army.Kind);
+                    if (simulatedPath == null || simulatedPath.Count == 0) continue;
+                    distToTarget = simulatedPath.Count;
+                }
                 int minDistToFriendly = 999;
                 // 🔥 性能优化：使用 for 循环遍历 Span
                 for (int i = 0; i < friendlyPositions.Length; i++)
@@ -2621,6 +2629,71 @@ namespace GameObjects
             return bestCandidate.Slot;
         }
 
+        private bool ShouldResetStuckCounterForDestinationChange(Point oldDestination, Point newDestination)
+        {
+            if (oldDestination == newDestination || !IsValidDestination(newDestination) || newDestination == Point.Zero)
+            {
+                return false;
+            }
+
+            if (!IsMinorSmartSiegeRetarget(oldDestination, newDestination))
+            {
+                return true;
+            }
+
+#if DEBUG
+            if (this.stuckedFor > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[SmartSiege] {this.DisplayName} preserves stuck counter for minor siege retarget {oldDestination} -> {newDestination}, stuckedFor={this.stuckedFor}");
+            }
+#endif
+            return false;
+        }
+
+        private bool IsMinorSmartSiegeRetarget(Point oldDestination, Point newDestination)
+        {
+            if (!IsSmartSiegeSlotForCurrentTarget(oldDestination) || !IsSmartSiegeSlotForCurrentTarget(newDestination))
+            {
+                return false;
+            }
+
+            int deltaX = Math.Abs(oldDestination.X - newDestination.X);
+            int deltaY = Math.Abs(oldDestination.Y - newDestination.Y);
+            return (deltaX != 0 || deltaY != 0) && Math.Max(deltaX, deltaY) <= 1;
+        }
+
+        private bool IsSmartSiegeSlotForCurrentTarget(Point destination)
+        {
+            Architecture siegeTarget = this.WillArchitecture;
+            if (siegeTarget == null || siegeTarget.ArchitectureArea == null || siegeTarget.BelongedFaction == this.BelongedFaction)
+            {
+                return false;
+            }
+
+            if (!IsValidDestination(destination) || siegeTarget.ArchitectureArea.HasPoint(destination))
+            {
+                return false;
+            }
+
+            int attackRange = this.OffenceRadius;
+            if (attackRange <= 0)
+            {
+                return false;
+            }
+
+            foreach (Point cityTile in siegeTarget.ArchitectureArea.Area)
+            {
+                int distanceToCity = Math.Abs(destination.X - cityTile.X) + Math.Abs(destination.Y - cityTile.Y);
+                if (distanceToCity <= attackRange)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// 【智能攻城】应用分配的攻击位置，设置寻路目标
         /// </summary>
@@ -2697,9 +2770,7 @@ namespace GameObjects
         {
             this.RealDestination = resolvedDestination;
             this.Destination = resolvedDestination;
-            this.stuckedFor = 0;
             this._friendlyBlockWaitUntilTurn = -1;
-            ClearCompatStuckCounter();
             this.ClearCurrentPath();
 
             if (this._cachedPath.Count > 0) this._cachedPath.Clear();
@@ -5693,6 +5764,9 @@ namespace GameObjects
             }
 
             troop.SetLeader(leader);
+            // Legion.AddTroop may trigger role allocation immediately, so Army/MilitaryID
+            // must be initialized before any legion assignment.
+            troop.Army = military;
             if (from.BelongedFaction != null)
             {
                 from.BelongedFaction.AddTroop(troop);
@@ -5763,8 +5837,6 @@ namespace GameObjects
                     #endif
                 }
             }
-            troop.Army = military;
-            
             #if DEBUG
             System.Diagnostics.Debug.WriteLine($"[Troop.Create] 设置 Army 后: troop.militaryID={troop.MilitaryID}, military.ID={military?.ID ?? -999}");
             #endif
@@ -15434,7 +15506,7 @@ namespace GameObjects
 
         public void SetArmy(Military m)
         {
-            this.army = m;
+            this.Army = m;
         }
 
         public void SetChaos(int days)
@@ -19440,9 +19512,10 @@ namespace GameObjects
                 
                 // ★★★ 修复：目标改变时重置卡住计数器 ★★★
                 // 只有当目标真的改变时才重置（避免重复设置相同值时重置）
-                if (this.realDestination != value && value != Point.Zero && value.X != -1)
+                if (ShouldResetStuckCounterForDestinationChange(this.realDestination, value))
                 {
                     this.stuckedFor = 0;
+                    ClearCompatStuckCounter();
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} 目标改变，重置卡住计数器 (旧:{this.realDestination} 新:{value})");
                     #endif
@@ -22443,7 +22516,6 @@ namespace GameObjects
                 {
                     this.HasPath = true;
                     this.stuckedFor = 0; // 成功算路，清零卡顿计数
-                    ClearCompatStuckCounter();
                     
                     // [关键] 把新路径转换一下，方便第二步读取
                     if (pathPoints != null && pathPoints.Count > 0)
@@ -23043,10 +23115,10 @@ namespace GameObjects
             }
 
             // ★★★ 修复：记录旧的RealDestination，用于检测任务是否改变 ★★★
-            Point oldDestination = this.RealDestination;
 
             // 🔥 修复：撤退军团特殊处理 - 使用部队自己的WillArchitecture
             // 原因：撤退军团可能被清理，但部队仍需继续撤退到目标城市
+            Point oldDestination = this.RealDestination;
             if (this.BelongedLegion.IsRetreating())
             {
                 // 撤退部队使用自己的WillArchitecture，不依赖军团
@@ -23146,7 +23218,7 @@ namespace GameObjects
             }
 
             // ★★★ 修复：如果RealDestination改变了（新任务），重置卡住计数器 ★★★
-            if (this.RealDestination != oldDestination && IsValidDestination(this.RealDestination))
+            if (ShouldResetStuckCounterForDestinationChange(oldDestination, this.RealDestination))
             {
                 this.stuckedFor = 0;
                 System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 新任务，重置卡住计数器 (旧:{oldDestination} 新:{this.RealDestination})");
@@ -24042,6 +24114,26 @@ namespace GameObjects
             return Session.Current.Scenario.GetMoveCost(this.Position, nextPoint, this);
         }
 
+        private bool TrySwitchToImmediateHostileCombat(Troop blocker)
+        {
+            if (blocker == null || blocker == this || blocker.Destroyed || blocker.IsFriendly(this.BelongedFaction))
+            {
+                return false;
+            }
+
+            Architecture willArchitecture = this.WillArchitecture;
+            if (willArchitecture != null
+                && willArchitecture.BelongedFaction != this.BelongedFaction)
+            {
+                return false;
+            }
+
+            this.TargetTroop = blocker;
+            this.CurrentAIState = TroopAIState.Combat;
+            this.ExecuteSmartTurn();
+            return true;
+        }
+
         /// <summary>
         /// 执行单步移动的内部方法
         /// </summary>
@@ -24058,11 +24150,9 @@ namespace GameObjects
             if (blocker != null && blocker != this)
             {
                 // 处理敌军阻挡
-                if (isAggressive && !blocker.IsFriendly(this.BelongedFaction))
+                if (isAggressive && this.TrySwitchToImmediateHostileCombat(blocker))
                 {
                     System.Diagnostics.Debug.WriteLine($"[MoveStepSingle] {this.DisplayName} 遇到敌军 {blocker.DisplayName}，进入战斗");
-                    this.CurrentAIState = TroopAIState.Combat;
-                    this.ExecuteSmartTurn();
                     return false;
                 }
                 
@@ -24243,6 +24333,15 @@ namespace GameObjects
                     }
                     else
                     {
+                        Troop simpleNextBlocker = Session.Current.Scenario.GetTroopByPosition(simpleNext);
+                        if (isAggressive && this.TrySwitchToImmediateHostileCombat(simpleNextBlocker))
+                        {
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} fallback step {simpleNext} blocked by hostile {simpleNextBlocker.DisplayName}, switching to combat");
+#endif
+                            return false;
+                        }
+
                         // 已在目标位置，无需移动
                         this.Action = TroopAction.Stop;
                         return false;

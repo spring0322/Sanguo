@@ -62,6 +62,12 @@ namespace AirViewPlugin
         private static Texture2D _cachedTerrainLayer;
         private static string _cachedMapName;
         private static bool _terrainCacheDirty = true;
+        
+        // 🔥 Phase 3：预分配缓冲区（2026-03-30）
+        // 原因：避免每次结算后重新分配数组，减少GC压力
+        private int[] _ownerFactionBuffer;
+        private int[] _energyLevelBuffer;
+        private int _bufferSize;
 
         public void AddDisableRects()
         {
@@ -465,19 +471,24 @@ namespace AirViewPlugin
         public void CreateStrategicMinimap(GameObjects.GameScenario scenario)
         {
             // 🧊 Cold Path：回合结束时调用
-            // 使用本地引用，防止循环中多次访问 Session 造成的开销
-            var territoryManager = Session.Current.TerritoryManager;
-            if (territoryManager == null)
+            // 🔥 Phase 2：移除 TerritoryManager 依赖（2026-03-30）
+            // 原因：统一使用 GlobalInfluenceMap 作为唯一数据源
+            
+            // 🔥 检查 GlobalInfluenceMap 是否就绪
+            bool hasInfluenceMap = scenario.Factions.GetList()
+                .OfType<Faction>()
+                .Any(f => f.GlobalInfluenceMap != null && f.GlobalInfluenceMap.Length > 0);
+            
+            if (!hasInfluenceMap)
             {
-                // 🔥 修复：TerritoryManager 未初始化时，记录日志并创建空白小地图（2026-03-17）
-                // 原因：游戏加载时 ReloadAirView 可能在 TerritoryManager 初始化之前被调用
-                System.Diagnostics.Debug.WriteLine("[AirView] ⚠️ TerritoryManager 未初始化，创建空白小地图");
+                // 🔥 势力范围系统未就绪时，显示纯地形底图（2026-03-30）
+                System.Diagnostics.Debug.WriteLine("[AirView] ⚠️ GlobalInfluenceMap 未就绪，创建空白小地图");
                 CreateBlankMinimap(scenario);
                 return;
             }
             
-            // 🔥 调试：确认 TerritoryManager 已初始化（2026-03-17）
-            System.Diagnostics.Debug.WriteLine("[AirView] ✅ TerritoryManager 已初始化，开始生成完整小地图");
+            // 🔥 调试：确认 GlobalInfluenceMap 已初始化（2026-03-30）
+            System.Diagnostics.Debug.WriteLine("[AirView] ✅ GlobalInfluenceMap 已就绪，开始生成完整小地图");
             System.Diagnostics.Debug.WriteLine($"[AirView] 势力数量: {scenario.Factions.Count}");
 
             try
@@ -512,26 +523,9 @@ namespace AirViewPlugin
                     _cachedMapName = currentMapName;
                 }
 
-                // 2. 重新计算势力版图 (确保这一步不在并行循环中，因为它可能修改数据)
-                // 注意：如果此操作非常耗时，应考虑将其移出渲染帧逻辑
-                System.Diagnostics.Debug.WriteLine("[AirView] 🔄 重新计算势力版图...");
-                territoryManager.RecalculateTerritory(scenario.Architectures, scenario.ScenarioMap.MapData);
-                System.Diagnostics.Debug.WriteLine("[AirView] ✅ 势力版图计算完成");
-                
-                // 🔥 调试：检查势力版图是否有数据（2026-03-17）
-                int territoryCount = 0;
-                for (int y = 0; y < height; y++)
-                {
-                    for (int x = 0; x < width; x++)
-                    {
-                        int owner = territoryManager.GetTerritoryOwner(x, y);
-                        if (owner >= 0)
-                        {
-                            territoryCount++;
-                        }
-                    }
-                }
-                System.Diagnostics.Debug.WriteLine($"[AirView] 🔍 势力版图统计: {territoryCount}/{totalPixels} 个格子有势力归属");
+                // 🔥 Phase 2：移除 TerritoryManager.RecalculateTerritory 调用（2026-03-30）
+                // 原因：不再使用 TerritoryManager 作为数据源
+                System.Diagnostics.Debug.WriteLine("[AirView] ✅ 使用 GlobalInfluenceMap 数据源");
 
 
                 Color[] mapColors;
@@ -544,14 +538,14 @@ namespace AirViewPlugin
                     
                     System.Diagnostics.Debug.WriteLine("[AirView] 🎨 更新势力范围颜色...");
                     // 只更新势力相关的颜色
-                    UpdateTerritoryColors(mapColors, territoryManager, scenario, width, height);
+                    UpdateTerritoryColors(mapColors, scenario, width, height);
                     System.Diagnostics.Debug.WriteLine("[AirView] ✅ 势力范围颜色更新完成");
                 }
                 else
                 {
                     // 🎯 完整生成：地形层 + 势力层
                     System.Diagnostics.Debug.WriteLine("[AirView] 🎨 生成完整地图（地形+势力）...");
-                    mapColors = GenerateCompleteMap(territoryManager, scenario, width, height, totalPixels);
+                    mapColors = GenerateCompleteMap(scenario, width, height, totalPixels);
                     System.Diagnostics.Debug.WriteLine("[AirView] ✅ 完整地图生成完成");
                     
                     // 缓存地形层
@@ -662,10 +656,11 @@ namespace AirViewPlugin
             }
         }
         
-        // 🎯 新增：只更新势力版图颜色
-        private void UpdateTerritoryColors(Color[] mapColors, WorldOfTheThreeKingdoms.GameManager.TerritoryManager territoryManager, GameObjects.GameScenario scenario, int width, int height)
+        // 🎯 Phase 1+2+3：只更新势力版图颜色（移除TerritoryManager依赖 + 使用战略归属 + 预分配缓冲区）
+        // 日期：2026-03-30
+        private void UpdateTerritoryColors(Color[] mapColors, GameObjects.GameScenario scenario, int width, int height)
         {
-            // 🎨 修改日期：2026-03-17
+            // 🎨 修改日期：2026-03-30
             // 🎨 功能：使用 GlobalInfluenceMap 渲染势力范围，与大地图保持一致
             // 🧊 Cold Path：回合结束时调用
             
@@ -698,61 +693,61 @@ namespace AirViewPlugin
                 }
             }
             
-            // 🔥 调试：输出 GlobalInfluenceMap 状态（2026-03-17）
+            // 🔥 调试：输出 GlobalInfluenceMap 状态（2026-03-30）
             System.Diagnostics.Debug.WriteLine($"[UpdateTerritoryColors] GlobalInfluenceMap 状态: {(hasInfluenceMap ? "已初始化" : "未初始化")}");
             
-            // 🔥 预取势力归属数据（优先使用 GlobalInfluenceMap，回退到 TerritoryManager）
-            int[] ownerFactions = new int[totalPixels];
-            int[] energyLevels = new int[totalPixels];
+            // 🔥 Phase 3：预分配缓冲区（首次调用时初始化）
+            if (_ownerFactionBuffer == null || _bufferSize != totalPixels)
+            {
+                _ownerFactionBuffer = new int[totalPixels];
+                _energyLevelBuffer = new int[totalPixels];
+                _bufferSize = totalPixels;
+                System.Diagnostics.Debug.WriteLine($"[UpdateTerritoryColors] 预分配缓冲区: {totalPixels} 像素");
+            }
             
+            // 🔥 Phase 1：使用战略归属（TerritoryOwner）而非综合能量（EffectiveTotalEnergy）
+            // 原因：小地图主层应显示"领地归属"而非"战术控制/压制"
             Parallel.For(0, totalPixels, i =>
             {
                 int x = i % width;
                 int y = i / width;
+                int mapIndex = WorldOfTheThreeKingdoms.GameManager.TerrainCostCache.GetIndex(x, y);
                 
-                if (hasInfluenceMap)
+                // 🔥 Phase 1：直接读取结算后的战略归属（不再自行推导）
+                int ownerFactionID = -1;
+                int bestCityEnergy = 0;
+                
+                for (int fIdx = 0; fIdx < validFactionCount; fIdx++)
                 {
-                    // 🔥 使用与 InkBleedInfluenceRenderer 相同的逻辑
-                    int mapIndex = WorldOfTheThreeKingdoms.GameManager.TerrainCostCache.GetIndex(x, y);
+                    var faction = factionsArray[fIdx];
                     
-                    // 🔥 查询能量最高的势力（使用 for 循环避免分配）
-                    int maxEnergy = 0;
-                    int ownerFactionID = -1;
+                    // 🔥 边界检查：防止数组越界（合理的防御）
+                    if (faction.GlobalInfluenceMap == null || mapIndex >= faction.GlobalInfluenceMap.Length)
+                        continue;
                     
-                    for (int fIdx = 0; fIdx < validFactionCount; fIdx++)
+                    ref readonly var tile = ref faction.GlobalInfluenceMap[mapIndex];
+                    
+                    // 🔥 关键修复：使用 TerritoryOwner（战略归属）而非 EffectiveTotalEnergy（综合控制）
+                    // TerritoryOwner 只看 CityEnergy（城市扩散），不含部队临时压制
+                    if (tile.TerritoryOwner == faction.ID && tile.CityEnergy > bestCityEnergy)
                     {
-                        var faction = factionsArray[fIdx];
-                        
-                        // 🔥 边界检查：防止数组越界（合理的防御）
-                        if (faction.GlobalInfluenceMap == null || mapIndex >= faction.GlobalInfluenceMap.Length)
-                            continue;
-                        
-                        int energy = faction.GlobalInfluenceMap[mapIndex].EffectiveTotalEnergy;
-                        if (energy > maxEnergy)
-                        {
-                            maxEnergy = energy;
-                            ownerFactionID = faction.ID;
-                        }
+                        bestCityEnergy = tile.CityEnergy;
+                        ownerFactionID = faction.ID;
                     }
-                    
-                    ownerFactions[i] = ownerFactionID;
-                    energyLevels[i] = maxEnergy;
                 }
-                else
-                {
-                    // 🔥 回退：使用 TerritoryManager 数据（2026-03-17）
-                    ownerFactions[i] = territoryManager.GetTerritoryOwner(x, y);
-                    energyLevels[i] = (int)(territoryManager.GetTerritoryStrength(x, y) * 10000);
-                }
+                
+                _ownerFactionBuffer[i] = ownerFactionID;
+                _energyLevelBuffer[i] = bestCityEnergy;
             });
             
             // 🔥 更新颜色（混合地形色和势力色）
             int updatedPixelCount = 0;
             Parallel.For(0, totalPixels, i =>
             {
-                int ownerFactionID = ownerFactions[i];
-                int energy = energyLevels[i];
+                int ownerFactionID = _ownerFactionBuffer[i];
+                int energy = _energyLevelBuffer[i];
                 
+                // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
                 if (ownerFactionID >= 0 && energy > 0)
                 {
                     var faction = scenario.Factions.GetGameObject(ownerFactionID) as Faction;
@@ -763,159 +758,205 @@ namespace AirViewPlugin
                         
                         // 🎨 根据能量值计算混合比例（能量越高，势力色越明显）
                         // 能量范围通常是 0-10000，归一化到 0-1
-                        float normalizedEnergy = Math.Min(energy / 10000f, 1f);
-                        float blendRatio = 0.3f + (normalizedEnergy * 0.5f); // 0.3 ~ 0.8
+                        // 🎨 2026-03-30：使用非线性增强曲线，解决低威压区域颜色太淡的问题
+                        float rawIntensity = MathF.Min(energy / 10000f, 1f);
+                        float boostedIntensity = MathF.Pow(rawIntensity, 0.4f); // 0.4次幂非线性增强低值区域
                         
-                        mapColors[i] = Color.Lerp(terrainColor, factionColor, blendRatio);
+                        // 最小可见度保护：只要有微量能量，就保证最低 15% 的强度
+                        if (rawIntensity > 0.001f)
+                        {
+                            boostedIntensity = MathF.Max(0.15f, boostedIntensity);
+                        }
+                        
+                        // 将强度映射为 Alpha，最高限制在 200 左右以保留地形底图的通透感
+                        byte finalAlpha = (byte)Math.Clamp(boostedIntensity * 200f, 0f, 255f);
+                        
+                        // 重新组装最终渲染颜色
+                        Color renderColor = new(factionColor.R, factionColor.G, factionColor.B, finalAlpha);
+                        
+                        mapColors[i] = Color.Lerp(terrainColor, renderColor, 1f);
                         System.Threading.Interlocked.Increment(ref updatedPixelCount);
                     }
                 }
                 // 如果不是势力领土，保持原地形色不变
             });
             
-            // 🔥 调试：输出更新统计（2026-03-17）
+            // 🔥 调试：输出更新统计（2026-03-30）
             System.Diagnostics.Debug.WriteLine($"[UpdateTerritoryColors] 更新了 {updatedPixelCount}/{totalPixels} 个像素的势力颜色");
         }
         
-        // 🎯 新增：生成完整地图（地形+势力）
-        private Color[] GenerateCompleteMap(WorldOfTheThreeKingdoms.GameManager.TerritoryManager territoryManager, GameObjects.GameScenario scenario, int width, int height, int totalPixels)
-        {
-            // 🎨 修改日期：2026-03-17
-            // 🎨 功能：使用 GlobalInfluenceMap 渲染势力范围，与大地图保持一致
-            // 🧊 Cold Path：回合结束时调用
-            
-            // 3. 数据快照 (Snapshot Data) - 关键优化
-            int[] terrainIds = new int[totalPixels];
-            int[] ownerFactions = new int[totalPixels];
-            int[] energyLevels = new int[totalPixels];
-
-            // 🔥 ANTI-BAND-AID：检查 GlobalInfluenceMap 是否已初始化
-            // 🧊 Cold Path：容错处理，因为小地图可能在 InfluenceUpdateManager 初始化前调用
-            var factionsGameObjectList = scenario.Factions.GetList();
-            int factionCount = factionsGameObjectList.Count;
-            
-            // 🔥 性能优化：预先转换为数组，避免 Parallel.For 内部枚举器分配
-            Faction[] factionsArray = new Faction[factionCount];
-            int validFactionCount = 0;
-            for (int idx = 0; idx < factionCount; idx++)
-            {
-                if (factionsGameObjectList[idx] is Faction f)
+        // 🎯 Phase 1+2：生成完整地图（地形+势力，移除TerritoryManager依赖 + 使用战略归属）
+        // 日期：2026-03-30
+        private Color[] GenerateCompleteMap(GameObjects.GameScenario scenario, int width, int height, int totalPixels)
                 {
-                    factionsArray[validFactionCount++] = f;
-                }
-            }
-            
-            bool hasInfluenceMap = false;
-            for (int idx = 0; idx < validFactionCount; idx++)
-            {
-                if (factionsArray[idx].GlobalInfluenceMap != null && factionsArray[idx].GlobalInfluenceMap.Length > 0)
-                {
-                    hasInfluenceMap = true;
-                    break;
-                }
-            }
-            
-            // 🔥 调试：输出 GlobalInfluenceMap 状态（2026-03-17）
-            System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] GlobalInfluenceMap 状态: {(hasInfluenceMap ? "已初始化" : "未初始化")}");
-            System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 势力数量: {validFactionCount}");
+                    // 🎨 修改日期：2026-03-30
+                    // 🎨 功能：使用 GlobalInfluenceMap 渲染势力范围，与大地图保持一致
+                    // 🧊 Cold Path：回合结束时调用
 
-            Parallel.For(0, totalPixels, i =>
-            {
-                int x = i % width;
-                int y = i / width;
+                    // 3. 数据快照 (Snapshot Data) - 关键优化
+                    int[] terrainIds = new int[totalPixels];
+                    int[] ownerFactions = new int[totalPixels];
+                    int[] energyLevels = new int[totalPixels];
 
-                var terrainDetail = scenario.GetTerrainDetailByPositionNoCheck(new Point(x, y));
-                terrainIds[i] = terrainDetail?.ID ?? 0;
-                
-                // 🎨 使用 GlobalInfluenceMap 查询势力归属
-                if (hasInfluenceMap)
-                {
-                    int mapIndex = WorldOfTheThreeKingdoms.GameManager.TerrainCostCache.GetIndex(x, y);
-                    
-                    // 🔥 查询能量最高的势力（使用 for 循环避免分配）
-                    int maxEnergy = 0;
-                    int ownerFactionID = -1;
-                    
-                    for (int fIdx = 0; fIdx < validFactionCount; fIdx++)
+                    // 🔥 ANTI-BAND-AID：检查 GlobalInfluenceMap 是否已初始化
+                    // 🧊 Cold Path：容错处理，因为小地图可能在 InfluenceUpdateManager 初始化前调用
+                    var factionsGameObjectList = scenario.Factions.GetList();
+                    int factionCount = factionsGameObjectList.Count;
+
+                    // 🔥 性能优化：预先转换为数组，避免 Parallel.For 内部枚举器分配
+                    Faction[] factionsArray = new Faction[factionCount];
+                    int validFactionCount = 0;
+                    for (int idx = 0; idx < factionCount; idx++)
                     {
-                        var faction = factionsArray[fIdx];
-                        
-                        // 🔥 边界检查：防止数组越界（合理的防御）
-                        if (faction.GlobalInfluenceMap == null || mapIndex >= faction.GlobalInfluenceMap.Length)
-                            continue;
-                        
-                        int energy = faction.GlobalInfluenceMap[mapIndex].EffectiveTotalEnergy;
-                        if (energy > maxEnergy)
+                        if (factionsGameObjectList[idx] is Faction f)
                         {
-                            maxEnergy = energy;
-                            ownerFactionID = faction.ID;
+                            factionsArray[validFactionCount++] = f;
                         }
                     }
-                    
-                    ownerFactions[i] = ownerFactionID;
-                    energyLevels[i] = maxEnergy;
-                }
-                else
-                {
-                    // 🧊 Cold Path：回退到旧的 TerritoryManager 逻辑
-                    ownerFactions[i] = territoryManager.GetTerritoryOwner(x, y);
-                    energyLevels[i] = (int)(territoryManager.GetTerritoryStrength(x, y) * 10000);
-                }
-            });
 
-            // 4. 并行生成颜色数组
-            Color[] mapColors = new Color[totalPixels];
-            
-            // 🔥 调试：统计势力归属（2026-03-17）
-            int territoryPixelCount = 0;
-            for (int i = 0; i < totalPixels; i++)
-            {
-                if (ownerFactions[i] >= 0 && energyLevels[i] > 0)
-                {
-                    territoryPixelCount++;
-                }
-            }
-            System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 势力归属统计: {territoryPixelCount}/{totalPixels} 个格子有势力");
-
-            int updatedPixelCount = 0;
-            Parallel.For(0, totalPixels, i =>
-            {
-                int terrainId = terrainIds[i];
-                int ownerFactionID = ownerFactions[i];
-                int energy = energyLevels[i];
-
-                Color terrainColor = GetTerrainColor(terrainId);
-
-                if (ownerFactionID >= 0 && energy > 0)
-                {
-                    var faction = scenario.Factions.GetGameObject(ownerFactionID) as Faction;
-                    if (faction != null)
+                    bool hasInfluenceMap = false;
+                    for (int idx = 0; idx < validFactionCount; idx++)
                     {
-                        Color factionColor = GetFactionColor(faction);
-                        
-                        // 🎨 根据能量值计算混合比例（能量越高，势力色越明显）
-                        float normalizedEnergy = Math.Min(energy / 10000f, 1f);
-                        float blendRatio = 0.3f + (normalizedEnergy * 0.5f); // 0.3 ~ 0.8
-                        
-                        mapColors[i] = Color.Lerp(terrainColor, factionColor, blendRatio);
-                        System.Threading.Interlocked.Increment(ref updatedPixelCount);
+                        if (factionsArray[idx].GlobalInfluenceMap != null && factionsArray[idx].GlobalInfluenceMap.Length > 0)
+                        {
+                            hasInfluenceMap = true;
+                            break;
+                        }
                     }
-                    else
+
+                    // 🔥 调试：输出 GlobalInfluenceMap 状态（2026-03-30）
+                    System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] GlobalInfluenceMap 状态: {(hasInfluenceMap ? "已初始化" : "未初始化")}");
+                    System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 势力数量: {validFactionCount}");
+
+                    // 🔥 Phase 1：使用战略归属（TerritoryOwner）而非综合能量（EffectiveTotalEnergy）
+                    Parallel.For(0, totalPixels, i =>
                     {
-                        mapColors[i] = terrainColor;
+                        int x = i % width;
+                        int y = i / width;
+
+                        var terrainDetail = scenario.GetTerrainDetailByPositionNoCheck(new Point(x, y));
+                        terrainIds[i] = terrainDetail?.ID ?? 0;
+
+                        // 🎨 使用 GlobalInfluenceMap 查询势力归属
+                        if (hasInfluenceMap)
+                        {
+                            int mapIndex = WorldOfTheThreeKingdoms.GameManager.TerrainCostCache.GetIndex(x, y);
+
+                            // 🔥 Phase 1：直接读取结算后的战略归属（不再自行推导）
+                            int ownerFactionID = -1;
+                            int bestCityEnergy = 0;
+
+                            for (int fIdx = 0; fIdx < validFactionCount; fIdx++)
+                            {
+                                var faction = factionsArray[fIdx];
+
+                                // 🔥 边界检查：防止数组越界（合理的防御）
+                                if (faction.GlobalInfluenceMap == null || mapIndex >= faction.GlobalInfluenceMap.Length)
+                                    continue;
+
+                                ref readonly var tile = ref faction.GlobalInfluenceMap[mapIndex];
+
+                                // 🔥 关键修复：使用 TerritoryOwner（战略归属）而非 EffectiveTotalEnergy（综合控制）
+                                // TerritoryOwner 只看 CityEnergy（城市扩散），不含部队临时压制
+                                if (tile.TerritoryOwner == faction.ID && tile.CityEnergy > bestCityEnergy)
+                                {
+                                    bestCityEnergy = tile.CityEnergy;
+                                    ownerFactionID = faction.ID;
+                                }
+                            }
+
+                            ownerFactions[i] = ownerFactionID;
+                            energyLevels[i] = bestCityEnergy;
+                        }
+                    });
+
+                    // 4. 并行生成颜色数组
+                    Color[] mapColors = new Color[totalPixels];
+
+                    // 🔥 调试：统计势力归属（2026-03-30）
+                    int territoryPixelCount = 0;
+                    for (int i = 0; i < totalPixels; i++)
+                    {
+                        // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
+                        if (ownerFactions[i] >= 0 && energyLevels[i] > 0)
+                        {
+                            territoryPixelCount++;
+                        }
                     }
+                    System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 势力领土像素数: {territoryPixelCount}/{totalPixels}");
+
+                    int updatedPixelCount = 0;
+                    Parallel.For(0, totalPixels, i =>
+                    {
+                        int terrainId = terrainIds[i];
+                        int ownerFactionID = ownerFactions[i];
+                        int energy = energyLevels[i];
+
+                        Color terrainColor = GetTerrainColor(terrainId);
+
+                        // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
+                        if (ownerFactionID >= 0 && energy > 0)
+                        {
+                            var faction = scenario.Factions.GetGameObject(ownerFactionID) as Faction;
+                            if (faction != null)
+                            {
+                                Color factionColor = GetFactionColor(faction);
+
+                                // 🎨 根据能量值计算混合比例（能量越高，势力色越明显）
+                                // 🎨 2026-03-30：使用非线性增强曲线，解决低威压区域颜色太淡的问题
+                                float rawIntensity = MathF.Min(energy / 10000f, 1f);
+                                float boostedIntensity = MathF.Pow(rawIntensity, 0.4f); // 0.4次幂非线性增强低值区域
+                                
+                                // 最小可见度保护：只要有微量能量，就保证最低 15% 的强度
+                                if (rawIntensity > 0.001f)
+                                {
+                                    boostedIntensity = MathF.Max(0.15f, boostedIntensity);
+                                }
+                                
+                                // 将强度映射为 Alpha，最高限制在 200 左右以保留地形底图的通透感
+                                byte finalAlpha = (byte)Math.Clamp(boostedIntensity * 200f, 0f, 255f);
+                                
+                                // 重新组装最终渲染颜色
+                                Color renderColor = new(factionColor.R, factionColor.G, factionColor.B, finalAlpha);
+
+                                // 🎨 Phase 6：边缘平滑 - 检测边界格子并应用Alpha过渡
+                                bool isBoundary = false;
+                                int px = i % width;
+                                int py = i / width;
+
+                                // 检查上下左右相邻格子是否归属不同势力
+                                if (px > 0 && ownerFactions[i - 1] != ownerFactionID) isBoundary = true;
+                                else if (px < width - 1 && ownerFactions[i + 1] != ownerFactionID) isBoundary = true;
+                                else if (py > 0 && ownerFactions[i - width] != ownerFactionID) isBoundary = true;
+                                else if (py < height - 1 && ownerFactions[i + width] != ownerFactionID) isBoundary = true;
+
+                                // 边界格子应用轻微Alpha衰减（0.9），使边缘更柔和
+                                if (isBoundary)
+                                {
+                                    renderColor.A = (byte)(renderColor.A * 0.9f);
+                                }
+                                
+                                Color finalColor = Color.Lerp(terrainColor, renderColor, 1f);
+
+                                mapColors[i] = finalColor;
+                                System.Threading.Interlocked.Increment(ref updatedPixelCount);
+                            }
+                            else
+                            {
+                                mapColors[i] = terrainColor;
+                            }
+                        }
+                        else
+                        {
+                            mapColors[i] = terrainColor;
+                        }
+                    });
+
+                    // 🔥 调试：输出更新统计（2026-03-17）
+                    System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 更新了 {updatedPixelCount}/{totalPixels} 个像素的势力颜色");
+
+                    return mapColors;
                 }
-                else
-                {
-                    mapColors[i] = terrainColor;
-                }
-            });
-            
-            // 🔥 调试：输出更新统计（2026-03-17）
-            System.Diagnostics.Debug.WriteLine($"[GenerateCompleteMap] 更新了 {updatedPixelCount}/{totalPixels} 个像素的势力颜色");
-            
-            return mapColors;
-        }
         
         // 🎯 新增：标记地形缓存需要更新
         public static void MarkTerrainCacheDirty()
