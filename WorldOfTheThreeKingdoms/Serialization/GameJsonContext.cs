@@ -186,6 +186,7 @@ namespace WorldOfTheThreeKingdoms.Serialization
     // AITacticalConfig 及其所有子配置类型
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.AITacticalConfig))]
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.TacticalPositioningConfig))]
+    [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.SmartSiegeHysteresisConfig))]
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.PostureEvaluationConfig))]
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.TargetSelectionConfig))]
     [JsonSerializable(typeof(global::WorldOfTheThreeKingdoms.GameGlobal.StrategicPostureConfig))]

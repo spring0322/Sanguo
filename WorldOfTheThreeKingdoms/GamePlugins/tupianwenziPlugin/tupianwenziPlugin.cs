@@ -453,6 +453,20 @@ namespace tupianwenziPlugin
                 if (value &&
                     !this.tupianwenzi.IsShowing &&
                     this.tupianwenzi.DisplayQueue.Count > 0 &&
+                    Setting.Current.GlobalVariables.DialogShowTime <= 0 &&
+                    this.tupianwenzi.CanDiscardDeferredDialogsWhenHidden())
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[tupianwenziPlugin] DialogShowTime<=0, discarding deferred notifications. Pending={this.tupianwenzi.DisplayQueue.Count}");
+#endif
+                    this.tupianwenzi.ClearDeferredDialogs();
+                    return;
+                }
+
+                if (value &&
+                    !this.tupianwenzi.IsShowing &&
+                    this.tupianwenzi.DisplayQueue.Count > 0 &&
                     WorldOfTheThreeKingdoms.GameScreens.MainGameScreen.IsTupianwenziDeferralActive())
                 {
 #if DEBUG

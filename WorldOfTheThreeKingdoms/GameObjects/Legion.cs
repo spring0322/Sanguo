@@ -1308,9 +1308,16 @@ namespace GameObjects
                         {
                             takenPositions.Add(newSiegePos);
                             this.TakenPositions.Add(newSiegePos);
-                            troop.ApplySmartSiegePosition(newSiegePos);
-                            assignedCount++;
-                            System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 侧移到新攻击位 {newSiegePos}");
+                            if (newSiegePos != troop.RealDestination)
+                            {
+                                troop.ApplySmartSiegePosition(newSiegePos);
+                                assignedCount++;
+                                System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 侧移到新攻击位 {newSiegePos}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} keeps assigned siege position {newSiegePos}");
+                            }
                         }
                         else
                         {
@@ -1342,6 +1349,14 @@ namespace GameObjects
                         takenPositions.Add(troop.Position);
                         this.TakenPositions.Add(troop.Position);
                         System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 当前攻击位评分最高，保持原位");
+                        continue;
+                    }
+
+                    if (siegePos == troop.RealDestination)
+                    {
+                        takenPositions.Add(siegePos);
+                        this.TakenPositions.Add(siegePos);
+                        System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} keeps assigned siege position {siegePos}");
                         continue;
                     }
 

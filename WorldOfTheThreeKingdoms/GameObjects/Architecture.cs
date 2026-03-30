@@ -421,6 +421,8 @@ namespace GameObjects
         private bool isStrategicCenter;
 
         public bool JustAttacked = false;
+        private int aiEmergencyFoodSignalDays;
+        private int aiEmergencyFoodPeakDailyDemand;
 
         private ArchitectureKind _architectureKind;
 
@@ -5148,9 +5150,384 @@ namespace GameObjects
 
 
 
+        public void NotifySupplyEmergency(int requiredFoodCost)
+        {
+            if (requiredFoodCost <= 0)
+            {
+                return;
+            }
+
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            int signalDays = foodConfig.EmergencySignalDays > 0
+                ? foodConfig.EmergencySignalDays
+                : 5;
+            if (this.aiEmergencyFoodSignalDays < signalDays)
+            {
+                this.aiEmergencyFoodSignalDays = signalDays;
+            }
+            if (requiredFoodCost > this.aiEmergencyFoodPeakDailyDemand)
+            {
+                this.aiEmergencyFoodPeakDailyDemand = requiredFoodCost;
+            }
+
+#if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[AIFoodEmergency] {this.Name} register emergency food demand: requiredFoodCost={requiredFoodCost}, cityFood={this.Food}, signalDays={this.aiEmergencyFoodSignalDays}");
+#endif
+
+            if (this.BelongedFaction != null)
+            {
+                this.BelongedFaction.NotifyDomesticUrgentEvent($"城市{this.Name}补给告急");
+            }
+        }
+
+        internal bool HasEmergencyFoodPressure()
+        {
+            return this.aiEmergencyFoodSignalDays > 0;
+        }
+
+        internal int GetEmergencyFoodReserveFloor()
+        {
+            if (!this.HasEmergencyFoodPressure())
+            {
+                return 0;
+            }
+
+            int dailyDemand = ResolveEmergencyFoodDailyDemand();
+            if (dailyDemand <= 0)
+            {
+                return 0;
+            }
+
+            int reserveDays = ResolveEmergencyFoodReserveDays();
+            int reserveFloor = dailyDemand * reserveDays;
+            if (reserveFloor > this.FoodCeiling)
+            {
+                reserveFloor = this.FoodCeiling;
+            }
+            return reserveFloor;
+        }
+
+        private int ResolveEmergencyFoodReserveDays()
+        {
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            if (this.HostileLine || this.RecentlyAttacked > 0)
+            {
+                return Math.Max(0, foodConfig.EmergencyReserveDaysHot);
+            }
+
+            if (this.FrontLine)
+            {
+                return Math.Max(0, foodConfig.EmergencyReserveDaysFrontLine);
+            }
+
+            return Math.Max(0, foodConfig.EmergencyReserveDaysRear);
+        }
+
+        private int ResolveEmergencyFoodDailyDemand()
+        {
+            int dailyDemand = Math.Max(this.FoodCostPerDayOfAllMilitaries, this.aiEmergencyFoodPeakDailyDemand);
+            if (this.BelongedFaction == null || this.BelongedFaction.Troops == null)
+            {
+                return dailyDemand;
+            }
+
+            for (int i = 0; i < this.BelongedFaction.Troops.Count; i++)
+            {
+                Troop troop = this.BelongedFaction.Troops[i] as Troop;
+                if (troop == null || troop.Destroyed)
+                {
+                    continue;
+                }
+                if (troop.BelongedFaction != this.BelongedFaction || troop.StartingArchitecture != this)
+                {
+                    continue;
+                }
+
+                bool isInsideCity = this.ArchitectureArea != null
+                    ? this.ArchitectureArea.HasPoint(troop.Position)
+                    : troop.Position == this.Position;
+                if (isInsideCity)
+                {
+                    continue;
+                }
+
+                dailyDemand += troop.FoodCostPerDay;
+            }
+
+            return dailyDemand;
+        }
+
+        private int ResolveEmergencyFoodSpendFund(int targetFood)
+        {
+            if (this.Fund <= 0 || Session.Parameters.FundToFoodMultiple <= 0)
+            {
+                return 0;
+            }
+
+            int foodGap = targetFood - this.Food;
+            if (foodGap <= 0)
+            {
+                return 0;
+            }
+
+            int requiredFund = (foodGap + Session.Parameters.FundToFoodMultiple - 1) / Session.Parameters.FundToFoodMultiple;
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            int reserveFundFloor = Math.Max(
+                (int)(this.FundCeiling * Math.Clamp(foodConfig.EmergencyFundCeilingReserveRatio, 0f, 1f)),
+                (int)(this.EnoughFund * Math.Clamp(foodConfig.EmergencyEnoughFundReserveRatio, 0f, 1f)));
+            int spendableFund = this.Fund - reserveFundFloor;
+            if (spendableFund <= 0)
+            {
+                return 0;
+            }
+
+            float spendRatio = this.HostileLine || this.RecentlyAttacked > 0
+                ? Math.Clamp(foodConfig.EmergencySpendRatioHot, 0f, 1f)
+                : Math.Clamp(foodConfig.EmergencySpendRatioNormal, 0f, 1f);
+            int ratioCappedFund = (int)(this.Fund * spendRatio);
+            int maxSpendFund = Math.Min(spendableFund, ratioCappedFund);
+            if (maxSpendFund <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Min(requiredFund, maxSpendFund);
+        }
+
+        private void ClearEmergencyFoodPressure()
+        {
+            this.aiEmergencyFoodSignalDays = 0;
+            this.aiEmergencyFoodPeakDailyDemand = 0;
+        }
+
+        private bool TryHandleEmergencyFoodTrade()
+        {
+            if (!this.HasEmergencyFoodPressure())
+            {
+                return false;
+            }
+
+            int dailyDemand = ResolveEmergencyFoodDailyDemand();
+            int targetFood = GetEmergencyFoodReserveFloor();
+            if (dailyDemand <= 0 || targetFood <= 0)
+            {
+                ClearEmergencyFoodPressure();
+                return true;
+            }
+
+            if (this.Food < targetFood)
+            {
+                this.WithdrawResources();
+            }
+
+            if (this.Food >= targetFood)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][Emergency] {this.Name} resolved by stock transfer: dailyDemand={dailyDemand}, reserveDays={ResolveEmergencyFoodReserveDays()}, targetFood={targetFood}, cityFood={this.Food}");
+#endif
+                ClearEmergencyFoodPressure();
+                return true;
+            }
+
+            int spendFund = ResolveEmergencyFoodSpendFund(targetFood);
+            if (spendFund > 0)
+            {
+                int foodBefore = this.Food;
+                int fundBefore = this.Fund;
+                this.BuyFood(spendFund);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][Emergency] {this.Name} buy food: dailyDemand={dailyDemand}, reserveDays={ResolveEmergencyFoodReserveDays()}, targetFood={targetFood}, spendFund={spendFund}, food={foodBefore}->{this.Food}, fund={fundBefore}->{this.Fund}");
+#endif
+            }
+#if DEBUG
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][Emergency] {this.Name} cannot buy enough food: dailyDemand={dailyDemand}, reserveDays={ResolveEmergencyFoodReserveDays()}, targetFood={targetFood}, cityFood={this.Food}, fund={this.Fund}");
+            }
+#endif
+
+            if (this.Food >= targetFood)
+            {
+                ClearEmergencyFoodPressure();
+            }
+
+            return true;
+        }
+
+        private bool HasActiveOffensivePressure()
+        {
+            if (this.BelongedFaction == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < this.BelongedFaction.Legions.Count; i++)
+            {
+                Legion legion = this.BelongedFaction.Legions[i] as Legion;
+                if (legion == null || !legion.IsOffensive())
+                {
+                    continue;
+                }
+
+                if ((legion.StartArchitecture != null && legion.StartArchitecture == this) ||
+                    (legion.PreferredRouteway != null && legion.PreferredRouteway.StartArchitecture == this))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int ResolvePreWarFoodReserveDays()
+        {
+            if (this.BelongedFaction == null)
+            {
+                return 0;
+            }
+
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            if (this.PlanArchitecture != null && !this.IsFriendly(this.PlanArchitecture.BelongedFaction))
+            {
+                return Math.Max(0, foodConfig.PreWarReserveDaysPlannedOffense);
+            }
+
+            if (HasActiveOffensivePressure())
+            {
+                return Math.Max(0, foodConfig.PreWarReserveDaysActiveOffense);
+            }
+
+            if (this.HostileLine || this.RecentlyAttacked > 0)
+            {
+                return Math.Max(0, foodConfig.PreWarReserveDaysHot);
+            }
+
+            if (this.FrontLine)
+            {
+                return Math.Max(0, foodConfig.PreWarReserveDaysFrontLine);
+            }
+
+            return 0;
+        }
+
+        private bool HasPreWarFoodPressure()
+        {
+            return ResolvePreWarFoodReserveDays() > 0;
+        }
+
+        private int ResolvePreWarFoodSpendFund(int targetFood)
+        {
+            if (this.Fund <= 0 || Session.Parameters.FundToFoodMultiple <= 0)
+            {
+                return 0;
+            }
+
+            int foodGap = targetFood - this.Food;
+            if (foodGap <= 0)
+            {
+                return 0;
+            }
+
+            int requiredFund = (foodGap + Session.Parameters.FundToFoodMultiple - 1) / Session.Parameters.FundToFoodMultiple;
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            int reserveFundFloor = Math.Max(
+                (int)(this.FundCeiling * Math.Clamp(foodConfig.PreWarFundCeilingReserveRatio, 0f, 1f)),
+                (int)(this.EnoughFund * Math.Clamp(foodConfig.PreWarEnoughFundReserveRatio, 0f, 1f)));
+            int spendableFund = this.Fund - reserveFundFloor;
+            if (spendableFund <= 0)
+            {
+                return 0;
+            }
+
+            float spendRatio = (this.PlanArchitecture != null && !this.IsFriendly(this.PlanArchitecture.BelongedFaction)) || HasActiveOffensivePressure()
+                ? Math.Clamp(foodConfig.PreWarSpendRatioOffense, 0f, 1f)
+                : Math.Clamp(foodConfig.PreWarSpendRatioNormal, 0f, 1f);
+            int ratioCappedFund = (int)(this.Fund * spendRatio);
+            int maxSpendFund = Math.Min(spendableFund, ratioCappedFund);
+            if (maxSpendFund <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Min(requiredFund, maxSpendFund);
+        }
+
+        private bool TryHandlePreWarFoodTrade()
+        {
+            int reserveDays = ResolvePreWarFoodReserveDays();
+            if (reserveDays <= 0)
+            {
+                return false;
+            }
+
+            int dailyDemand = ResolveEmergencyFoodDailyDemand();
+            if (dailyDemand <= 0)
+            {
+                return true;
+            }
+
+            int targetFood = dailyDemand * reserveDays;
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            int maxReserveFood = (int)(this.FoodCeiling * Math.Clamp(foodConfig.PreWarMaxFoodReserveRatio, 0f, 1f));
+            if (targetFood > maxReserveFood)
+            {
+                targetFood = maxReserveFood;
+            }
+
+            if (this.Food < targetFood)
+            {
+                this.WithdrawResources();
+            }
+
+            if (this.Food >= targetFood)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][PreWar] {this.Name} reserve ready: dailyDemand={dailyDemand}, reserveDays={reserveDays}, targetFood={targetFood}, cityFood={this.Food}");
+#endif
+                return true;
+            }
+
+            int spendFund = ResolvePreWarFoodSpendFund(targetFood);
+            if (spendFund > 0)
+            {
+                int foodBefore = this.Food;
+                int fundBefore = this.Fund;
+                this.BuyFood(spendFund);
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][PreWar] {this.Name} buy food: dailyDemand={dailyDemand}, reserveDays={reserveDays}, targetFood={targetFood}, spendFund={spendFund}, food={foodBefore}->{this.Food}, fund={fundBefore}->{this.Fund}");
+#endif
+            }
+#if DEBUG
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIBuyFood][PreWar] {this.Name} cannot buy enough food: dailyDemand={dailyDemand}, reserveDays={reserveDays}, targetFood={targetFood}, cityFood={this.Food}, fund={this.Fund}");
+            }
+#endif
+
+            return true;
+        }
+
         private void AITrade()
         {
-            if ((Session.Current.Scenario.Date.Day % Session.Parameters.AITradePeriod) <= Session.Current.Scenario.Parameters.DayInTurn)
+            bool normalTradeWindow = (Session.Current.Scenario.Date.Day % Session.Parameters.AITradePeriod) <= Session.Current.Scenario.Parameters.DayInTurn;
+            bool hasEmergencyFoodPressure = this.HasEmergencyFoodPressure();
+            bool hasPreWarFoodPressure = HasPreWarFoodPressure();
+            if (!normalTradeWindow && !hasEmergencyFoodPressure && !hasPreWarFoodPressure)
+            {
+                return;
+            }
+
+            if (TryHandleEmergencyFoodTrade())
+            {
+                return;
+            }
+
+            if (TryHandlePreWarFoodTrade())
+            {
+                return;
+            }
+
+            if (normalTradeWindow)
             {
                 int num;
                 if (this.SellFoodAvail())
@@ -6279,7 +6656,10 @@ namespace GameObjects
             estimatedMarchDays = 0;
             if (targetArchitecture == null)
             {
-                return 15;
+                FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+                return foodConfig.OffensiveBudgetFallbackDays > 0
+                    ? foodConfig.OffensiveBudgetFallbackDays
+                    : 15;
             }
 
             double distance = Session.Current.Scenario.GetDistance(this.ArchitectureArea, targetArchitecture.ArchitectureArea);
@@ -6289,19 +6669,7 @@ namespace GameObjects
                 estimatedMarchDays = 1;
             }
 
-            int budgetDays = (int)Math.Ceiling(estimatedMarchDays * 1.5);
-            if (budgetDays < 6)
-            {
-                budgetDays = 6;
-            }
-
-            int rationDays = troop.Army.RationDays;
-            if (rationDays > 0 && budgetDays > rationDays)
-            {
-                budgetDays = rationDays;
-            }
-
-            return budgetDays;
+            return AssaultSortiePrecheckService.ResolveBudgetDays(estimatedMarchDays, troop.Army.RationDays);
         }
 
         private bool CheckOffensiveCapability(Troop troop, Architecture targetArchitecture = null)
@@ -6390,8 +6758,11 @@ namespace GameObjects
             }
             
             // 至少 10 天存粮
-            if (this.Food < Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * 10)
+            FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+            int defensiveReserveDays = Math.Max(0, foodConfig.DefensiveStartCityFoodDays);
+            if (this.Food < Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * defensiveReserveDays)
             {
+                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] {troop.DisplayName} config reserve days={defensiveReserveDays}, requiredFood={Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * defensiveReserveDays}, cityFood={this.Food}");
                 System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapability] ❌ {troop.DisplayName} 城市粮草不足: {this.Food} < {Troop.GetConservativePlanningFoodCostPerDay(troop.Army) * 10}");
                 return false;
             }
@@ -6950,7 +7321,47 @@ namespace GameObjects
                     leaderablePersonList.Add(p);
                 }
             }
-            double consumptionRate = Session.Current.Scenario.GetDistance(this.ArchitectureArea, node.A.ArchitectureArea) / 50.0 + 1;
+            double distance = Session.Current.Scenario.GetDistance(this.ArchitectureArea, node.A.ArchitectureArea);
+            int reserveFoodFloor = AssaultSortiePrecheckService.ResolveReserveFoodFloor(this);
+            /*
+            static bool IsMatchedOffensiveMilitary(Military military, LinkKind linkKind)
+            {
+                if (!((((military.Scales >= 3) && (military.Morale >= 80)) && (military.Combativity >= 80)) &&
+                      (military.InjuryQuantity < military.Kind.MinScale)))
+                {
+                    return false;
+                }
+
+                return linkKind switch
+                {
+                    LinkKind.Land => military.Kind.Type != MilitaryType.姘村啗,
+                    LinkKind.Water => military.Kind.Type == MilitaryType.姘村啗,
+                    LinkKind.Both => true,
+                    _ => false
+                };
+            }
+
+            static int CalculateRequiredFood(MilitaryList militaryList, int leaderableCount, LinkKind linkKind, double distance)
+            {
+                int requiredFood = 0;
+                int troopCnt = 0;
+                foreach (Military m in militaryList)
+                {
+                    if (!IsMatchedOffensiveMilitary(m, linkKind))
+                    {
+                        continue;
+                    }
+
+                    int marchDays = Math.Max(1, m.TransferDays(distance));
+                    int budgetDays = AssaultSortiePrecheckService.ResolveBudgetDays(marchDays, m.RationDays);
+                    requiredFood += m.FoodCostPerDay * budgetDays;
+                    troopCnt++;
+                    if (troopCnt >= leaderableCount) break;
+                }
+
+                return requiredFood;
+            }
+            */
             switch (node.Kind)
             {
                 case LinkKind.None:
@@ -6964,12 +7375,12 @@ namespace GameObjects
                         {
                             if ((((m.Scales >= 3) && (m.Morale >= 80)) && (m.Combativity >= 80)) && (m.InjuryQuantity < m.Kind.MinScale) && m.Kind.Type != MilitaryType.水军)
                             {
-                                crop += m.FoodCostPerDay;
+                                crop += m.FoodCostPerDay * AssaultSortiePrecheckService.ResolveBudgetDays(Math.Max(1, m.TransferDays(distance)), m.RationDays);
                                 troopCnt++;
                                 if (troopCnt >= leaderablePersonList.Count) break;
                             }
                         }
-                        return (this.Food >= crop * consumptionRate * 1.1);
+                        return this.Food >= crop + reserveFoodFloor;
                     }
 
                 case LinkKind.Water:
@@ -6980,12 +7391,12 @@ namespace GameObjects
                         {
                             if ((((m.Scales >= 3) && (m.Morale >= 80)) && (m.Combativity >= 80)) && (m.InjuryQuantity < m.Kind.MinScale) && m.Kind.Type == MilitaryType.水军)
                             {
-                                crop += m.FoodCostPerDay;
+                                crop += m.FoodCostPerDay * AssaultSortiePrecheckService.ResolveBudgetDays(Math.Max(1, m.TransferDays(distance)), m.RationDays);
                                 troopCnt++;
                                 if (troopCnt >= leaderablePersonList.Count) break;
                             }
                         }
-                        return (this.Food >= crop * consumptionRate * 1.1);
+                        return this.Food >= crop + reserveFoodFloor;
                     }
 
                 case LinkKind.Both:
@@ -6996,13 +7407,13 @@ namespace GameObjects
                         {
                             if ((((m.Scales >= 3) && (m.Morale >= 80)) && (m.Combativity >= 80)) && (m.InjuryQuantity < m.Kind.MinScale))
                             {
-                                crop += m.FoodCostPerDay;
+                                crop += m.FoodCostPerDay * AssaultSortiePrecheckService.ResolveBudgetDays(Math.Max(1, m.TransferDays(distance)), m.RationDays);
                                 troopCnt++;
                                 if (troopCnt >= leaderablePersonList.Count) break;
                             }
                         }
 
-                        return (this.Food >= crop * consumptionRate * 1.1);
+                        return this.Food >= crop + reserveFoodFloor;
                     }
             }
             return false;
@@ -16598,6 +17009,14 @@ namespace GameObjects
             if (this.RecentlyHit > 0)
             {
                 this.RecentlyHit--;
+            }
+            if (this.aiEmergencyFoodSignalDays > 0)
+            {
+                this.aiEmergencyFoodSignalDays--;
+                if (this.aiEmergencyFoodSignalDays <= 0)
+                {
+                    this.aiEmergencyFoodPeakDailyDemand = 0;
+                }
             }
         }
 

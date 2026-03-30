@@ -319,6 +319,20 @@ namespace GameObjects
             if (currentIndex >= dialogueQueue.Count || screen?.Plugins?.tupianwenziPlugin == null) return;
 
             var currentDialogue = dialogueQueue[currentIndex];
+
+            if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+            {
+                if (currentIndex < dialogueQueue.Count - 1)
+                {
+                    ShowDialogueRecursive(dialogueQueue, currentIndex + 1, imageName, screen);
+                }
+                else if (dialogueQueue.Count >= 2)
+                {
+                    screen.Plugins.GameRecordPlugin.AddBranch(dialogueQueue[0].speaker, "AppointAdvisor", dialogueQueue[0].speaker.Position);
+                    System.Diagnostics.Debug.WriteLine("[DialogueManager] Hidden-mode dialogue chain completed.");
+                }
+                return;
+            }
             
             // 🎯 修复：确保在设置新对话前，清空可能存在的队列
             if (currentIndex == 0)

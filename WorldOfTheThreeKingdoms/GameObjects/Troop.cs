@@ -362,6 +362,7 @@ namespace GameObjects
         
         // 🔥 性能优化：静态常量，避免重复分配
         private static readonly Point InvalidPosition = new Point(-1, -1);
+        private const int SmartSiegeCurrentPositionScoreBonus = 1000;
 
         // 提供属性访问以兼容旧代码
         private ReadOnlySpan<int> WeizhixulieSpan => _weizhixulieData;
@@ -2388,6 +2389,12 @@ namespace GameObjects
 
             bool isRanged = myAttackRange >= 2;
             int speed = this.Movability;
+            Point committedSiegeDestination = IsValidDestination(this.RealDestination) &&
+                                             this.RealDestination != this.Position
+                ? this.RealDestination
+                : InvalidPosition;
+            SmartSiegeHysteresisConfig smartSiegeHysteresis =
+                AITacticalConfigManager.Config.TacticalPositioning.SmartSiegeHysteresis;
 
             // 3. 评分并收集所有候选点
             // 🔥 性能优化：预分配容量，避免动态扩容
@@ -2505,7 +2512,8 @@ namespace GameObjects
                 if (distToTarget <= speed / 20) score += 10;
                 
                 // 🔥 关键修复：如果是当前位置，大幅提升评分（优先保持不动）
-                if (slot == this.Position) score += 1000;
+                if (slot == this.Position) score += SmartSiegeCurrentPositionScoreBonus;
+                if (slot == committedSiegeDestination) score += smartSiegeHysteresis.CommittedDestinationScoreBonus;
                 
                 if (score < -10) score = -10;
 
@@ -2535,11 +2543,62 @@ namespace GameObjects
             // 理由：虽然是 AI 决策阶段（非每帧），但仍属于游戏逻辑，应避免 LINQ
             // 上下文：AI 决策逻辑，性能优先
             (Point Slot, int Score) bestCandidate = candidates[0];
+            (Point Slot, int Score) committedCandidate = default;
+            bool hasCommittedCandidate = false;
+            if (candidates[0].Slot == committedSiegeDestination)
+            {
+                committedCandidate = candidates[0];
+                hasCommittedCandidate = true;
+            }
+
             for (int i = 1; i < candidates.Count; i++)
             {
+                if (candidates[i].Slot == committedSiegeDestination)
+                {
+                    committedCandidate = candidates[i];
+                    hasCommittedCandidate = true;
+                }
+
                 if (candidates[i].Score > bestCandidate.Score)
                 {
                     bestCandidate = candidates[i];
+                }
+            }
+
+            if (hasCommittedCandidate && bestCandidate.Slot != committedCandidate.Slot)
+            {
+                int thresholdPercent = smartSiegeHysteresis.ReassignThresholdPercent;
+                int minimumScoreGain = smartSiegeHysteresis.MinimumScoreGain;
+                int distanceToCommitted = Math.Max(
+                    Math.Abs(this.Position.X - committedCandidate.Slot.X),
+                    Math.Abs(this.Position.Y - committedCandidate.Slot.Y));
+                if (distanceToCommitted <= smartSiegeHysteresis.NearDestinationDistance)
+                {
+                    thresholdPercent += smartSiegeHysteresis.NearDestinationThresholdPercentBonus;
+                    minimumScoreGain += smartSiegeHysteresis.NearDestinationMinimumScoreGainBonus;
+                }
+
+                int relaxStacks = Math.Min(smartSiegeHysteresis.MaxStuckRelaxStacks, Math.Max(0, this.stuckedFor));
+                if (relaxStacks > 0)
+                {
+                    thresholdPercent = Math.Max(0, thresholdPercent - relaxStacks * smartSiegeHysteresis.StuckRelaxPerStackPercent);
+                    minimumScoreGain = Math.Max(0, minimumScoreGain - relaxStacks * smartSiegeHysteresis.StuckRelaxPerStackScore);
+                }
+
+                int committedReferenceScore = committedCandidate.Score - smartSiegeHysteresis.CommittedDestinationScoreBonus;
+                int requiredGain = Math.Max(
+                    minimumScoreGain,
+                    (Math.Max(0, committedReferenceScore) * thresholdPercent + 99) / 100);
+
+                if (bestCandidate.Score < committedReferenceScore + requiredGain)
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[SmartSiege] {this.DisplayName} hysteresis keeps committed position {committedCandidate.Slot}, " +
+                        $"committedScore={committedReferenceScore}, bestScore={bestCandidate.Score}, " +
+                        $"requiredGain={requiredGain}, thresholdPercent={thresholdPercent}, minimumScoreGain={minimumScoreGain}");
+#endif
+                    bestCandidate = committedCandidate;
                 }
             }
 
@@ -6489,6 +6548,11 @@ namespace GameObjects
             if (HasReachableDailyFoodSupply(requiredFoodCost))
             {
                 return;
+            }
+
+            if (this.StartingArchitecture != null && this.StartingArchitecture.BelongedFaction == this.BelongedFaction)
+            {
+                this.StartingArchitecture.NotifySupplyEmergency(requiredFoodCost);
             }
 
             bool shouldRetreat = EvaluateRetreatDecision(requiredFoodCost);
@@ -21173,11 +21237,11 @@ namespace GameObjects
             {
                 // 赋予200分的极高权重，意味着常规状态下断粮必退。
                 // 只有当 死战分 极高（如敌城即将告破 + 主将极度勇猛）时才能压倒此恐慌。
-                score += 200f;
+                score += AITacticalConfigManager.GetFoodStrategyConfig().RetreatOutOfFoodScoreBonus;
             }
             else if (isSupplyCutOff)
             {
-                score += 90f;
+                score += AITacticalConfigManager.GetFoodStrategyConfig().RetreatSupplyCutOffScoreBonus;
             }
 
             // B. 战损压力评估
@@ -23521,28 +23585,31 @@ namespace GameObjects
             bool hasEnoughTroops = (military.Quantity >= maxScale * 0.2f);
             
             int foodCostPerDay = GetConservativePlanningFoodCostPerDay(military);
+            int defensiveTroopFoodDays = Math.Max(0, AITacticalConfigManager.GetFoodStrategyConfig().DefensiveTroopFoodDays);
+            int defensiveStartCityFoodDays = Math.Max(0, AITacticalConfigManager.GetFoodStrategyConfig().DefensiveStartCityFoodDays);
             
             // 🔥 修复：如果 foodLimit < 0，说明会自动分配粮食，检查城市粮食
             bool hasEnoughFood;
             if (foodLimit < 0)
             {
                 // 自动分配模式：检查城市是否有足够粮食
-                hasEnoughFood = (startArch != null && startArch.Food >= foodCostPerDay * 3);
+                hasEnoughFood = (startArch != null && startArch.Food >= foodCostPerDay * defensiveTroopFoodDays);
             }
             else
             {
                 // 手动指定模式：检查指定的粮食
-                hasEnoughFood = (foodLimit >= foodCostPerDay * 3);
+                hasEnoughFood = (foodLimit >= foodCostPerDay * defensiveTroopFoodDays);
             }
             
             bool startArchHasFood = true;
             if (startArch != null)
-                startArchHasFood = (startArch.Food >= foodCostPerDay * 10);
+                startArchHasFood = (startArch.Food >= foodCostPerDay * defensiveStartCityFoodDays);
 
             bool canDefend = hasEnoughTroops && hasEnoughFood && startArchHasFood;
 
             if (!canDefend)
             {
+                System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapabilityStatic] {leader.Name} config defensiveTroopFoodDays={defensiveTroopFoodDays}, defensiveStartCityFoodDays={defensiveStartCityFoodDays}");
                 System.Diagnostics.Debug.WriteLine($"[CheckDefensiveCapabilityStatic] {leader.Name} 不满足防守条件: " +
                     $"兵力={hasEnoughTroops}({military.Quantity}/{maxScale * 0.2f}) " +
                     $"粮食={hasEnoughFood}({(foodLimit < 0 ? $"自动分配(城市:{startArch?.Food ?? 0})" : foodLimit.ToString())}/{foodCostPerDay * 3}) " +
@@ -23571,18 +23638,19 @@ namespace GameObjects
             bool hasEnoughMorale = (military.Morale >= dynamicMorale);
             
             int foodCostPerDay = GetConservativePlanningFoodCostPerDay(military);
+            int offensiveTroopFoodDays = Math.Max(0, AITacticalConfigManager.GetFoodStrategyConfig().OffensiveTroopFoodDays);
             
             // 🔥 修复：如果 foodLimit < 0，说明会自动分配粮食，检查城市粮食
             bool hasEnoughFood;
             if (foodLimit < 0)
             {
                 // 自动分配模式：检查城市是否有足够粮食
-                hasEnoughFood = (startArch != null && startArch.Food >= foodCostPerDay * 5);
+                hasEnoughFood = (startArch != null && startArch.Food >= foodCostPerDay * offensiveTroopFoodDays);
             }
             else
             {
                 // 手动指定模式：检查指定的粮食
-                hasEnoughFood = (foodLimit >= foodCostPerDay * 5);
+                hasEnoughFood = (foodLimit >= foodCostPerDay * offensiveTroopFoodDays);
             }
             
             // ★★★ 修复1：移除重复的出发城粮检查，hasEnoughFood已经包含了这个检查 ★★★
@@ -23590,6 +23658,7 @@ namespace GameObjects
 
             if (!canOffense)
             {
+                System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapabilityStatic] {leader.Name} config offensiveTroopFoodDays={offensiveTroopFoodDays}");
                 System.Diagnostics.Debug.WriteLine($"[CheckOffensiveCapabilityStatic] {leader.Name} 不满足进攻条件: " +
                     $"兵力={hasEnoughTroops}({military.Quantity}/{finalThreshold}) " +
                     $"士气={hasEnoughMorale}({military.Morale}/{dynamicMorale}) " +
@@ -23960,6 +24029,11 @@ namespace GameObjects
 
             nextPoint = nextPointOpt.Value;
             nextStepCost = this.GetMoveCost(nextPoint);
+            Troop blocker = Session.Current.Scenario.GetTroopByPosition(nextPoint);
+            if (blocker != null && blocker != this && blocker.IsFriendly(this.BelongedFaction))
+            {
+                return true;
+            }
             return this.MovabilityLeft >= nextStepCost;
         }
 
@@ -24314,6 +24388,33 @@ namespace GameObjects
                 System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 步骤{safetyCounter}: 当前位置={this.Position}, 下一步={nextPoint}");
                 #endif
 
+                Troop nextPointBlocker = Session.Current.Scenario.GetTroopByPosition(nextPoint);
+                if (nextPointBlocker != null && nextPointBlocker != this && nextPointBlocker.IsFriendly(this.BelongedFaction))
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 下一步 {nextPoint} 被友军 {nextPointBlocker.DisplayName} 占据，优先尝试协同解卡");
+                    #endif
+
+                    if (!this.TryResolveAllyBlocking(nextPointBlocker, nextPoint))
+                    {
+                        break;
+                    }
+
+                    int delay = (IsVisibleInCamera() && !Session.GlobalVariables.IsSkippingTurn) ? animationDelayPerStep + 100 : 5;
+                    try { await Task.Delay(delay, cancellationToken); } catch (TaskCanceledException) { return movedAtLeastOnce; }
+
+                    if (this.Position == nextPoint)
+                    {
+                        movedAtLeastOnce = true;
+                        if (this._firstTierPath.Count > 0 && this._firstTierPath[0] == nextPoint)
+                        {
+                            this._firstTierPath.RemoveAt(0);
+                        }
+                    }
+
+                    continue;
+                }
+
                 // B. 计算消耗
                 int cost = this.GetMoveCost(nextPoint);
                 
@@ -24350,14 +24451,20 @@ namespace GameObjects
                         
                         if (resolved)
                         {
-                            // 如果解卡成功（通常意味着换位或推开），这算作一次操作
-                            // 扣除消耗并继续尝试下一步
-                            this.MovabilityLeft -= cost; 
-                            stepSuccess = true; 
-                            
-                            // 解卡动作比较大，建议多等一会儿
+                            // 解卡成功后，由当前位置决定是否已经真正完成位移。
+                            // - 换位：当前位置已经变成 nextPoint，本步视为成功
+                            // - 让路/推开：当前位置未变，下一轮重新尝试进入该格
                             int delay = (IsVisibleInCamera() && !Session.GlobalVariables.IsSkippingTurn) ? animationDelayPerStep + 100 : 5;
                             try { await Task.Delay(delay, cancellationToken); } catch (TaskCanceledException) { return movedAtLeastOnce; }
+
+                            if (this.Position == nextPoint)
+                            {
+                                stepSuccess = true;
+                            }
+                            else
+                            {
+                                continue;
+                            }
                         }
                     }
                 }

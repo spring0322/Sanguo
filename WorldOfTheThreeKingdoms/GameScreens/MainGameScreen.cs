@@ -5324,6 +5324,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 }
 
                 // 第一次对话：显示成功率判断
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowContinueQuestionDialog(analysis, sourceArchitecture);
+                    return;
+                }
+
                 string firstMessage = GetSimpleAdvisorDialogue(analysis.BestScore, analysis.TargetPerson.Name, false);
 
                 // 设置第一次对话的关闭回调 - 关闭后显示第二次对话
@@ -5384,6 +5390,35 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 string secondMessage = "是否继续？";
 
                 // 设置第二次对话的回调
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    this.Plugins.ConfirmationDialogPlugin.ClearFunctions();
+                    this.Plugins.ConfirmationDialogPlugin.SetPersonTextDialog(null);
+                    this.Plugins.ConfirmationDialogPlugin.AddYesFunction(new GameDelegates.VoidFunction(() =>
+                    {
+                        this.Plugins.tupianwenziPlugin.IsShowing = false;
+                        this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+
+                        if (analysis.BestCandidate != null)
+                        {
+                            ShowExecutorSelectionWithRecommendation(sourceArchitecture, analysis.BestCandidate);
+                        }
+                        else
+                        {
+                            ShowExecutorSelectionForConvince(sourceArchitecture);
+                        }
+                    }));
+                    this.Plugins.ConfirmationDialogPlugin.AddNoFunction(new GameDelegates.VoidFunction(() =>
+                    {
+                        this.Plugins.tupianwenziPlugin.IsShowing = false;
+                        this.Plugins.ConfirmationDialogPlugin.IsShowing = false;
+                        ResetConvinceOperationState();
+                    }));
+                    this.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
+                    this.Plugins.ConfirmationDialogPlugin.IsShowing = true;
+                    return;
+                }
+
                 this.Plugins.tupianwenziPlugin.SetConfirmationDialog(
                     this.Plugins.ConfirmationDialogPlugin,
                     new GameDelegates.VoidFunction(() =>
@@ -5839,6 +5874,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 if (speaker == null || this.Plugins?.tupianwenziPlugin == null)
                     return;
 
+
                 string message = $"{speaker.Name}：主公，此地并无可说服之人。";
 
                 this.Plugins.tupianwenziPlugin.SetGameObjectBranch(
@@ -5864,6 +5900,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 Person speaker = faction.Advisor ?? faction.Leader;
                 if (speaker == null || this.Plugins?.tupianwenziPlugin == null)
                     return;
+
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowNoTargetsPlayerChoiceDialog(faction);
+                    return;
+                }
 
                 string message = $"{speaker.Name}：主公，此地并无明显可说服之人。\n\n" +
                                $"不过，若主公坚持，臣也可安排人手尝试。\n\n" +
@@ -5921,6 +5963,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     ShowConvincePersonSelectionForEmptyTarget();
                 }));
                 
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    this.Plugins.ConfirmationDialogPlugin.SetPersonTextDialog(null);
+                }
+
                 this.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
                 this.Plugins.ConfirmationDialogPlugin.IsShowing = true;
             }
@@ -6275,6 +6322,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 if (this.Plugins?.tupianwenziPlugin == null)
                     return;
 
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowDissuasionPlayerChoiceDialog(target, analysis);
+                    return;
+                }
+
                 string dissuasionMessage = GenerateAdvisorDissuasion(advisor, target, analysis);
                 
                 // 设置对话框关闭后的回调 - 显示选择对话框
@@ -6360,6 +6413,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     ShowConvincePersonSelectionDirect(target);
                 }));
                 
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    this.Plugins.ConfirmationDialogPlugin.SetPersonTextDialog(null);
+                }
+
                 this.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
                 this.Plugins.ConfirmationDialogPlugin.IsShowing = true;
             }
@@ -6405,6 +6463,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 if (this.Plugins?.tupianwenziPlugin == null)
                     return;
+
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowPlayerChoiceDialog(target, analysis, true);
+                    return;
+                }
 
                 string supportMessage = GenerateAdvisorSupport(advisor, target, analysis);
                 
@@ -6459,6 +6523,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 if (this.Plugins?.tupianwenziPlugin == null)
                     return;
+
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowPlayerChoiceDialog(target, analysis, false);
+                    return;
+                }
 
                 string warningMessage = GenerateAdvisorWarning(advisor, target, analysis);
                 
@@ -6547,6 +6617,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         ShowConvincePersonSelectionDirect(target);
                 }));
                 
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    this.Plugins.ConfirmationDialogPlugin.SetPersonTextDialog(null);
+                }
+
                 this.Plugins.ConfirmationDialogPlugin.SetPosition(ShowPosition.Center);
                 this.Plugins.ConfirmationDialogPlugin.IsShowing = true;
             }
@@ -9342,6 +9417,12 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 }
 
                 // E. 设置对话框关闭后的回调函数 - 先设置回调
+                if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+                {
+                    ShowStrategyPersonSelection(strategy, null);
+                    return;
+                }
+
                 this.Plugins.tupianwenziPlugin.SetCloseFunction(new GameDelegates.VoidFunction(() =>
                 {
                     System.Diagnostics.Debug.WriteLine("[TriggerAdvisorAdvice] 对话框关闭回调执行");

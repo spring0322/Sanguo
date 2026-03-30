@@ -38,9 +38,34 @@ public static class AITacticalConfigManager
     
     private class TacticalConfigManager : ConfigManagerBase<AITacticalConfig>
     {
+        private AITacticalConfig _validatedConfig;
+
         protected override string ConfigFileName => "AITacticalConfig.json";
         
         protected override AITacticalConfig CreateDefaultConfig() => CreateDefaultTacticalConfig();
+
+        public new void Update()
+        {
+            base.Update();
+            ValidateLoadedConfig();
+        }
+
+        public new void ReloadConfig()
+        {
+            base.ReloadConfig();
+            ValidateLoadedConfig();
+        }
+
+        private void ValidateLoadedConfig()
+        {
+            if (ReferenceEquals(_validatedConfig, Config))
+            {
+                return;
+            }
+
+            ValidateConfig(Config);
+            _validatedConfig = Config;
+        }
 
         /// <summary>
         /// 鍒濆鍖栭厤缃鐞嗗櫒锛堟父鎴忓惎鍔ㄦ椂璋冪敤锛?
@@ -51,7 +76,7 @@ public static class AITacticalConfigManager
             base.Initialize();
             
             // 馃敟 鍏抽敭锛氬垵濮嬪寲鍚庣珛鍗抽獙璇侀厤缃畬鏁存€?
-            ValidateConfig(Config);
+            ValidateLoadedConfig();
         }
 
         /// <summary>
@@ -77,6 +102,25 @@ public static class AITacticalConfigManager
                 throw new InvalidOperationException(
                     "閰嶇疆鎹熷潖锛歍acticalPositioning.Scores 涓?null锛屾鏌?AITacticalConfig.json");
 
+            if (config.TacticalPositioning.SmartSiegeHysteresis == null)
+                throw new InvalidOperationException(
+                    "閰嶇疆鎹熷潖锛歍acticalPositioning.SmartSiegeHysteresis 涓?null锛屾鏌?AITacticalConfig.json");
+
+            var smartSiegeHysteresis = config.TacticalPositioning.SmartSiegeHysteresis;
+            if (smartSiegeHysteresis.CommittedDestinationScoreBonus < 0 ||
+                smartSiegeHysteresis.ReassignThresholdPercent < 0 ||
+                smartSiegeHysteresis.MinimumScoreGain < 0 ||
+                smartSiegeHysteresis.NearDestinationDistance < 0 ||
+                smartSiegeHysteresis.NearDestinationThresholdPercentBonus < 0 ||
+                smartSiegeHysteresis.NearDestinationMinimumScoreGainBonus < 0 ||
+                smartSiegeHysteresis.StuckRelaxPerStackPercent < 0 ||
+                smartSiegeHysteresis.StuckRelaxPerStackScore < 0 ||
+                smartSiegeHysteresis.MaxStuckRelaxStacks < 0)
+            {
+                throw new InvalidOperationException(
+                    "閰嶇疆鎹熷潖锛歍acticalPositioning.SmartSiegeHysteresis 瀛樺湪璐熸暟閰嶇疆锛屾鏌?AITacticalConfig.json");
+            }
+
             // 楠岃瘉鎴樼暐鎬佸娍閰嶇疆鐨勫畬鏁存€?
             string[] postures = ["Attack", "Defense", "Garrison"];
             foreach (var posture in postures)
@@ -89,6 +133,11 @@ public static class AITacticalConfigManager
                 if (postureConfig.ChokePointBonus == null)
                     throw new InvalidOperationException(
                         $"閰嶇疆鎹熷潖锛歍acticalPositioning.StrategicPosture.{posture}.ChokePointBonus 涓?null");
+            }
+
+            if (config.FoodStrategy != null)
+            {
+                ValidateFoodStrategyConfig(config.FoodStrategy);
             }
         }
     }
@@ -103,6 +152,19 @@ public static class AITacticalConfigManager
             {
                 BoundingBoxExpansion = 3,
                 DistancePenaltyWeight = 0.1f,
+                SmartSiegeHysteresis = new SmartSiegeHysteresisConfig
+                {
+                    Description = "SmartSiege hysteresis tuning",
+                    CommittedDestinationScoreBonus = 180,
+                    ReassignThresholdPercent = 20,
+                    MinimumScoreGain = 30,
+                    NearDestinationDistance = 2,
+                    NearDestinationThresholdPercentBonus = 10,
+                    NearDestinationMinimumScoreGainBonus = 15,
+                    StuckRelaxPerStackPercent = 5,
+                    StuckRelaxPerStackScore = 5,
+                    MaxStuckRelaxStacks = 3
+                },
                 ActionPriority = new()
                 {
                     ["Support"] = 1,
@@ -454,8 +516,99 @@ public static class AITacticalConfigManager
                     ["Support"] = new RoleThresholdConfig { MinScore = 50f },
                     ["Mage"] = new RoleThresholdConfig { MinScore = 60f }
                 }
-            }
+            },
+            FoodStrategy = CreateDefaultFoodStrategyConfig()
         };
+    }
+
+    private static FoodStrategyConfig CreateDefaultFoodStrategyConfig()
+    {
+        return new FoodStrategyConfig
+        {
+            Description = "AI food strategy tuning",
+            EmergencySignalDays = 5,
+            EmergencyReserveDaysRear = 3,
+            EmergencyReserveDaysFrontLine = 5,
+            EmergencyReserveDaysHot = 7,
+            EmergencyFundCeilingReserveRatio = 0.2f,
+            EmergencyEnoughFundReserveRatio = 0.5f,
+            EmergencySpendRatioNormal = 0.65f,
+            EmergencySpendRatioHot = 0.8f,
+            PreWarReserveDaysFrontLine = 10,
+            PreWarReserveDaysHot = 14,
+            PreWarReserveDaysActiveOffense = 20,
+            PreWarReserveDaysPlannedOffense = 24,
+            PreWarMaxFoodReserveRatio = 0.9f,
+            PreWarFundCeilingReserveRatio = 0.5f,
+            PreWarEnoughFundReserveRatio = 1.0f,
+            PreWarSpendRatioNormal = 0.4f,
+            PreWarSpendRatioOffense = 0.55f,
+            OffensiveBudgetDistanceMultiplier = 1.5f,
+            OffensiveBudgetMinDays = 6,
+            OffensiveBudgetFallbackDays = 15,
+            SortieReserveDays = 12,
+            SortieStorageReserveRatio = 0.1f,
+            DefensiveTroopFoodDays = 3,
+            DefensiveStartCityFoodDays = 10,
+            OffensiveTroopFoodDays = 5,
+            RetreatOutOfFoodScoreBonus = 200f,
+            RetreatSupplyCutOffScoreBonus = 90f
+        };
+    }
+
+    private static void ValidateFoodStrategyConfig(FoodStrategyConfig config)
+    {
+        ValidatePositiveInt(config.EmergencySignalDays, "FoodStrategy.EmergencySignalDays");
+        ValidatePositiveInt(config.EmergencyReserveDaysRear, "FoodStrategy.EmergencyReserveDaysRear");
+        ValidatePositiveInt(config.EmergencyReserveDaysFrontLine, "FoodStrategy.EmergencyReserveDaysFrontLine");
+        ValidatePositiveInt(config.EmergencyReserveDaysHot, "FoodStrategy.EmergencyReserveDaysHot");
+        ValidatePositiveRatio(config.EmergencyFundCeilingReserveRatio, "FoodStrategy.EmergencyFundCeilingReserveRatio");
+        ValidatePositiveRatio(config.EmergencyEnoughFundReserveRatio, "FoodStrategy.EmergencyEnoughFundReserveRatio");
+        ValidatePositiveRatio(config.EmergencySpendRatioNormal, "FoodStrategy.EmergencySpendRatioNormal");
+        ValidatePositiveRatio(config.EmergencySpendRatioHot, "FoodStrategy.EmergencySpendRatioHot");
+        ValidatePositiveInt(config.PreWarReserveDaysFrontLine, "FoodStrategy.PreWarReserveDaysFrontLine");
+        ValidatePositiveInt(config.PreWarReserveDaysHot, "FoodStrategy.PreWarReserveDaysHot");
+        ValidatePositiveInt(config.PreWarReserveDaysActiveOffense, "FoodStrategy.PreWarReserveDaysActiveOffense");
+        ValidatePositiveInt(config.PreWarReserveDaysPlannedOffense, "FoodStrategy.PreWarReserveDaysPlannedOffense");
+        ValidatePositiveRatio(config.PreWarMaxFoodReserveRatio, "FoodStrategy.PreWarMaxFoodReserveRatio");
+        ValidatePositiveRatio(config.PreWarFundCeilingReserveRatio, "FoodStrategy.PreWarFundCeilingReserveRatio");
+        ValidatePositiveRatio(config.PreWarEnoughFundReserveRatio, "FoodStrategy.PreWarEnoughFundReserveRatio");
+        ValidatePositiveRatio(config.PreWarSpendRatioNormal, "FoodStrategy.PreWarSpendRatioNormal");
+        ValidatePositiveRatio(config.PreWarSpendRatioOffense, "FoodStrategy.PreWarSpendRatioOffense");
+        ValidatePositiveFloat(config.OffensiveBudgetDistanceMultiplier, "FoodStrategy.OffensiveBudgetDistanceMultiplier");
+        ValidatePositiveInt(config.OffensiveBudgetMinDays, "FoodStrategy.OffensiveBudgetMinDays");
+        ValidatePositiveInt(config.OffensiveBudgetFallbackDays, "FoodStrategy.OffensiveBudgetFallbackDays");
+        ValidatePositiveInt(config.SortieReserveDays, "FoodStrategy.SortieReserveDays");
+        ValidatePositiveRatio(config.SortieStorageReserveRatio, "FoodStrategy.SortieStorageReserveRatio");
+        ValidatePositiveInt(config.DefensiveTroopFoodDays, "FoodStrategy.DefensiveTroopFoodDays");
+        ValidatePositiveInt(config.DefensiveStartCityFoodDays, "FoodStrategy.DefensiveStartCityFoodDays");
+        ValidatePositiveInt(config.OffensiveTroopFoodDays, "FoodStrategy.OffensiveTroopFoodDays");
+        ValidatePositiveFloat(config.RetreatOutOfFoodScoreBonus, "FoodStrategy.RetreatOutOfFoodScoreBonus");
+        ValidatePositiveFloat(config.RetreatSupplyCutOffScoreBonus, "FoodStrategy.RetreatSupplyCutOffScoreBonus");
+    }
+
+    private static void ValidatePositiveInt(int value, string path)
+    {
+        if (value <= 0)
+        {
+            throw new InvalidOperationException($"Data corrupted: {path} must be > 0. Check FoodStrategy in AITacticalConfig.json.");
+        }
+    }
+
+    private static void ValidatePositiveFloat(float value, string path)
+    {
+        if (!(value > 0f) || float.IsNaN(value) || float.IsInfinity(value))
+        {
+            throw new InvalidOperationException($"Data corrupted: {path} must be a finite value > 0. Check FoodStrategy in AITacticalConfig.json.");
+        }
+    }
+
+    private static void ValidatePositiveRatio(float value, string path)
+    {
+        if (!(value > 0f && value <= 1f) || float.IsNaN(value) || float.IsInfinity(value))
+        {
+            throw new InvalidOperationException($"Data corrupted: {path} must be in range (0, 1]. Check FoodStrategy in AITacticalConfig.json.");
+        }
     }
 
 
@@ -507,6 +660,19 @@ public static class AITacticalConfigManager
     /// <summary>
     /// 妫€鏌ュ叺绉嶆槸鍚﹂渶瑕?ZOC 鍘嬪埗
     /// </summary>
+    public static FoodStrategyConfig GetFoodStrategyConfig()
+    {
+        System.Diagnostics.Debug.Assert(Config != null,
+            "[GetFoodStrategyConfig] Config 涓?null锛屾鏌ラ厤缃姞杞介€昏緫");
+
+        if (Config.FoodStrategy == null)
+        {
+            Config.FoodStrategy = CreateDefaultFoodStrategyConfig();
+        }
+
+        return Config.FoodStrategy;
+    }
+
     public static bool RequiresZocSuppression(int troopKindID)
     {
         // ANTI-BAND-AID锛氶厤缃簲璇ュ湪鍒濆鍖栨椂鍔犺浇
@@ -767,6 +933,7 @@ public class AITacticalConfig
     public SkillScoringConfig SkillScoring { get; set; }
     public StuntScoringConfig StuntScoring { get; set; }
     public LegionFormationConfig LegionFormation { get; set; }
+    public FoodStrategyConfig FoodStrategy { get; set; }
 }
 
 public class TacticalPositioningConfig
@@ -774,6 +941,7 @@ public class TacticalPositioningConfig
     public string Description { get; set; }
     public int BoundingBoxExpansion { get; set; }
     public float DistancePenaltyWeight { get; set; }
+    public SmartSiegeHysteresisConfig SmartSiegeHysteresis { get; set; }
     public PostureEvaluationConfig PostureEvaluation { get; set; }
     public Dictionary<string, int> ActionPriority { get; set; }
     public TargetSelectionConfig TargetSelection { get; set; }
@@ -781,6 +949,20 @@ public class TacticalPositioningConfig
     public Dictionary<string, StrategicPostureConfig> StrategicPosture { get; set; }
     public Dictionary<string, RoleScoreConfig> Scores { get; set; }
     public SpecialTroopKindsConfig SpecialTroopKinds { get; set; }
+}
+
+public class SmartSiegeHysteresisConfig
+{
+    public string Description { get; set; }
+    public int CommittedDestinationScoreBonus { get; set; }
+    public int ReassignThresholdPercent { get; set; }
+    public int MinimumScoreGain { get; set; }
+    public int NearDestinationDistance { get; set; }
+    public int NearDestinationThresholdPercentBonus { get; set; }
+    public int NearDestinationMinimumScoreGainBonus { get; set; }
+    public int StuckRelaxPerStackPercent { get; set; }
+    public int StuckRelaxPerStackScore { get; set; }
+    public int MaxStuckRelaxStacks { get; set; }
 }
 
 public class PostureEvaluationConfig
@@ -857,6 +1039,38 @@ public class RoleThresholdConfig
 {
     public float MinScore { get; set; }
     public string Description { get; set; }
+}
+
+public class FoodStrategyConfig
+{
+    public string Description { get; set; }
+    public int EmergencySignalDays { get; set; }
+    public int EmergencyReserveDaysRear { get; set; }
+    public int EmergencyReserveDaysFrontLine { get; set; }
+    public int EmergencyReserveDaysHot { get; set; }
+    public float EmergencyFundCeilingReserveRatio { get; set; }
+    public float EmergencyEnoughFundReserveRatio { get; set; }
+    public float EmergencySpendRatioNormal { get; set; }
+    public float EmergencySpendRatioHot { get; set; }
+    public int PreWarReserveDaysFrontLine { get; set; }
+    public int PreWarReserveDaysHot { get; set; }
+    public int PreWarReserveDaysActiveOffense { get; set; }
+    public int PreWarReserveDaysPlannedOffense { get; set; }
+    public float PreWarMaxFoodReserveRatio { get; set; }
+    public float PreWarFundCeilingReserveRatio { get; set; }
+    public float PreWarEnoughFundReserveRatio { get; set; }
+    public float PreWarSpendRatioNormal { get; set; }
+    public float PreWarSpendRatioOffense { get; set; }
+    public float OffensiveBudgetDistanceMultiplier { get; set; }
+    public int OffensiveBudgetMinDays { get; set; }
+    public int OffensiveBudgetFallbackDays { get; set; }
+    public int SortieReserveDays { get; set; }
+    public float SortieStorageReserveRatio { get; set; }
+    public int DefensiveTroopFoodDays { get; set; }
+    public int DefensiveStartCityFoodDays { get; set; }
+    public int OffensiveTroopFoodDays { get; set; }
+    public float RetreatOutOfFoodScoreBonus { get; set; }
+    public float RetreatSupplyCutOffScoreBonus { get; set; }
 }
 
 /// <summary>

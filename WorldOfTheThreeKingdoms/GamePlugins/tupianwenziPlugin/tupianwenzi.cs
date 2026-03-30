@@ -199,6 +199,34 @@ namespace tupianwenziPlugin
             _cachedTextPosition = Vector2.Zero;
         }
 
+        internal bool CanDiscardDeferredDialogsWhenHidden()
+        {
+            if (this.isShowing || this.CloseFunction != null || this.HasConfirmationDialog || this.iConfirmationDialog != null)
+            {
+                return false;
+            }
+
+            return !this.DisplayQueue.Any(item =>
+                item.iConfirmationDialog != null ||
+                item.YesFunction != null ||
+                item.NoFunction != null);
+        }
+
+        internal void ClearDeferredDialogs()
+        {
+            this.DisplayQueue.Clear();
+            this.shijiantupianduilie.Clear();
+            this.juxingduilie.Clear();
+            this.shijianshengyinduilie.Clear();
+            this.TryToShowString = "";
+            this.shijiantupian = null;
+            this.shijianshengyin = null;
+            this.shijiantupianjuxing = Rectangle.Empty;
+            this.BuildingRichText.Clear();
+            this.RichText.Clear();
+            ClearAllCache();
+        }
+
         internal void Draw()
         {
             // 🔧 修复：添加人物有效性检查

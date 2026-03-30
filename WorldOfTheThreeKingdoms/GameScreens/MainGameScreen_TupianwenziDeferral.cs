@@ -17,6 +17,19 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 return;
             }
 
+            if (Setting.Current.GlobalVariables.DialogShowTime <= 0)
+            {
+                if (plugin.tupianwenzi.DisplayQueue.Count > 0 &&
+                    plugin.tupianwenzi.CanDiscardDeferredDialogsWhenHidden())
+                {
+#if DEBUG
+                    Debug.WriteLine($"[TupianwenziDeferral] Discarding hidden deferred dialogs: count={plugin.tupianwenzi.DisplayQueue.Count}");
+#endif
+                    plugin.tupianwenzi.ClearDeferredDialogs();
+                }
+                return;
+            }
+
             if (plugin.IsShowing || plugin.tupianwenzi.DisplayQueue.Count <= 0)
             {
                 return;

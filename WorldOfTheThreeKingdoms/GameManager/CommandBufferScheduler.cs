@@ -205,6 +205,39 @@ public class CommandBufferScheduler
             return false;
         }
     }
+
+    public void ResetForIdleTurn(int issuedTick)
+    {
+        _commandBuffer.Clear();
+        _queueHead = 0;
+        _queueTail = 0;
+        _queueCount = 0;
+        _currentTroop = null;
+        _safetyCounter = 0;
+        _queueEndedPassCompleted = false;
+        _buildIssuedTick = issuedTick;
+        _executionCursor = 0;
+        _executionFrameModeActive = false;
+        HasValidBuffer = false;
+        _executionFrame.Clear();
+        _executionProposals.Clear();
+        _executionBatch.Clear();
+        _arbitrationAccepted.Clear();
+        _arbitrationRejected.Clear();
+        _activeExecutionAuditByTroop.Clear();
+        _normalizedSiegeTargetByLegionId.Clear();
+        _frameAuditRecords.Clear();
+
+        ProcessedMoveCommands = 0;
+        ProcessedEnterCommands = 0;
+        ProcessedAttackTroopCommands = 0;
+        ProcessedAttackArchCommands = 0;
+        ProcessedStratagemCommands = 0;
+        ProcessedDirectAttacks = 0;
+        ProcessedCombatMethodAttacks = 0;
+        ProcessedStratagemAttacks = 0;
+        ArbitrationRejectedCommands = 0;
+    }
     
     public bool UpdateFrame(GameTime gameTime, GameScenario scenario)
     {

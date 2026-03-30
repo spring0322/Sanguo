@@ -13,7 +13,8 @@ internal enum AssaultPrecheckFailureReason : byte
     NoLeader = 3,
     NoEligibleMilitary = 4,
     LowMorale = 5,
-    LowFood = 6
+    LowFood = 6,
+    EmergencyFoodPressure = 7
 }
 
 internal readonly record struct AssaultSortiePrecheckResult(
@@ -52,8 +53,6 @@ internal static class AssaultSortiePrecheckService
 
     private const int MinLeaderCommand = 40;
     private const float MinEligibleScales = 3f;
-    private const int MinFoodReserveDays = 12;
-    private const int MinBudgetDays = 6;
     private const int MaxTrackedTroopSlots = 3;
 
     public static Architecture ResolveSourceArchitecture(Legion legion)
@@ -178,11 +177,20 @@ internal static class AssaultSortiePrecheckService
 
         int normalizedLockedFood = Math.Max(0, lockedFood);
         int reserveFoodFloor = ResolveReserveFoodFloor(source);
+        int emergencyReserveFoodFloor = source.GetEmergencyFoodReserveFloor();
+        if (emergencyReserveFoodFloor > reserveFoodFloor)
+        {
+            reserveFoodFloor = emergencyReserveFoodFloor;
+        }
         int remainingFoodAfterLock = source.Food - normalizedLockedFood - requiredFoodLock;
         if (remainingFoodAfterLock < reserveFoodFloor)
         {
+            AssaultPrecheckFailureReason failureReason =
+                emergencyReserveFoodFloor > 0 && reserveFoodFloor == emergencyReserveFoodFloor
+                ? AssaultPrecheckFailureReason.EmergencyFoodPressure
+                : AssaultPrecheckFailureReason.LowFood;
             return CreateFailure(
-                AssaultPrecheckFailureReason.LowFood,
+                failureReason,
                 source.ID,
                 target.ID,
                 bestMobilizableMorale,
@@ -283,12 +291,19 @@ internal static class AssaultSortiePrecheckService
         return Math.Min(desiredSlots, MaxTrackedTroopSlots);
     }
 
-    private static int ResolveBudgetDays(int marchDays, int rationDays)
+    internal static int ResolveBudgetDays(int marchDays, int rationDays)
     {
-        int budgetDays = (int)Math.Ceiling(marchDays * 1.5);
-        if (budgetDays < MinBudgetDays)
+        FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+        float budgetDistanceMultiplier = foodConfig.OffensiveBudgetDistanceMultiplier > 0f
+            ? foodConfig.OffensiveBudgetDistanceMultiplier
+            : 1.5f;
+        int minBudgetDays = foodConfig.OffensiveBudgetMinDays > 0
+            ? foodConfig.OffensiveBudgetMinDays
+            : 6;
+        int budgetDays = (int)Math.Ceiling(marchDays * budgetDistanceMultiplier);
+        if (budgetDays < minBudgetDays)
         {
-            budgetDays = MinBudgetDays;
+            budgetDays = minBudgetDays;
         }
 
         if (rationDays > 0 && budgetDays > rationDays)
@@ -304,10 +319,17 @@ internal static class AssaultSortiePrecheckService
         return budgetDays;
     }
 
-    private static int ResolveReserveFoodFloor(Architecture source)
+    internal static int ResolveReserveFoodFloor(Architecture source)
     {
-        int dailyReserveFood = source.FoodCostPerDayOfAllMilitaries * MinFoodReserveDays;
-        int storageReserveFood = source.FoodCeiling / 10;
+        FoodStrategyConfig foodConfig = AITacticalConfigManager.GetFoodStrategyConfig();
+        int reserveDays = foodConfig.SortieReserveDays > 0
+            ? foodConfig.SortieReserveDays
+            : 12;
+        float storageReserveRatio = foodConfig.SortieStorageReserveRatio > 0f
+            ? Math.Min(foodConfig.SortieStorageReserveRatio, 1f)
+            : 0.1f;
+        int dailyReserveFood = source.FoodCostPerDayOfAllMilitaries * reserveDays;
+        int storageReserveFood = (int)(source.FoodCeiling * storageReserveRatio);
         return Math.Max(dailyReserveFood, storageReserveFood);
     }
 

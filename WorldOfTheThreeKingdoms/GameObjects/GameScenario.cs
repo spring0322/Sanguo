@@ -2315,7 +2315,10 @@ namespace GameObjects
                     troop.AI();
                 }
             }
-            this.Troops.BuildQueue();
+            bool hasAnyTroops = this.Troops != null && this.Troops.Count > 0;
+            if (hasAnyTroops)
+            {
+                this.Troops.BuildQueue();
             
             // 🔥 2026-03-23 新增：构建 CommandBuffer（在 BuildQueue 之后）
             // 原因：BuildQueue 包含回合初始化副作用（InitializeInQueue、标志复位等）
@@ -2337,6 +2340,12 @@ namespace GameObjects
             }
             
             // 🔥 AOT修复：安全的类型转换
+            }
+            else if (Session.Current?.CommandBufferScheduler != null)
+            {
+                Session.Current.CommandBufferScheduler.ResetForIdleTurn(this.DaySince);
+            }
+
             foreach (GameObject obj in this.Architectures.GetList())
             {
                 Architecture architecture = (obj is Architecture ? (Architecture)obj : null);

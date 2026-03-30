@@ -51,6 +51,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 (enableAIAuthorityPhase1 || Session.GlobalVariables.EnableCommandBufferScheduler) &&
                 Session.Current?.CommandBufferScheduler != null &&
                 Session.Current.CommandBufferScheduler.HasValidBuffer;
+
+            if (Session.Current?.Scenario?.Troops != null && Session.Current.Scenario.Troops.Count == 0)
+            {
+                return false;
+            }
             
             if (useCommandBufferScheduler)
             {

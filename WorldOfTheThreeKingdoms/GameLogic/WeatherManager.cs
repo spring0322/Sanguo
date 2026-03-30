@@ -34,6 +34,48 @@ public sealed class WeatherManager(GameEnvironmentConfig config, int mapWidth, i
     private readonly int _gridWidth = (mapWidth + GridSize - 1) / GridSize;
     private readonly int _gridHeight = (mapHeight + GridSize - 1) / GridSize;
 
+    private struct FogDispersalStats
+    {
+        public int Count;
+        public int MinX;
+        public int MinY;
+        public int MaxX;
+        public int MaxY;
+
+        public void Record(int gridX, int gridY)
+        {
+            if (Count == 0)
+            {
+                Count = 1;
+                MinX = gridX;
+                MinY = gridY;
+                MaxX = gridX;
+                MaxY = gridY;
+                return;
+            }
+
+            Count++;
+
+            if (gridX < MinX)
+            {
+                MinX = gridX;
+            }
+            else if (gridX > MaxX)
+            {
+                MaxX = gridX;
+            }
+
+            if (gridY < MinY)
+            {
+                MinY = gridY;
+            }
+            else if (gridY > MaxY)
+            {
+                MaxY = gridY;
+            }
+        }
+    }
+
     /// <summary>
     /// 初始化天气网格（全部设为晴天）
     /// </summary>
@@ -145,6 +187,8 @@ public sealed class WeatherManager(GameEnvironmentConfig config, int mapWidth, i
     /// </summary>
     public void UpdateWeather(SeasonType currentSeason)
     {
+        var fogDispersalStats = new FogDispersalStats();
+
         // TODO: 这里需要根据州域系统来更新天气
         // 当前实现：简单地为每个网格随机生成天气
         
@@ -161,8 +205,14 @@ public sealed class WeatherManager(GameEnvironmentConfig config, int mapWidth, i
                 _weatherGrid[x, y] = CalculateNextWeather(current, zone, currentSeason);
                 
                 // 🔥 同步更新风况（日期：2026-03-10）
-                UpdateWindForGrid(x, y, currentSeason);
+                UpdateWindForGrid(x, y, currentSeason, ref fogDispersalStats);
             }
+        }
+
+        if (fogDispersalStats.Count > 0)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[\u6c14\u8c61\u7cfb\u7edf] \u672c\u8f6e\u5171\u6709 {fogDispersalStats.Count} \u4e2a\u5929\u6c14\u7f51\u683c\u56e0\u72c2\u98ce\u5439\u6563\u5927\u96fe\uff0c\u5f71\u54cd\u8303\u56f4 X[{fogDispersalStats.MinX}, {fogDispersalStats.MaxX}] Y[{fogDispersalStats.MinY}, {fogDispersalStats.MaxY}]\u3002");
         }
     }
 
@@ -170,7 +220,7 @@ public sealed class WeatherManager(GameEnvironmentConfig config, int mapWidth, i
     /// 更新指定网格的风况
     /// 日期：2026-03-10
     /// </summary>
-    private void UpdateWindForGrid(int gridX, int gridY, SeasonType season)
+    private void UpdateWindForGrid(int gridX, int gridY, SeasonType season, ref FogDispersalStats fogDispersalStats)
     {
         // 1. 风向惯性检查（类似于天气惯性）
         // 🔥 配置驱动：从配置读取风向惯性概率
@@ -273,11 +323,10 @@ public sealed class WeatherManager(GameEnvironmentConfig config, int mapWidth, i
             _weatherGrid[gridX, gridY] = _rng.Next(100) < rules.FogToSunnyChance 
                 ? WeatherType.Sunny 
                 : WeatherType.Cloudy;
-            
-            System.Diagnostics.Debug.WriteLine(
-                $"[气象系统] 网格 ({gridX}, {gridY}) 狂风大作，大雾被彻底吹散！");
+
+            fogDispersalStats.Record(gridX, gridY);
         }
-        
+
         // 规则 B：暴雨/大雪压制微风（配置驱动）
         // 🔥 注意：这里使用的是规则 A 之前的 weather 值
         // 如果规则 A 将雾天改为晴天，这里不会触发（这是正确的行为）
