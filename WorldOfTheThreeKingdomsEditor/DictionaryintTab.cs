@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace WorldOfTheThreeKingdomsEditor
 {
@@ -75,7 +76,7 @@ namespace WorldOfTheThreeKingdomsEditor
                 }
                 row["武将ID"] = i.Key;
                 row["武将名称"] = p1 != null ? p1.Name : "";
-                row["武将IDs，不同武将间用空格格开"] = GameGlobal.StaticMethods.SaveToString(i.Value);
+                row["武将IDs，不同武将间用空格格开"] = StaticMethods.SaveToString(i.Value);
                 row["对方武将名称"] = sname;
                 dt.Rows.Add(row);
             }
@@ -109,7 +110,7 @@ namespace WorldOfTheThreeKingdomsEditor
                 if (!settingUp && !MainWindow.pasting)
                 {
                     int key = int.Parse(e.Row["武将ID"].ToString());
-                    GameGlobal.StaticMethods.LoadFromString(out int[] value, e.Row["武将IDs，不同武将间用空格格开"].ToString());
+                    StaticMethods.LoadFromString(out int[] value, e.Row["武将IDs，不同武将间用空格格开"].ToString());
                     if (dict.ContainsKey(key))
                     {
                         dict[key] = value;
@@ -141,7 +142,7 @@ namespace WorldOfTheThreeKingdomsEditor
                     continue;
                 }
                 int key = (int)(item["武将ID"]);
-                GameGlobal.StaticMethods.LoadFromString(out int[] value, item["武将IDs，不同武将间用空格格开"].ToString());
+                StaticMethods.LoadFromString(out int[] value, item["武将IDs，不同武将间用空格格开"].ToString());
                 if (dict.ContainsKey(key))
                 {
                     dict[key] = value;
@@ -448,7 +449,7 @@ namespace WorldOfTheThreeKingdomsEditor
                 void ButtonSave_Click(object sender, RoutedEventArgs e)
                 {
                     Dictionary<int, int[]> dict = new Dictionary<int, int[]>();
-                    GameGlobal.StaticMethods.LoadFromString(out int[] value, p2IDs);
+                    StaticMethods.LoadFromString(out int[] value, p2IDs);
                     if (datagrid0.Name == "dgBrotherIds")
                     {
                         dict = scen.BrotherIds;

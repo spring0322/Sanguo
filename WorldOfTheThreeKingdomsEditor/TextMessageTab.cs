@@ -11,6 +11,7 @@ using System.Windows;
 using System.ComponentModel;
 using System.Windows.Media;
 using GameObjects.PersonDetail;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace WorldOfTheThreeKingdomsEditor
 {
@@ -78,8 +79,8 @@ namespace WorldOfTheThreeKingdomsEditor
             if (!MainWindow.pasting && !settingUp)
             {
                 TextMessageKind kind = (TextMessageKind)(int)e.Row["语言类型ID"];
-                List<string> list = new List<string>();
-                GameGlobal.StaticMethods.LoadFromString(list, e.Row["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
+                List<string> list = [];
+                StaticMethods.LoadFromString(list, e.Row["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
                 scen.GameCommonData.AllTextMessages.AddTextMessages((int)e.Row["武将ID"], kind, list);
             }
         }
@@ -104,7 +105,7 @@ namespace WorldOfTheThreeKingdomsEditor
                     row["武将姓名"] ="未载入剧本";
                 }
                 row["语言类型ID"] = (int)a.Key.Value;
-                row["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"] = GameGlobal.StaticMethods.SaveToString(a.Value);
+                row["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"] = StaticMethods.SaveToString(a.Value);
                 dt.Rows.Add(row);
             }
             settingUp = false;
@@ -139,8 +140,8 @@ namespace WorldOfTheThreeKingdomsEditor
                     foreach (DataRow dr in dt.Rows)
                     {
                         TextMessageKind kind = (TextMessageKind)(int)dr["语言类型ID"];
-                        List<string> list = new List<string>();
-                        GameGlobal.StaticMethods.LoadFromString(list, dr["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
+                        List<string> list = [];
+                        StaticMethods.LoadFromString(list, dr["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
                         scen.GameCommonData.AllTextMessages.AddTextMessages((int)dr["武将ID"], kind, list);
                     }
                     initdt();
@@ -160,8 +161,8 @@ namespace WorldOfTheThreeKingdomsEditor
                 foreach (DataRow dr in dt.Rows)
                 {
                     TextMessageKind kind = (TextMessageKind)(int)dr["语言类型ID"];
-                    List<string> list = new List<string>();
-                    GameGlobal.StaticMethods.LoadFromString(list, dr["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
+                    List<string> list = [];
+                    StaticMethods.LoadFromString(list, dr["个性语言--语言数量大于1条则随机选中--语言之间用空格格开"].ToString());
                     scen.GameCommonData.AllTextMessages.AddTextMessages((int)dr["武将ID"], kind, list);
                 }
                 initdt();

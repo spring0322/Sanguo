@@ -949,13 +949,8 @@ public class InfluenceUpdateManager(List<Architecture> architectures)
                     faction.GlobalInfluenceMap[i].CityFactionId = finalCityEnergy > 0 ? faction.ID : -1;
                     faction.GlobalInfluenceMap[i].CityEnergy = finalCityEnergy;
                     
-                    // 胜出势力存在活跃能量时，活跃层覆盖残留层
-                    if (finalArmyEnergy > 0 || finalCityEnergy > 0)
-                    {
-                        faction.GlobalInfluenceMap[i].ResidualFactionId = -1;
-                        faction.GlobalInfluenceMap[i].ResidualEnergy = 0;
-                    }
-                    else if (finalEffectiveResidualEnergy > 0)
+                    // 保留竞争后剩余的残留层；活跃层与残留层可并存。
+                    if (finalEffectiveResidualEnergy > 0)
                     {
                         // 仅残留层胜出时，写回抵消后的残留 raw 值
                         int finalResidualEnergy = finalEffectiveResidualEnergy == topEffectiveResidualEnergy

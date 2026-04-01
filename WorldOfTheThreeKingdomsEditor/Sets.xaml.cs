@@ -20,9 +20,7 @@ using System.Runtime.Serialization;
 using System.Xml;
 using System.Data;
 using System.IO;
-using System.Collections.Generic;
-using System.Linq;
-using OfficeOpenXml;
+using WorldOfTheThreeKingdoms.GameGlobal;
 
 namespace WorldOfTheThreeKingdomsEditor
 {
@@ -173,7 +171,7 @@ namespace WorldOfTheThreeKingdomsEditor
 
         private FieldInfo[] getFieldInfos()
         {
-            return typeof(GameGlobal.GlobalVariables).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            return typeof(GlobalVariables).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(x => Attribute.IsDefined(x, typeof(DataMemberAttribute)))
                 .Where(x => supportedTypes.Contains(x.FieldType) || x.FieldType.IsEnum)
                 .ToArray();
@@ -181,7 +179,7 @@ namespace WorldOfTheThreeKingdomsEditor
 
         private PropertyInfo[] getPropertyInfos()
         {
-            return typeof(GameGlobal.GlobalVariables).GetType().GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            return typeof(GlobalVariables).GetType().GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(x => Attribute.IsDefined(x, typeof(DataMemberAttribute)))
                 .Where(x => supportedTypes.Contains(x.PropertyType) || x.PropertyType.IsEnum)
                 .ToArray();

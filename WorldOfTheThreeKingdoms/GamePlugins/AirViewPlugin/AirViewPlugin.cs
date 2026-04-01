@@ -551,7 +551,10 @@ namespace AirViewPlugin
                     // 缓存地形层
                     CacheTerrainLayer(scenario, width, height, totalPixels);
                 }
-
+                // 🎨 应用极速边缘平滑，消除菱形锯齿，让势力边缘与底图自然融合
+                System.Diagnostics.Debug.WriteLine("[AirView] 🎨 应用边缘平滑模糊...");
+                ApplyFastBoxBlur(mapColors, width, height);
+                
                 // 🔥 调试：检查颜色数据
                 int nonZeroPixels = 0;
                 for (int i = 0; i < Math.Min(100, mapColors.Length); i++)
@@ -747,38 +750,82 @@ namespace AirViewPlugin
                 int ownerFactionID = _ownerFactionBuffer[i];
                 int energy = _energyLevelBuffer[i];
                 
-                // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
-                if (ownerFactionID >= 0 && energy > 0)
+                int x = i % width;
+                int y = i / width;
+                bool isKnown = true;
+                if (!Session.GlobalVariables.SkyEye && !scenario.NoCurrentPlayer && scenario.CurrentPlayer != null)
+                {
+                    isKnown = scenario.CurrentPlayer.IsPositionKnown(new Point(x, y));
+                }
+                
+                if (isKnown && ownerFactionID >= 0 && energy > 0)
                 {
                     var faction = scenario.Factions.GetGameObject(ownerFactionID) as Faction;
                     if (faction != null)
                     {
-                        Color terrainColor = mapColors[i]; // 使用缓存的地形色
+                        Color terrainColor = mapColors[i];
                         Color factionColor = GetFactionColor(faction);
                         
-                        // 🎨 根据能量值计算混合比例（能量越高，势力色越明显）
-                        // 能量范围通常是 0-10000，归一化到 0-1
-                        // 🎨 2026-03-30：使用非线性增强曲线，解决低威压区域颜色太淡的问题
-                        float rawIntensity = MathF.Min(energy / 10000f, 1f);
-                        float boostedIntensity = MathF.Pow(rawIntensity, 0.4f); // 0.4次幂非线性增强低值区域
+                        float normalizedEnergy = MathF.Min(energy / 10000f, 1f);
                         
-                        // 最小可见度保护：只要有微量能量，就保证最低 15% 的强度
-                        if (rawIntensity > 0.001f)
+                        // 1. 非线性增强能量比例
+                        float boostedEnergy = MathF.Pow(normalizedEnergy, 0.4f);
+                        
+                        // 2. 保证高浓度，防止底色过多透出
+                        float energyAlpha = Math.Clamp(0.5f + (boostedEnergy * 0.5f), 0.5f, 1.0f);
+                        
+                        float rF = factionColor.R / 255f;
+                        float gF = factionColor.G / 255f;
+                        float bF = factionColor.B / 255f;
+                        
+                        float rT = terrainColor.R / 255f;
+                        float gT = terrainColor.G / 255f;
+                        float bT = terrainColor.B / 255f;
+                        
+                        // --- 核心修复：地形明暗映射染色法 (Topographic Color Mapping) ---
+                        // 提取底图（羊皮纸）的明暗纹理
+                        float terrainLuma = rT * 0.299f + gT * 0.587f + bT * 0.114f;
+                        
+                        // 绝招1：让势力色直接与地形的明暗纹理相乘
+                        float colorR = rF * terrainLuma * 1.2f;
+                        float colorG = gF * terrainLuma * 1.2f;
+                        float colorB = bF * terrainLuma * 1.2f;
+                        
+                        // 绝招2：强制亮度拉开差距 (Luminance Contrast Guarantee)
+                        float colorLuma = colorR * 0.299f + colorG * 0.587f + colorB * 0.114f;
+                        if (colorLuma > 0.6f)
                         {
-                            boostedIntensity = MathF.Max(0.15f, boostedIntensity);
+                            float suppress = 0.6f / colorLuma;
+                            colorR *= suppress;
+                            colorG *= suppress;
+                            colorB *= suppress;
                         }
                         
-                        // 将强度映射为 Alpha，最高限制在 200 左右以保留地形底图的通透感
-                        byte finalAlpha = (byte)Math.Clamp(boostedIntensity * 200f, 0f, 255f);
+                        // 3. 混合：在原地形和【强化反差后的势力墨迹】之间插值
+                        float finalR = rT * (1f - energyAlpha) + colorR * energyAlpha;
+                        float finalG = gT * (1f - energyAlpha) + colorG * energyAlpha;
+                        float finalB = bT * (1f - energyAlpha) + colorB * energyAlpha;
                         
-                        // 重新组装最终渲染颜色
-                        Color renderColor = new(factionColor.R, factionColor.G, factionColor.B, finalAlpha);
-                        
-                        mapColors[i] = Color.Lerp(terrainColor, renderColor, 1f);
+                        mapColors[i] = new Color(
+                            (byte)Math.Clamp(finalR * 255f, 0f, 255f),
+                            (byte)Math.Clamp(finalG * 255f, 0f, 255f),
+                            (byte)Math.Clamp(finalB * 255f, 0f, 255f),
+                            (byte)255);
                         System.Threading.Interlocked.Increment(ref updatedPixelCount);
                     }
                 }
-                // 如果不是势力领土，保持原地形色不变
+                else
+                {
+                    Color tColor = mapColors[i];
+                    if (!isKnown)
+                    {
+                        mapColors[i] = new Color(
+                            (byte)(tColor.R * 0.7f),
+                            (byte)(tColor.G * 0.7f),
+                            (byte)(tColor.B * 0.7f),
+                            (byte)255);
+                    }
+                }
             });
             
             // 🔥 调试：输出更新统计（2026-03-30）
@@ -894,51 +941,82 @@ namespace AirViewPlugin
 
                         Color terrainColor = GetTerrainColor(terrainId);
 
-                        // 🔥 关键：ID=0（洛阳）是有效的，必须使用 >= 0
-                        if (ownerFactionID >= 0 && energy > 0)
+                        // 🔥 提前计算坐标（避免重复计算）
+                        int px = i % width;
+                        int py = i / width;
+
+                        // 🔥 战争迷雾判断（2026-03-31）
+                        bool isKnown = true;
+                        if (!Session.GlobalVariables.SkyEye && !scenario.NoCurrentPlayer && scenario.CurrentPlayer != null)
+                        {
+                            isKnown = scenario.CurrentPlayer.IsPositionKnown(new Point(px, py));
+                        }
+
+                        if (isKnown && ownerFactionID >= 0 && energy > 0)
                         {
                             var faction = scenario.Factions.GetGameObject(ownerFactionID) as Faction;
                             if (faction != null)
                             {
                                 Color factionColor = GetFactionColor(faction);
 
-                                // 🎨 根据能量值计算混合比例（能量越高，势力色越明显）
-                                // 🎨 2026-03-30：使用非线性增强曲线，解决低威压区域颜色太淡的问题
-                                float rawIntensity = MathF.Min(energy / 10000f, 1f);
-                                float boostedIntensity = MathF.Pow(rawIntensity, 0.4f); // 0.4次幂非线性增强低值区域
+                                float normalizedEnergy = MathF.Min(energy / 10000f, 1f);
                                 
-                                // 最小可见度保护：只要有微量能量，就保证最低 15% 的强度
-                                if (rawIntensity > 0.001f)
+                                // 1. 非线性增强能量比例
+                                float boostedEnergy = MathF.Pow(normalizedEnergy, 0.4f);
+                                
+                                // 2. 保证高浓度，防止底色过多透出
+                                float energyAlpha = Math.Clamp(0.5f + (boostedEnergy * 0.5f), 0.5f, 1.0f);
+                                
+                                float rF = factionColor.R / 255f;
+                                float gF = factionColor.G / 255f;
+                                float bF = factionColor.B / 255f;
+                                
+                                float rT = terrainColor.R / 255f;
+                                float gT = terrainColor.G / 255f;
+                                float bT = terrainColor.B / 255f;
+                                
+                                // --- 核心修复：地形明暗映射染色法 (Topographic Color Mapping) ---
+                                // 提取底图（羊皮纸）的明暗纹理
+                                float terrainLuma = rT * 0.299f + gT * 0.587f + bT * 0.114f;
+                                
+                                // 绝招1：让势力色直接与地形的明暗纹理相乘
+                                float colorR = rF * terrainLuma * 1.2f;
+                                float colorG = gF * terrainLuma * 1.2f;
+                                float colorB = bF * terrainLuma * 1.2f;
+                                
+                                // 绝招2：强制亮度拉开差距 (Luminance Contrast Guarantee)
+                                float colorLuma = colorR * 0.299f + colorG * 0.587f + colorB * 0.114f;
+                                if (colorLuma > 0.6f)
                                 {
-                                    boostedIntensity = MathF.Max(0.15f, boostedIntensity);
+                                    float suppress = 0.6f / colorLuma;
+                                    colorR *= suppress;
+                                    colorG *= suppress;
+                                    colorB *= suppress;
                                 }
                                 
-                                // 将强度映射为 Alpha，最高限制在 200 左右以保留地形底图的通透感
-                                byte finalAlpha = (byte)Math.Clamp(boostedIntensity * 200f, 0f, 255f);
+                                // 3. 混合：在原地形和【强化反差后的势力墨迹】之间插值
+                                float finalR = rT * (1f - energyAlpha) + colorR * energyAlpha;
+                                float finalG = gT * (1f - energyAlpha) + colorG * energyAlpha;
+                                float finalB = bT * (1f - energyAlpha) + colorB * energyAlpha;
                                 
-                                // 重新组装最终渲染颜色
-                                Color renderColor = new(factionColor.R, factionColor.G, factionColor.B, finalAlpha);
+                                Color blendedColor = new Color(
+                                    (byte)Math.Clamp(finalR * 255f, 0f, 255f),
+                                    (byte)Math.Clamp(finalG * 255f, 0f, 255f),
+                                    (byte)Math.Clamp(finalB * 255f, 0f, 255f),
+                                    (byte)255);
 
-                                // 🎨 Phase 6：边缘平滑 - 检测边界格子并应用Alpha过渡
                                 bool isBoundary = false;
-                                int px = i % width;
-                                int py = i / width;
-
-                                // 检查上下左右相邻格子是否归属不同势力
                                 if (px > 0 && ownerFactions[i - 1] != ownerFactionID) isBoundary = true;
                                 else if (px < width - 1 && ownerFactions[i + 1] != ownerFactionID) isBoundary = true;
                                 else if (py > 0 && ownerFactions[i - width] != ownerFactionID) isBoundary = true;
                                 else if (py < height - 1 && ownerFactions[i + width] != ownerFactionID) isBoundary = true;
 
-                                // 边界格子应用轻微Alpha衰减（0.9），使边缘更柔和
                                 if (isBoundary)
                                 {
-                                    renderColor.A = (byte)(renderColor.A * 0.9f);
+                                    blendedColor.A = (byte)(blendedColor.A * 0.9f);
                                 }
                                 
-                                Color finalColor = Color.Lerp(terrainColor, renderColor, 1f);
-
-                                mapColors[i] = finalColor;
+                                mapColors[i] = blendedColor;
                                 System.Threading.Interlocked.Increment(ref updatedPixelCount);
                             }
                             else
@@ -948,7 +1026,19 @@ namespace AirViewPlugin
                         }
                         else
                         {
-                            mapColors[i] = terrainColor;
+                            Color tColor = terrainColor;
+                            if (!isKnown)
+                            {
+                                mapColors[i] = new Color(
+                                    (byte)(tColor.R * 0.7f),
+                                    (byte)(tColor.G * 0.7f),
+                                    (byte)(tColor.B * 0.7f),
+                                    (byte)255);
+                            }
+                            else
+                            {
+                                mapColors[i] = tColor;
+                            }
                         }
                     });
 
@@ -963,27 +1053,94 @@ namespace AirViewPlugin
         {
             _terrainCacheDirty = true;
         }
-
-        // 辅助：地形配色表 (调整这里来解决"黑乎乎"的问题)
-        private Color GetTerrainColor(int terrainId)
+        // 🎯 极速边缘平滑 (Box Blur) - 解决菱形锯齿感
+        // 使用 ArrayPool 做到零 GC 分配，符合 AOT 规范
+        private void ApplyFastBoxBlur(Color[] colors, int width, int height)
         {
-            switch (terrainId)
+            int totalPixels = width * height;
+            Color[] tempColors = System.Buffers.ArrayPool<Color>.Shared.Rent(totalPixels);
+
+            try
             {
-                case 0: return Color.Black;                                // 无
-                case 1: return new Color((byte)144, (byte)238, (byte)144); // 平原 - 浅绿
-                case 2: return new Color((byte)50, (byte)205, (byte)50);   // 草原 - 酸橙绿
-                case 3: return new Color((byte)34, (byte)139, (byte)34);   // 森林 - 森林绿
-                case 4: return new Color((byte)47, (byte)79, (byte)79);    // 湿地 - 深青色
-                case 5: return new Color((byte)160, (byte)82, (byte)45);   // 山地 - 赭色
-                case 6: return new Color((byte)30, (byte)144, (byte)255);  // 水域 - 道奇蓝 (亮蓝色)
-                case 7: return new Color((byte)105, (byte)105, (byte)105); // 峻岭 - 暗灰
-                case 8: return new Color((byte)189, (byte)183, (byte)107); // 荒地 - 卡其色
-                case 9: return new Color((byte)210, (byte)180, (byte)140); // 沙漠 - 棕褐色
-                case 10: return new Color((byte)139, (byte)69, (byte)19);  // 栈道 - 鞍褐
-                default: return new Color((byte)50, (byte)100, (byte)50);  // 默认
+                // 迭代 3 次，利用小核产生接近大半径高斯模糊的圆润效果 (消除菱形)
+                for (int pass = 0; pass < 1; pass++)
+                {
+                    Parallel.For(0, height, y =>
+                    {
+                        for (int x = 0; x < width; x++)
+                        {
+                            int index = y * width + x;
+                            Color currentC = colors[index];
+
+                            // UI 保护机制：如果是纯白（城池/据点等UI标识），直接跳过模糊，保持锐利
+                            if (currentC.R > 240 && currentC.G > 240 && currentC.B > 240)
+                            {
+                                tempColors[index] = currentC;
+                                continue;
+                            }
+
+                            int r = 0, g = 0, b = 0;
+                            int count = 0;
+
+                            for (int dy = -1; dy <= 1; dy++)
+                            {
+                                int ny = y + dy;
+                                if (ny < 0 || ny >= height) continue;
+
+                                for (int dx = -1; dx <= 1; dx++)
+                                {
+                                    int nx = x + dx;
+                                    if (nx < 0 || nx >= width) continue;
+
+                                    Color c = colors[ny * width + nx];
+                                    // 采样时不把周围的白色UI点混合进来，防止UI周围出现白色光晕
+                                    if (c.R > 240 && c.G > 240 && c.B > 240) continue;
+
+                                    r += c.R;
+                                    g += c.G;
+                                    b += c.B;
+                                    count++;
+                                }
+                            }
+
+                            if (count > 0)
+                            {
+                                tempColors[index] = new((byte)(r / count), (byte)(g / count), (byte)(b / count), (byte)255);
+                            }
+                            else
+                            {
+                                tempColors[index] = currentC;
+                            }
+                        }
+                    });
+
+                    Array.Copy(tempColors, colors, totalPixels);
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<Color>.Shared.Return(tempColors);
             }
         }
-
+        private Color GetTerrainColor(int terrainId)
+        {
+            // 统一使用低饱和度、偏暖灰/宣纸色的色板
+            switch (terrainId)
+            {
+                case 0: return new Color(20, 20, 20);      // 无 - 极暗灰
+                case 1: return new Color(225, 218, 201);   // 平原 - 宣纸底色
+                case 2: return new Color(215, 208, 191);   // 草原 - 略深的宣纸色
+                case 3: return new Color(195, 188, 171);   // 森林 - 偏暗的卡其灰
+                case 4: return new Color(175, 175, 165);   // 湿地 - 偏冷灰
+                case 5: return new Color(185, 170, 155);   // 山地 - 浅赭灰（凸显地形）
+                case 6: return new Color(135, 150, 165);   // 水域 - 水墨黛青（低饱和暗蓝）
+                case 7: return new Color(165, 150, 140);   // 峻岭 - 暗赭灰
+                case 8: return new Color(210, 200, 180);   // 荒地 - 枯草灰
+                case 9: return new Color(230, 220, 190);   // 沙漠 - 浅沙黄
+                case 10: return new Color(170, 155, 140);  // 栈道 - 灰褐
+                default: return new Color(225, 218, 201);  // 默认使用平原底色
+            }
+        }
         // 辅助：势力配色
         private Color GetFactionColor(GameObjects.Faction faction)
         {

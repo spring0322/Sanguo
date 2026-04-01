@@ -2186,6 +2186,166 @@ namespace GameObjects
             return false;
         }
 
+        private bool ShouldRelaxPlanArchitectureRestrictionForFacilityAI()
+        {
+            if (this.PlanArchitecture == null)
+            {
+                return false;
+            }
+
+            AICityOperationalState state = this.GetAICityOperationalState();
+            return state == AICityOperationalState.Balanced ||
+                   state == AICityOperationalState.MilitaryBuildUp ||
+                   this.ShouldPrioritizeBasicFacilityDevelopmentForAI();
+        }
+
+        private bool TryProcessPlannedFacilityForAI()
+        {
+            if (this.PlanFacilityKind == null || this.BelongedFaction == null)
+            {
+                return false;
+            }
+
+            FacilityKind plannedKind = this.PlanFacilityKind;
+            bool prioritizeBasicFacility = IsBasicFacilityForAI(plannedKind) && ShouldPrioritizeBasicFacilityDevelopmentForAI();
+            bool shouldClearPlan = false;
+
+            if (this.Technology < plannedKind.TechnologyNeeded || plannedKind.PositionOccupied > this.FacilityPositionLeft)
+            {
+                shouldClearPlan = true;
+            }
+            else if (!IsBasicFacilityForAI(plannedKind) && plannedKind.FundCost > this.FundCeiling / 2)
+            {
+                shouldClearPlan = true;
+            }
+            else if ((this.Fund >= plannedKind.FundCost) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) >= plannedKind.PointCost))
+            {
+                this.BelongedFaction.DepositTechniquePointForFacility(plannedKind.PointCost);
+                this.BeginToBuildAFacility(plannedKind);
+                this.PlanFacilityKind = null;
+                return true;
+            }
+            else if (this.Fund >= plannedKind.FundCost)
+            {
+                if (GameObject.Chance(0x21) && ((this.BelongedFaction.TechniquePoint + this.BelongedFaction.TechniquePointForFacility) < plannedKind.PointCost))
+                {
+                    this.BelongedFaction.SaveTechniquePointForFacility(plannedKind.PointCost / plannedKind.Days);
+                }
+            }
+            else if (!prioritizeBasicFacility && GameObject.Chance(30))
+            {
+                System.Diagnostics.Debug.WriteLine($"[AIFacility] {this.Name} 资金不足({this.Fund}/{plannedKind.FundCost})，放弃计划设施：{plannedKind.Name}");
+                shouldClearPlan = true;
+            }
+
+            if (shouldClearPlan)
+            {
+                this.PlanFacilityKind = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsBasicFacilityForAI(FacilityKind kind)
+        {
+            if (kind == null || kind.IsExtension || kind.rongna > 0)
+            {
+                return false;
+            }
+
+            return kind.PointCost == 0 &&
+                   kind.TechnologyNeeded <= 400 &&
+                   kind.FundCost <= 40000 &&
+                   kind.Days <= 135 &&
+                   kind.PositionOccupied <= 6;
+        }
+
+        private bool ShouldPrioritizeBasicFacilityDevelopmentForAI()
+        {
+            if (this.FacilityPositionCount <= 0)
+            {
+                return false;
+            }
+
+            if (this.GetAICityOperationalState() == AICityOperationalState.Recovery)
+            {
+                return false;
+            }
+
+            if (this.IsStrategicFrontline() || this.FrontLine || this.HostileLine)
+            {
+                return true;
+            }
+
+            if (this.FacilityPositionCount >= 8)
+            {
+                return true;
+            }
+
+            int usedFacilitySpace = this.FacilityPositionCount - this.FacilityPositionLeft;
+            return usedFacilitySpace <= Math.Max(1, this.FacilityPositionCount / 3);
+        }
+
+        private int GetFacilityReserveFundFloorForAI(bool isPeaceful, bool prioritizeBasicFacility)
+        {
+            int reserve = this.EnoughFund;
+            if (isPeaceful)
+            {
+                reserve = (int)(this.EnoughFund * 0.7);
+            }
+
+            if (prioritizeBasicFacility)
+            {
+                reserve = Math.Min(reserve, Math.Max(2000, this.EnoughFund / 2));
+            }
+
+            return reserve;
+        }
+
+        private FacilityKind GetFallbackBasicFacilityToBuildForAI()
+        {
+            if (this.BelongedFaction == null || this.FacilityPositionLeft <= 0)
+            {
+                return null;
+            }
+
+            bool isPeaceful = this.RecentlyAttacked <= 0 && !this.HasHostileTroopsInView();
+            int reserveFund = this.GetFacilityReserveFundFloorForAI(isPeaceful, true);
+            FacilityKind bestKind = null;
+            double bestValue = double.MinValue;
+
+            foreach (FacilityKind kind in Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetFacilityKindList())
+            {
+                if (!this.IsBasicFacilityForAI(kind)) continue;
+                if (!kind.CanBuild(this)) continue;
+                if (kind.PositionOccupied > this.FacilityPositionLeft) continue;
+                if (this.Fund < kind.FundCost + reserveFund && this.ExpectedFund <= 0) continue;
+
+                double value = kind.AIValue(this);
+                foreach (KeyValuePair<Condition, float> weight in kind.AIBuildConditionWeight)
+                {
+                    if (weight.Key.CheckCondition(this))
+                    {
+                        value *= weight.Value;
+                    }
+                }
+
+                if (bestKind == null ||
+                    kind.TechnologyNeeded < bestKind.TechnologyNeeded ||
+                    (kind.TechnologyNeeded == bestKind.TechnologyNeeded && kind.FundCost < bestKind.FundCost) ||
+                    (kind.TechnologyNeeded == bestKind.TechnologyNeeded && kind.FundCost == bestKind.FundCost && kind.Days < bestKind.Days) ||
+                    (kind.TechnologyNeeded == bestKind.TechnologyNeeded && kind.FundCost == bestKind.FundCost && kind.Days == bestKind.Days && kind.PositionOccupied < bestKind.PositionOccupied) ||
+                    (kind.TechnologyNeeded == bestKind.TechnologyNeeded && kind.FundCost == bestKind.FundCost && kind.Days == bestKind.Days && kind.PositionOccupied == bestKind.PositionOccupied && value > bestValue))
+                {
+                    bestKind = kind;
+                    bestValue = value;
+                }
+            }
+
+            return bestKind;
+        }
+
         private void AIFacility()
         {
             // 🔥 终极修复：在 AIFacility 方法内部再次检查玩家势力
@@ -2216,7 +2376,23 @@ namespace GameObjects
             }
             
             // 🔥 NEW: 1. 整合战略地图的安全检查
-            if (HasIntegratedThreat())
+            bool prioritizeBasicFacilityDevelopment = this.ShouldPrioritizeBasicFacilityDevelopmentForAI();
+            bool hasFacilityBuildSlot = this.BuildingFacility < 0 && this.FacilityPositionCount > 0;
+            bool hasPlannedBasicFacility = hasFacilityBuildSlot &&
+                                           this.PlanFacilityKind != null &&
+                                           this.IsBasicFacilityForAI(this.PlanFacilityKind);
+            FacilityKind forcedBasicFacility = hasPlannedBasicFacility
+                ? this.PlanFacilityKind
+                : hasFacilityBuildSlot
+                    ? this.GetFallbackBasicFacilityToBuildForAI()
+                    : null;
+
+            if (hasPlannedBasicFacility && this.TryProcessPlannedFacilityForAI())
+            {
+                return;
+            }
+
+            if (HasIntegratedThreat() && (!prioritizeBasicFacilityDevelopment || this.HasHostileTroopsInView()))
             {
 
                 // 有威胁时，只允许建设防御性设施或停止建设
@@ -2239,12 +2415,19 @@ namespace GameObjects
             // 原逻辑：有计划时只有 10% 概率建设施（优先支援目标城市）
             // 新逻辑：有计划时 50% 概率建设施（平衡本地发展和支援任务）
             
-            var canBuildFacility = (this.PlanArchitecture == null) || GameObject.Chance(50);
+            var canBuildFacility = forcedBasicFacility != null ||
+                                   this.PlanArchitecture == null ||
+                                   ShouldRelaxPlanArchitectureRestrictionForFacilityAI() ||
+                                   GameObject.Chance(50);
             
 
 
-            if (canBuildFacility && this.BuildingFacility < 0 && this.FacilityPositionCount > 0)
+            if (canBuildFacility && hasFacilityBuildSlot)
             {
+                if (TryProcessPlannedFacilityForAI())
+                {
+                    return;
+                }
                 // 🔥 修复：先处理已有计划，如果能建造就建造，否则清除计划
                 if (this.PlanFacilityKind != null && this.BelongedFaction != null)
                 {
@@ -2365,11 +2548,15 @@ namespace GameObjects
                         if (kind.IsExtension) continue;
                         if (!kind.CanBuild(this)) continue;
                         if (kind.rongna > 0) continue;
-                        if ((kind.MaintenanceCost + this.FacilityMaintenanceCost) * 30 + 2000 > this.ExpectedFund && kind.NetFundIncrease <= 0)
+                        bool isBasicFacility = this.IsBasicFacilityForAI(kind);
+                        bool prioritizeBasicFacility = prioritizeBasicFacilityDevelopment && isBasicFacility;
+                        if ((kind.MaintenanceCost + this.FacilityMaintenanceCost) * 30 + 2000 > this.ExpectedFund &&
+                            kind.NetFundIncrease <= 0 &&
+                            !prioritizeBasicFacility)
                         {
                             continue;
                         }
-                        if (kind.FundCost > this.FundCeiling / 2)
+                        if (!isBasicFacility && kind.FundCost > this.FundCeiling / 2)
                         {
                             continue;
                         }
@@ -2381,22 +2568,27 @@ namespace GameObjects
                                 value *= weight.Value;
                             }
                         }
-                        if (value > 0 && this.ExpectedFund != 0)
+                        bool hasExpectedFund = this.ExpectedFund > 0;
+                        if (value > 0 && (hasExpectedFund || prioritizeBasicFacility))
                         {
-                            int fundMonthToWait = (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1;
+                            int fundMonthToWait = hasExpectedFund ? (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1 : 0;
                             
                             // 🔥 优化：和平时期只要没敌人，资金允许就必然修
                             bool isPeaceful = this.RecentlyAttacked <= 0 && !this.HasHostileTroopsInView();
-                            bool chanceCheck = GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
-                            int effectiveEnoughFund = this.EnoughFund;
+                            bool chanceCheck = !hasExpectedFund || GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
+                            int effectiveEnoughFund = this.GetFacilityReserveFundFloorForAI(isPeaceful, prioritizeBasicFacility);
 
-                            if (isPeaceful)
+                            if (isPeaceful || prioritizeBasicFacility)
                             {
+                                effectiveEnoughFund = this.GetFacilityReserveFundFloorForAI(isPeaceful, prioritizeBasicFacility);
                                 chanceCheck = true; // 和平时期强制通过概率检测
                                 effectiveEnoughFund = (int)(this.EnoughFund * 0.7); // 和平时期放宽资金保留要求，鼓励建设
                             }
 
-                            if (value > maxValue && chanceCheck && this.Fund - kind.FundCost > effectiveEnoughFund)
+                            effectiveEnoughFund = isPeaceful || prioritizeBasicFacility
+                                ? this.GetFacilityReserveFundFloorForAI(isPeaceful, prioritizeBasicFacility)
+                                : effectiveEnoughFund;
+                            if (value > maxValue && chanceCheck && this.Fund - kind.FundCost >= effectiveEnoughFund)
                             {
                                 if (this.FacilityPositionLeft < kind.PositionOccupied)
                                 {
@@ -2441,6 +2633,10 @@ namespace GameObjects
                                 }
                             }
                         }
+                    }
+                    if (toBuild == null)
+                    {
+                        toBuild = forcedBasicFacility ?? this.GetFallbackBasicFacilityToBuildForAI();
                     }
                     if (toBuild != null)
                     {
@@ -3565,6 +3761,7 @@ namespace GameObjects
 
             bool shouldRecruit = false;
             string recruitReason = "";
+            bool preferRecruitment = this.IsSectionPreferenceEnabled(ArchitectureWorkKind.补充);
             
             // 1. 标准条件：资金充裕 (>500)
             if (RecruitmentAvail() && this.Fund > 500 && (this.IsFundEnough || this.HasHostileTroopsInView()))
@@ -3581,6 +3778,11 @@ namespace GameObjects
             // 🔥 FIX V1.1: 新增"日常维护"逻辑
             // 填补 200-500 资金段的逻辑空白
             // 如果资金尚可(>300)，且有编队兵力不满 80%，则允许进行非紧急招募
+            else if (preferRecruitment && RecruitmentAvail() && this.Fund > 250 && HasMilitariesBelowRatio(0.9f))
+            {
+                shouldRecruit = true;
+                recruitReason = "Section preference";
+            }
             else if (RecruitmentAvail() && this.Fund > 300 && HasMilitariesBelowRatio(0.8f))
             {
                 shouldRecruit = true;
@@ -8150,6 +8352,7 @@ namespace GameObjects
                     // 真正的建造会在下次AIFacility()调用时进行（有资金检查）
                     System.Diagnostics.Debug.WriteLine($"[CheckBuildingFacility] 尝试选择下一个设施建造");
                     SelectNextFacilityToBuild();
+                    TryProcessPlannedFacilityForAI();
                 }
             }
         }
@@ -8168,21 +8371,26 @@ namespace GameObjects
             // 选择最优设施（复用AIFacility中的选择逻辑）
             double maxValue = double.MinValue;
             FacilityKind toBuild = null;
+            bool prioritizeBasicFacilityDevelopment = this.ShouldPrioritizeBasicFacilityDevelopmentForAI();
             
             foreach (FacilityKind kind in Session.Current.Scenario.GameCommonData.AllFacilityKinds.GetFacilityKindList())
             {
                 if (kind.IsExtension) continue;
                 if (!kind.CanBuild(this)) continue;
                 if (kind.rongna > 0) continue;
+                bool isBasicFacility = this.IsBasicFacilityForAI(kind);
+                bool prioritizeBasicFacility = prioritizeBasicFacilityDevelopment && isBasicFacility;
                 
                 // 跳过维护成本过高的设施
-                if ((kind.MaintenanceCost + this.FacilityMaintenanceCost) * 30 + 2000 > this.ExpectedFund && kind.NetFundIncrease <= 0)
+                if ((kind.MaintenanceCost + this.FacilityMaintenanceCost) * 30 + 2000 > this.ExpectedFund &&
+                    kind.NetFundIncrease <= 0 &&
+                    !prioritizeBasicFacility)
                 {
                     continue;
                 }
                 
                 // 跳过造价过高的设施（超过资金上限一半）
-                if (kind.FundCost > this.FundCeiling / 2)
+                if (!isBasicFacility && kind.FundCost > this.FundCeiling / 2)
                 {
                     continue;
                 }
@@ -8197,20 +8405,21 @@ namespace GameObjects
                     }
                 }
                 
-                if (value > 0 && this.ExpectedFund != 0)
+                bool hasExpectedFund = this.ExpectedFund > 0;
+                if (value > 0 && (hasExpectedFund || prioritizeBasicFacility))
                 {
-                    int fundMonthToWait = (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1;
+                    int fundMonthToWait = hasExpectedFund ? (kind.FundCost - (this.Fund - this.EnoughFund)) / this.ExpectedFund + 1 : 0;
                     bool isPeaceful = this.RecentlyAttacked <= 0 && !this.HasHostileTroopsInView();
-                    bool chanceCheck = GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
-                    int effectiveEnoughFund = this.EnoughFund;
+                    bool chanceCheck = !hasExpectedFund || GameObject.Chance((int)(100 - fundMonthToWait * Session.Parameters.AIFacilityFundMonthWaitParam));
+                    int effectiveEnoughFund = this.GetFacilityReserveFundFloorForAI(isPeaceful, prioritizeBasicFacility);
 
-                    if (isPeaceful)
+                    if (isPeaceful || prioritizeBasicFacility)
                     {
                         chanceCheck = true;
-                        effectiveEnoughFund = (int)(this.EnoughFund * 0.7);
+                        effectiveEnoughFund = this.GetFacilityReserveFundFloorForAI(isPeaceful, prioritizeBasicFacility);
                     }
                     // 检查空间是否足够
-                    if (value > maxValue && chanceCheck && this.Fund - kind.FundCost > effectiveEnoughFund && this.FacilityPositionLeft >= kind.PositionOccupied)
+                    if (value > maxValue && chanceCheck && this.Fund - kind.FundCost >= effectiveEnoughFund && this.FacilityPositionLeft >= kind.PositionOccupied)
                     {
                         maxValue = value;
                         toBuild = kind;
@@ -8219,6 +8428,11 @@ namespace GameObjects
             }
             
             // 设置计划设施
+            if (toBuild == null)
+            {
+                toBuild = this.GetFallbackBasicFacilityToBuildForAI();
+            }
+
             if (toBuild != null)
             {
                 this.PlanFacilityKind = toBuild;

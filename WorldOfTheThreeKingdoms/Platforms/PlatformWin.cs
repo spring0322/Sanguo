@@ -658,6 +658,13 @@ namespace Platforms
                     {
                         if (ext == ".dds")
                         {
+                            // 🔥 Fail-Fast：确保 GraphicsDevice 已初始化
+                            if (Platform.GraphicsDevice == null)
+                            {
+                                throw new InvalidOperationException(
+                                    $"[LoadTexture] GraphicsDevice 未初始化，无法加载 DDS: {fullPath}");
+                            }
+                            
                             // 使用DDS加载器
                             texture = WorldOfTheThreeKingdoms.Helpers.DDSLoader.Load(Platform.GraphicsDevice, fullPath);
                         }

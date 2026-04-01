@@ -43,25 +43,25 @@ namespace GameObjects.TroopDetail
 
         private void AddToOpenList(AreaSquare square)
         {
-            // 🔥 参数验证：ANTI-BAND-AID 协议
-            // 日期：2026-03-29
-            // 原因：调用者可能传入 null，导致第 49 行 openList[x].F 抛出 NullReferenceException
             if (square == null)
             {
-                throw new ArgumentNullException(nameof(square), 
-                    "AreaSearcher.AddToOpenList: square 参数为 null，请检查 MakeSquare 中的 AreaSquare 创建逻辑");
+                throw new ArgumentNullException(nameof(square),
+                    "AreaSearcher.AddToOpenList: square 参数为 null，请检查 MakeSquare 中的 AreaSquare 创建逻辑。");
             }
-            
+
             this.openList.Add(square);
             int x = this.openList.Count - 1;
             square.Index = x;
-            for (int i = (x - 1) / 2; this.openList[x].F < this.openList[i].F; i = (x - 1) / 2)
+            while (x > 0)
             {
-                this.SwapSquare(x, i, this.openList);
-                if (i == 0)
+                int i = (x - 1) / 2;
+                AreaSquare currentSquare = this.GetOpenListSquareOrThrow(x, nameof(AddToOpenList));
+                AreaSquare parentSquare = this.GetOpenListSquareOrThrow(i, nameof(AddToOpenList));
+                if (currentSquare.F >= parentSquare.F)
                 {
                     break;
                 }
+                this.SwapSquare(x, i, this.openList);
                 x = i;
             }
             if (!this.openDictionary.ContainsKey(square.Position))
@@ -238,6 +238,17 @@ namespace GameObjects.TroopDetail
             return null;
         }
 
+        private AreaSquare GetOpenListSquareOrThrow(int index, string caller)
+        {
+            AreaSquare square = this.openList[index];
+            if (square == null)
+            {
+                throw new InvalidOperationException(
+                    $"AreaSearcher.{caller}: openList[{index}] 为 null，开放列表状态已损坏。openList.Count={this.openList.Count}, openDictionary.Count={this.openDictionary.Count}");
+            }
+            return square;
+        }
+
         private bool IsInCloseList(Point position)
         {
             return this.closeDictionary.ContainsKey(position);
@@ -252,49 +263,36 @@ namespace GameObjects.TroopDetail
         {
             if (!this.IsInCloseList(position))
             {
-                AreaSquare square2;
                 int costByPosition = this.GetCostByPosition(position, oblique, kind);
-                if (costByPosition < 0xdac)
+                if (costByPosition >= 0xdac)
                 {
-                    int num2;
-                    if (oblique)
-                    {
-                        num2 = currentSquare.G + (7 * costByPosition);
-                    }
-                    else
-                    {
-                        num2 = currentSquare.G + (5 * costByPosition);
-                    }
-                    AreaSquare squareFromOpenList = this.GetSquareFromOpenList(position);
-                    if (squareFromOpenList == null)
-                    {
-                        square2 = new AreaSquare();
-                        square2.Parent = currentSquare;
-                        square2.Position = position;
-                        square2.G = num2;
-                        square2.H = (((Math.Abs((int) (this.startPosition.X - position.X)) + Math.Abs((int) (this.startPosition.Y - position.Y))) + Math.Abs((int) (position.X - this.directionPosition.X))) + Math.Abs((int) (position.Y - this.directionPosition.Y))) * 5;
-                        this.AddToOpenList(square2);
-                    }
-                    else if (num2 > squareFromOpenList.G)
-                    {
-                        squareFromOpenList.Parent = currentSquare;
-                        squareFromOpenList.G = num2;
-                        this.UpResortOpenList(squareFromOpenList, squareFromOpenList.Index);
-                    }
+                    return;
+                }
+
+                int num2;
+                if (oblique)
+                {
+                    num2 = currentSquare.G + (7 * costByPosition);
                 }
                 else
                 {
-                    square2 = new AreaSquare();
+                    num2 = currentSquare.G + (5 * costByPosition);
+                }
+                AreaSquare squareFromOpenList = this.GetSquareFromOpenList(position);
+                if (squareFromOpenList == null)
+                {
+                    AreaSquare square2 = new AreaSquare();
+                    square2.Parent = currentSquare;
                     square2.Position = position;
-                    if (oblique)
-                    {
-                        square2.G = currentSquare.G + (7 * costByPosition);
-                    }
-                    else
-                    {
-                        square2.G = currentSquare.G + (5 * costByPosition);
-                    }
+                    square2.G = num2;
+                    square2.H = (((Math.Abs((int) (this.startPosition.X - position.X)) + Math.Abs((int) (this.startPosition.Y - position.Y))) + Math.Abs((int) (position.X - this.directionPosition.X))) + Math.Abs((int) (position.Y - this.directionPosition.Y))) * 5;
                     this.AddToOpenList(square2);
+                }
+                else if (num2 < squareFromOpenList.G)
+                {
+                    squareFromOpenList.Parent = currentSquare;
+                    squareFromOpenList.G = num2;
+                    this.UpResortOpenList(squareFromOpenList, squareFromOpenList.Index);
                 }
             }
         }
@@ -306,7 +304,7 @@ namespace GameObjects.TroopDetail
                 return null;
             }
             this.SwapSquare(0, this.openList.Count - 1, this.openList);
-            AreaSquare square = this.openList[this.openList.Count - 1];
+            AreaSquare square = this.GetOpenListSquareOrThrow(this.openList.Count - 1, nameof(RemoveFromOpenList));
             square.Index = -1;
             this.openList.RemoveAt(this.openList.Count - 1);
             this.openDictionary.Remove(square.Position);
@@ -316,16 +314,16 @@ namespace GameObjects.TroopDetail
             {
                 if (((x * 2) + 2) < this.openList.Count)
                 {
-                    if (this.openList[x].F > this.openList[(x * 2) + 1].F)
+                    if (this.GetOpenListSquareOrThrow(x, nameof(RemoveFromOpenList)).F > this.GetOpenListSquareOrThrow((x * 2) + 1, nameof(RemoveFromOpenList)).F)
                     {
                         y = (x * 2) + 1;
                     }
-                    if (this.openList[y].F > this.openList[y + 1].F)
+                    if (this.GetOpenListSquareOrThrow(y, nameof(RemoveFromOpenList)).F > this.GetOpenListSquareOrThrow(y + 1, nameof(RemoveFromOpenList)).F)
                     {
                         y++;
                     }
                 }
-                else if ((((x * 2) + 1) < this.openList.Count) && (this.openList[x].F > this.openList[(x * 2) + 1].F))
+                else if ((((x * 2) + 1) < this.openList.Count) && (this.GetOpenListSquareOrThrow(x, nameof(RemoveFromOpenList)).F > this.GetOpenListSquareOrThrow((x * 2) + 1, nameof(RemoveFromOpenList)).F))
                 {
                     y = (x * 2) + 1;
                 }
@@ -398,6 +396,11 @@ namespace GameObjects.TroopDetail
         private void SwapSquare(int x, int y, List<AreaSquare> list)
         {
             AreaSquare square = list[x];
+            if ((square == null) || (list[y] == null))
+            {
+                throw new InvalidOperationException(
+                    $"AreaSearcher.{nameof(SwapSquare)}: 尝试交换空节点。x={x}, y={y}, openList.Count={this.openList.Count}, openDictionary.Count={this.openDictionary.Count}");
+            }
             list[x] = list[y];
             list[y] = square;
             list[x].Index = x;
@@ -412,7 +415,7 @@ namespace GameObjects.TroopDetail
                 int y = (x - 1) / 2;
                 while (true)
                 {
-                    if (this.openList[x].F >= this.openList[y].F)
+                    if (this.GetOpenListSquareOrThrow(x, nameof(UpResortOpenList)).F >= this.GetOpenListSquareOrThrow(y, nameof(UpResortOpenList)).F)
                     {
                         return;
                     }

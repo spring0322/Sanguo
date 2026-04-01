@@ -10,6 +10,7 @@ using GameObjects.TroopDetail;
 using GameObjects.FactionDetail;
 using GameObjects.AI;
 using GameObjects.AI.Pathfinding;
+using GameObjects.Commands;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -98,6 +99,16 @@ namespace GameObjects
         MovingOnMap,        // 正在地图上移动（逐帧物理移动）
         PlayingAnimation    // 正在播放战法/攻击动画
     }
+
+    internal readonly record struct TroopExecutionTargetSnapshot(
+        ExecutionActionKind ActionKind,
+        Point TargetPosition,
+        int TargetArchitectureId,
+        Guid TargetTroopId,
+        int IssuedTick,
+        int CommitTick,
+        int ArrivalTolerance,
+        bool AllowFriendlyBlockWait);
 
     [DataContract]
     [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)]
@@ -363,6 +374,11 @@ namespace GameObjects
         // 🔥 性能优化：静态常量，避免重复分配
         private static readonly Point InvalidPosition = new Point(-1, -1);
         private const int SmartSiegeCurrentPositionScoreBonus = 1000;
+        private const int SmartSiegeCommitReleaseStuckThreshold = 10;
+        [JsonIgnore]
+        private TroopExecutionTargetSnapshot? _executionTargetSnapshot;
+        [JsonIgnore]
+        private bool _allowForceRealDestinationOverride;
 
         // 提供属性访问以兼容旧代码
         private ReadOnlySpan<int> WeizhixulieSpan => _weizhixulieData;
@@ -927,6 +943,8 @@ namespace GameObjects
         public float RateOfQibingDamage = 1f;
 
         private Point realDestination = new(-1, -1);  // 🔥 修复：初始化为无效值，避免与有效坐标 (0,0) 混淆
+        private Point _committedSmartSiegePosition = new(-1, -1);
+        private int _committedSmartSiegeArchitectureId = -1;
         [DataMember]
         public int RecentlyFighting;
         public int RoutIncrementOfCombativity;
@@ -1406,6 +1424,17 @@ namespace GameObjects
         /// 旧同步移动链：每回合最多允许一次初始寻路和一次恢复寻路。
         /// </summary>
         private const byte MAX_LEGACY_SYNC_REPATHS_PER_TURN = 2;
+        private const int LEGACY_SYNC_REPATH_MIN_REMAINING_DISTANCE = 2;
+        private const int LEGACY_SIEGE_DESTINATION_RECHECK_DISTANCE = 4;
+        private const byte LegacyMoveInvalidationNone = 0;
+        private const byte LegacyMoveInvalidationTargetChanged = 1;
+        private const byte LegacyMoveInvalidationPathExhausted = 2;
+        private const byte LegacyMoveInvalidationSiegeSlotChanged = 4;
+        private const byte LegacyMoveInvalidationFriendlyBlock = 8;
+        private byte _legacyMoveInvalidationFlags = LegacyMoveInvalidationNone;
+        private int _lastOccupiedSiegeValidationTurn = int.MinValue;
+        private Point _lastOccupiedSiegeValidationPosition = new Point(-1, -1);
+        private Point _lastOccupiedSiegeValidationDestination = new Point(-1, -1);
         
         /// <summary>
         /// 异步寻路系统：卡死计数器，用于触发强行重寻路
@@ -1730,6 +1759,11 @@ namespace GameObjects
             // 重置寻路状态标志
             _isPathfinding = false;
             _pathfindingCooldown = 0;
+            _legacyMoveInvalidationFlags = LegacyMoveInvalidationNone;
+            _lastOccupiedSiegeValidationTurn = int.MinValue;
+            _lastOccupiedSiegeValidationPosition = new Point(-1, -1);
+            _lastOccupiedSiegeValidationDestination = new Point(-1, -1);
+            this.ClearExecutionTarget();
             
             // 🔥 修复闪现：初始化视觉位置系统（反序列化后必须同步）
             _visualPosition.X = this.position.X;
@@ -2473,17 +2507,33 @@ namespace GameObjects
                 int distToCity = int.MaxValue;
                 foreach (Point cityTile in cityTiles)
                 {
-                    int d = Math.Abs(slot.X - cityTile.X) + Math.Abs(slot.Y - cityTile.Y);
+                    int dx = Math.Abs(slot.X - cityTile.X);
+                    int dy = Math.Abs(slot.Y - cityTile.Y);
+                    int d = this.ObliqueOffence ? Math.Max(dx, dy) : dx + dy;
                     if (d < distToCity) distToCity = d;
                 }
-                if (distToCity > myAttackRange) continue;
+                if (distToCity > myAttackRange)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[SmartSiege] {this.DisplayName} 候选坑位 {slot} 被过滤:");
+                    System.Diagnostics.Debug.WriteLine($"   原因: 超出攻击范围 (距离:{distToCity}, 范围:{myAttackRange}, 斜向:{this.ObliqueOffence})");
+                    #endif
+                    continue;
+                }
 
                 // --- 评分计算 (保持原有逻辑) ---
                 int distToTarget = 0;
                 if (slot != this.Position)
                 {
                     List<Point> simulatedPath = smartSiegePathFinder.GetFirstTierSimulatePath(this.Position, slot, this.Army.Kind);
-                    if (simulatedPath == null || simulatedPath.Count == 0) continue;
+                    if (simulatedPath == null || simulatedPath.Count == 0)
+                    {
+                        #if DEBUG
+                        System.Diagnostics.Debug.WriteLine($"[SmartSiege] {this.DisplayName} 候选坑位 {slot} 被过滤:");
+                        System.Diagnostics.Debug.WriteLine("   原因: 模拟寻路失败");
+                        #endif
+                        continue;
+                    }
                     distToTarget = simulatedPath.Count;
                 }
                 int minDistToFriendly = 999;
@@ -2636,36 +2686,62 @@ namespace GameObjects
                 return false;
             }
 
-            if (!IsMinorSmartSiegeRetarget(oldDestination, newDestination))
+            Architecture currentSiegeTarget = this.TargetArchitecture ?? this.WillArchitecture;
+            if (currentSiegeTarget != null &&
+                currentSiegeTarget.BelongedFaction != this.BelongedFaction &&
+                this.TryGetCommittedSmartSiegePosition(currentSiegeTarget, out Point committedSiegePosition) &&
+                newDestination == committedSiegePosition &&
+                !IsSmartSiegeSlotForTargetArchitecture(oldDestination, currentSiegeTarget))
+            {
+#if DEBUG
+                if (this.stuckedFor > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[SmartSiege] {this.DisplayName} preserves stuck counter when restoring committed siege slot {oldDestination} -> {newDestination}, stuckedFor={this.stuckedFor}");
+                }
+#endif
+                return false;
+            }
+
+            if (!IsSameSmartSiegeRetarget(oldDestination, newDestination))
             {
                 return true;
             }
 
 #if DEBUG
+            Architecture siegeTarget = this.TargetArchitecture ?? this.WillArchitecture;
+            System.Diagnostics.Debug.Assert(
+                siegeTarget != null &&
+                IsSmartSiegeSlotForTargetArchitecture(oldDestination, siegeTarget) &&
+                IsSmartSiegeSlotForTargetArchitecture(newDestination, siegeTarget),
+                $"[SmartSiege] Retarget must stay in the same architecture slot set: troop={this.DisplayName}, old={oldDestination}, new={newDestination}");
             if (this.stuckedFor > 0)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[SmartSiege] {this.DisplayName} preserves stuck counter for minor siege retarget {oldDestination} -> {newDestination}, stuckedFor={this.stuckedFor}");
+                    $"[SmartSiege] {this.DisplayName} preserves stuck counter for siege retarget {oldDestination} -> {newDestination}, stuckedFor={this.stuckedFor}");
             }
 #endif
             return false;
         }
 
-        private bool IsMinorSmartSiegeRetarget(Point oldDestination, Point newDestination)
+        private bool IsSameSmartSiegeRetarget(Point oldDestination, Point newDestination)
         {
             if (!IsSmartSiegeSlotForCurrentTarget(oldDestination) || !IsSmartSiegeSlotForCurrentTarget(newDestination))
             {
                 return false;
             }
 
-            int deltaX = Math.Abs(oldDestination.X - newDestination.X);
-            int deltaY = Math.Abs(oldDestination.Y - newDestination.Y);
-            return (deltaX != 0 || deltaY != 0) && Math.Max(deltaX, deltaY) <= 1;
+            return oldDestination != newDestination;
         }
 
         private bool IsSmartSiegeSlotForCurrentTarget(Point destination)
         {
-            Architecture siegeTarget = this.WillArchitecture;
+            Architecture currentTarget = this.TargetArchitecture ?? this.WillArchitecture;
+            return IsSmartSiegeSlotForTargetArchitecture(destination, currentTarget);
+        }
+
+        internal bool IsSmartSiegeSlotForTargetArchitecture(Point destination, Architecture siegeTarget)
+        {
             if (siegeTarget == null || siegeTarget.ArchitectureArea == null || siegeTarget.BelongedFaction == this.BelongedFaction)
             {
                 return false;
@@ -2684,7 +2760,9 @@ namespace GameObjects
 
             foreach (Point cityTile in siegeTarget.ArchitectureArea.Area)
             {
-                int distanceToCity = Math.Abs(destination.X - cityTile.X) + Math.Abs(destination.Y - cityTile.Y);
+                int dx = Math.Abs(destination.X - cityTile.X);
+                int dy = Math.Abs(destination.Y - cityTile.Y);
+                int distanceToCity = this.ObliqueOffence ? Math.Max(dx, dy) : dx + dy;
                 if (distanceToCity <= attackRange)
                 {
                     return true;
@@ -2694,16 +2772,131 @@ namespace GameObjects
             return false;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ClearCommittedSmartSiegePosition()
+        {
+            this._committedSmartSiegePosition = InvalidPosition;
+            this._committedSmartSiegeArchitectureId = -1;
+        }
+
+        private void RememberCommittedSmartSiegePosition(Architecture targetArchitecture, Point siegePosition)
+        {
+            if (!IsSmartSiegeSlotForTargetArchitecture(siegePosition, targetArchitecture))
+            {
+                return;
+            }
+
+            this._committedSmartSiegePosition = siegePosition;
+            this._committedSmartSiegeArchitectureId = targetArchitecture.ID;
+        }
+
+        private bool TryGetCommittedSmartSiegePosition(Architecture targetArchitecture, out Point committedSiegePosition)
+        {
+            committedSiegePosition = InvalidPosition;
+            if (targetArchitecture == null ||
+                this._committedSmartSiegeArchitectureId != targetArchitecture.ID ||
+                !IsSmartSiegeSlotForTargetArchitecture(this._committedSmartSiegePosition, targetArchitecture))
+            {
+                return false;
+            }
+
+            committedSiegePosition = this._committedSmartSiegePosition;
+            return true;
+        }
+
+        private void SyncAttackArchitectureExecutionTarget(Architecture targetArchitecture, Point siegePosition)
+        {
+            this.RememberCommittedSmartSiegePosition(targetArchitecture, siegePosition);
+            this.ClearExecutionTarget();
+            this.BeginExecutionTarget(
+                ExecutionActionKind.AttackArchitecture,
+                siegePosition,
+                targetArchitecture.ID);
+        }
+
+        private bool TrySyncResolvedAttackArchitectureDestination(Point resolvedDestination)
+        {
+            Architecture targetArchitecture = this.GetExecutionTargetArchitecture() ?? this.TargetArchitecture ?? this.WillArchitecture;
+            if (targetArchitecture == null || targetArchitecture.BelongedFaction == this.BelongedFaction)
+            {
+                return false;
+            }
+
+            if (resolvedDestination == this.Position)
+            {
+                if (!this.CanAttack(targetArchitecture))
+                {
+                    return false;
+                }
+
+                this.SyncAttackArchitectureExecutionTarget(targetArchitecture, resolvedDestination);
+                return true;
+            }
+
+            if (!IsSmartSiegeSlotForTargetArchitecture(resolvedDestination, targetArchitecture))
+            {
+                return false;
+            }
+
+            this.SyncAttackArchitectureExecutionTarget(targetArchitecture, resolvedDestination);
+            return true;
+        }
+
+        internal bool TryReserveCommittedSmartSiegePosition(Architecture targetCity, HashSet<Point> takenPositions)
+        {
+            if (targetCity == null || targetCity != this.WillArchitecture)
+            {
+                return false;
+            }
+
+            Point committedSiegeDestination = this.RealDestination;
+            if (!this.TryGetCommittedSmartSiegePosition(targetCity, out committedSiegeDestination))
+            {
+                committedSiegeDestination = this.RealDestination;
+            }
+
+            if (!IsSmartSiegeSlotForTargetArchitecture(committedSiegeDestination, targetCity) ||
+                this.stuckedFor >= SmartSiegeCommitReleaseStuckThreshold ||
+                takenPositions.Contains(committedSiegeDestination))
+            {
+                return false;
+            }
+
+            Troop occupier = Session.Current.Scenario.GetTroopByPosition(committedSiegeDestination);
+            if (occupier != null && occupier != this)
+            {
+                return false;
+            }
+
+            takenPositions.Add(committedSiegeDestination);
+            return true;
+        }
+
         /// <summary>
         /// 【智能攻城】应用分配的攻击位置，设置寻路目标
         /// </summary>
         public bool ApplySmartSiegePosition(Point siegePosition)
         {
             if (siegePosition == new Point(-1, -1)) return false;
+            if (this.IsExecutionTargetLockedForCurrentTick() &&
+                this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture) &&
+                this.GetExecutionTargetPosition() != siegePosition)
+            {
+                return false;
+            }
 
             if (siegePosition == this.Position)
             {
-                this.RealDestination = this.Position;
+                Architecture smartSiegeTarget = this.TargetArchitecture ?? this.WillArchitecture;
+                if (smartSiegeTarget != null && smartSiegeTarget.BelongedFaction != this.BelongedFaction)
+                {
+                    this.SyncAttackArchitectureExecutionTarget(smartSiegeTarget, siegePosition);
+                }
+                else
+                {
+                    this.RealDestination = this.Position;
+                }
+
                 this.Destination = this.Position;
                 this.HasPath = false;
                 this.Action = TroopAction.Stop;
@@ -2730,10 +2923,17 @@ namespace GameObjects
                 return false; // 返回false表示当前无法分配
             }
 
-            this.RealDestination = siegePosition;
-            
-            // ★★★ 修复：分配新任务时重置卡住计数器 ★★★
-            this.stuckedFor = 0;
+            Architecture currentSiegeTarget = this.TargetArchitecture ?? this.WillArchitecture;
+            if (currentSiegeTarget != null && currentSiegeTarget.BelongedFaction != this.BelongedFaction)
+            {
+                this.SyncAttackArchitectureExecutionTarget(currentSiegeTarget, siegePosition);
+            }
+            else
+            {
+                this.RealDestination = siegePosition;
+            }
+            MarkLegacyMoveInvalidated(LegacyMoveInvalidationTargetChanged);
+            MarkLegacyMoveInvalidated(LegacyMoveInvalidationSiegeSlotChanged);
             
             // 🔥 关键修复：移除立即寻路，改为设置状态让 UpdateMovementLogic 处理
             // 日期：2026-03-08
@@ -2768,9 +2968,26 @@ namespace GameObjects
         /// </summary>
         private void ResetMovePathForResolvedDestination(Point resolvedDestination)
         {
-            this.RealDestination = resolvedDestination;
+            bool preserveFrozenExecutionTarget =
+                this.IsExecutionTargetLockedForCurrentTick() &&
+                resolvedDestination == this.Position &&
+                this.HasReachedEffectiveLegacyDestination();
+            bool attackArchitectureContext =
+                this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture) ||
+                this.HasArchitectureAttackCommandContext();
+            if (preserveFrozenExecutionTarget)
+            {
+                this.destination = resolvedDestination;
+            }
+            else if (!this.TrySyncResolvedAttackArchitectureDestination(resolvedDestination) &&
+                     !attackArchitectureContext)
+            {
+                this.ForceSetRealDestination(resolvedDestination);
+            }
+
             this.Destination = resolvedDestination;
             this._friendlyBlockWaitUntilTurn = -1;
+            MarkLegacyMoveInvalidated(LegacyMoveInvalidationTargetChanged);
             this.ClearCurrentPath();
 
             if (this._cachedPath.Count > 0) this._cachedPath.Clear();
@@ -5623,6 +5840,7 @@ namespace GameObjects
             #endif
 
             // 🔥 技术性修复：统一部队创建和进攻能力检查标准
+            #if false
             if (military != null && leader != null)
             {
                 #if DEBUG
@@ -5639,8 +5857,10 @@ namespace GameObjects
                     return null;
                 }
                 
-                if (military.IsFewScaleNeedRetreat)
+                if (!playerManual)
                 {
+                    if (military.IsFewScaleNeedRetreat)
+                    {
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[Troop.Create] ❌ 军队满足撤退条件，取消创建以避免立即销毁");
                     #endif
@@ -5668,6 +5888,57 @@ namespace GameObjects
                         System.Diagnostics.Debug.WriteLine($"[Troop.Create] ❌ 军队不满足进攻条件，取消创建以避免立即无法行动");
                         #endif
                         return null;
+                    }
+                }
+                }
+            }
+
+            #endif
+
+            if (military != null && leader != null)
+            {
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[Troop.Create] military pre-check - Quantity:{military.Quantity}, MinScale:{military.Kind?.MinScale}, Scales:{military.Scales}");
+                System.Diagnostics.Debug.WriteLine($"[Troop.Create] military pre-check - IsFewScaleNeedRetreat:{military.IsFewScaleNeedRetreat}, RetreatScale:{military.RetreatScale}, playerManual:{playerManual}, forDefense:{forDefense}");
+                #endif
+
+                if (military.Quantity <= 0)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine("[Troop.Create] creation aborted: military.Quantity <= 0.");
+                    #endif
+                    return null;
+                }
+
+                if (!playerManual)
+                {
+                    if (military.IsFewScaleNeedRetreat)
+                    {
+                        #if DEBUG
+                        System.Diagnostics.Debug.WriteLine("[Troop.Create] creation aborted: military requires retreat.");
+                        #endif
+                        return null;
+                    }
+
+                    if (forDefense)
+                    {
+                        if (!CheckDefensiveCapabilityStatic(leader, military, food, from))
+                        {
+                            #if DEBUG
+                            System.Diagnostics.Debug.WriteLine("[Troop.Create] creation aborted: defensive capability check failed.");
+                            #endif
+                            return null;
+                        }
+                    }
+                    else
+                    {
+                        if (!CheckOffensiveCapabilityStatic(leader, military, food, from))
+                        {
+                            #if DEBUG
+                            System.Diagnostics.Debug.WriteLine("[Troop.Create] creation aborted: offensive capability check failed.");
+                            #endif
+                            return null;
+                        }
                     }
                 }
             }
@@ -6269,7 +6540,7 @@ namespace GameObjects
                 }
                 // 否则保留指令，让部队在本回合继续移动
             }
-            else if (this.Command is GameObjects.TroopCommand.AttackArch)
+            else if (this.HasArchitectureAttackCommandContext())
             {
                 // 攻击建筑：检查目标是否还存在
                 if (this.TargetArchitecture == null || this.TargetArchitecture.Endurance <= 0)
@@ -6281,7 +6552,7 @@ namespace GameObjects
                 }
                 // 否则保留指令，继续攻击
             }
-            else if (this.Command is GameObjects.TroopCommand.AttackTroop or GameObjects.TroopCommand.Attack)
+            else if (this.HasTroopAttackCommandContext())
             {
                 // 攻击部队：检查目标是否还存在
                 if (this.TargetTroop == null || this.TargetTroop.Destroyed)
@@ -7647,7 +7918,7 @@ namespace GameObjects
             // 原因：玩家已经明确指定了攻击目标，不应该重新选择
             // 问题：OffenceArea 可能为空（Count=0），导致 GetAttackPossibleTroops 返回空列表
             // 解决：对于玩家指令攻击（Command = AttackTroop/AttackArch），优先使用已设置的 OrientationTroop/OrientationArchitecture
-            if ((this.Command == GameObjects.TroopCommand.AttackTroop || this.Command == GameObjects.TroopCommand.Attack) && this.OrientationTroop != null)
+            if (this.HasTroopAttackCommandContext() && this.OrientationTroop != null)
             {
                 // 检查目标是否仍然有效
                 if (!this.OrientationTroop.Destroyed && 
@@ -7674,7 +7945,7 @@ namespace GameObjects
                 }
             }
             
-            if (this.Command == GameObjects.TroopCommand.AttackArch && this.OrientationArchitecture != null)
+            if (this.HasArchitectureAttackCommandContext() && this.OrientationArchitecture != null)
             {
                 // 检查目标建筑是否仍然有效
                 if (this.OrientationArchitecture.Endurance > 0 && 
@@ -11329,8 +11600,12 @@ namespace GameObjects
         /// - CurrentStratagem/CurrentCombatMethod
         /// - MovabilityLeft
         /// </summary>
-        public void ClearTransientExecutionState()
+        public void ClearTransientExecutionState(bool clearExecutionTarget = true)
         {
+            if (clearExecutionTarget)
+            {
+                this.ClearExecutionTarget();
+            }
             // 只清理瞬时执行态动作，不清理 Stop（Stop 是正常状态）
             if (this.Action == TroopAction.Move ||
                 this.Action == TroopAction.Attack ||
@@ -16534,6 +16809,7 @@ namespace GameObjects
             this.stuckedFor = 1;
             this.Action = TroopAction.Stop;
             this.HasPath = false;
+            MarkLegacyMoveInvalidated(LegacyMoveInvalidationFriendlyBlock);
             this.ClearCurrentPath();
 
             if (this._cachedPath.Count > 0)
@@ -19486,6 +19762,451 @@ namespace GameObjects
                 return (this.RationDaysLeft + "/" + this.RationDays);
             }
         }
+
+        private static int ResolveDefaultExecutionCommitTick(ExecutionActionKind actionKind, int issuedTick)
+        {
+            return actionKind switch
+            {
+                ExecutionActionKind.Enter => issuedTick,
+                ExecutionActionKind.AttackTroop => issuedTick + 1,
+                ExecutionActionKind.AttackArchitecture => issuedTick + 1,
+                ExecutionActionKind.Stratagem => issuedTick + 1,
+                ExecutionActionKind.Move => issuedTick + 2,
+                _ => issuedTick + 2
+            };
+        }
+
+        private static int ResolveDefaultExecutionArrivalTolerance(ExecutionActionKind actionKind)
+        {
+            return actionKind == ExecutionActionKind.AttackArchitecture ? 1 : 0;
+        }
+
+        private static bool ResolveDefaultExecutionFriendlyBlockWait(ExecutionActionKind actionKind)
+        {
+            return actionKind == ExecutionActionKind.AttackArchitecture;
+        }
+
+        private bool IsExecutionTargetSnapshotValid(in TroopExecutionTargetSnapshot snapshot)
+        {
+            if (!IsValidDestination(snapshot.TargetPosition))
+            {
+                return false;
+            }
+
+            GameScenario scenario = Session.Current?.Scenario;
+            if (scenario == null)
+            {
+                return true;
+            }
+
+            switch (snapshot.ActionKind)
+            {
+                case ExecutionActionKind.AttackArchitecture:
+                case ExecutionActionKind.Enter:
+                    if (snapshot.TargetArchitectureId < 0)
+                    {
+                        return false;
+                    }
+
+                    Architecture targetArchitecture = scenario.Architectures.GetGameObject(snapshot.TargetArchitectureId) as Architecture;
+                    if (targetArchitecture == null)
+                    {
+                        return false;
+                    }
+
+                    if (snapshot.ActionKind == ExecutionActionKind.Enter)
+                    {
+                        return targetArchitecture.BelongedFaction == this.BelongedFaction;
+                    }
+
+                    return targetArchitecture.Endurance > 0 &&
+                        targetArchitecture.BelongedFaction != this.BelongedFaction;
+
+                case ExecutionActionKind.AttackTroop:
+                case ExecutionActionKind.Stratagem:
+                    if (snapshot.TargetTroopId == Guid.Empty)
+                    {
+                        return true;
+                    }
+
+                    Troop targetTroop = Session.Current.GetTroopByGuid(snapshot.TargetTroopId);
+                    return targetTroop != null && !targetTroop.Destroyed;
+            }
+
+            return true;
+        }
+
+        private bool TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot)
+        {
+            if (!this._executionTargetSnapshot.HasValue)
+            {
+                snapshot = default;
+                return false;
+            }
+
+            snapshot = this._executionTargetSnapshot.Value;
+            if (this.IsExecutionTargetSnapshotValid(snapshot))
+            {
+                return true;
+            }
+
+            this._executionTargetSnapshot = null;
+            snapshot = default;
+            return false;
+        }
+
+        private void SetRealDestinationCore(Point value)
+        {
+            if (this.realDestination == value) return;
+
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} setter old={this.realDestination}, new={value}");
+
+            if (value == Point.Zero)
+            {
+                System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} assigned Point.Zero");
+                System.Diagnostics.Debug.WriteLine(new System.Diagnostics.StackTrace(true).ToString());
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[RealDestination] destination={this.destination}");
+            #endif
+
+            if (ShouldResetStuckCounterForDestinationChange(this.realDestination, value))
+            {
+                this.stuckedFor = 0;
+                ClearCompatStuckCounter();
+                #if DEBUG
+                System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} 目标改变，重置卡住计数器 (旧:{this.realDestination} 新:{value})");
+                #endif
+            }
+
+            this.realDestination = value;
+
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[RealDestination] 直接设置 destination 字段, value={value}");
+            #endif
+
+            if (this.destination != value)
+            {
+                this.destination = value;
+                this.ClearFirstTierPath();
+                this.ClearSecondTierPath();
+                this.ClearThirdTierPath();
+                this.HasPath = false;
+
+                if ((this.position == this.destination) && (this.OnEndPath != null))
+                {
+                    this.OnEndPath(this);
+                }
+            }
+
+            #if DEBUG
+            System.Diagnostics.Debug.WriteLine($"[RealDestination] applied realDestination={this.realDestination}, destination={this.destination}");
+            #endif
+        }
+
+        internal void ForceSetRealDestination(Point value)
+        {
+            bool previousOverride = this._allowForceRealDestinationOverride;
+            this._allowForceRealDestinationOverride = true;
+            try
+            {
+                this.SetRealDestinationCore(value);
+            }
+            finally
+            {
+                this._allowForceRealDestinationOverride = previousOverride;
+            }
+        }
+
+        internal void BeginExecutionTarget(
+            ExecutionActionKind actionKind,
+            Point targetPosition,
+            int targetArchitectureId = -1,
+            Guid targetTroopId = default,
+            int issuedTick = int.MinValue,
+            int commitTick = int.MinValue,
+            int arrivalTolerance = -1,
+            bool? allowFriendlyBlockWait = null)
+        {
+            if (actionKind == ExecutionActionKind.None || !IsValidDestination(targetPosition))
+            {
+                this.ClearExecutionTarget();
+                return;
+            }
+
+            if (issuedTick == int.MinValue)
+            {
+                issuedTick = Session.Current?.Scenario?.DaySince ?? 0;
+            }
+
+            if (commitTick == int.MinValue)
+            {
+                commitTick = ResolveDefaultExecutionCommitTick(actionKind, issuedTick);
+            }
+
+            if (arrivalTolerance < 0)
+            {
+                arrivalTolerance = ResolveDefaultExecutionArrivalTolerance(actionKind);
+            }
+
+            this._executionTargetSnapshot = new TroopExecutionTargetSnapshot(
+                actionKind,
+                targetPosition,
+                targetArchitectureId,
+                targetTroopId,
+                issuedTick,
+                commitTick,
+                Math.Max(0, arrivalTolerance),
+                allowFriendlyBlockWait ?? ResolveDefaultExecutionFriendlyBlockWait(actionKind));
+
+            this.ForceSetRealDestination(targetPosition);
+        }
+
+        internal void BeginExecutionTarget(in ExecutionCommand command)
+        {
+            this.BeginExecutionTarget(
+                command.ActionKind,
+                command.TargetPosition,
+                command.TargetArchitectureId,
+                command.TargetTroopId,
+                command.IssuedTick,
+                command.CommitTick);
+        }
+
+        internal Point ResolveAttackArchitectureExecutionTarget(Architecture targetArchitecture)
+        {
+            if (targetArchitecture == null || targetArchitecture.BelongedFaction == this.BelongedFaction)
+            {
+                return InvalidPosition;
+            }
+
+            if (this.CanAttack(targetArchitecture))
+            {
+                this.RememberCommittedSmartSiegePosition(targetArchitecture, this.Position);
+                return this.Position;
+            }
+
+            Point resolvedSiegePosition = InvalidPosition;
+            bool hasCommittedSiegePosition =
+                this.TryGetCommittedSmartSiegePosition(targetArchitecture, out Point cachedSiegePosition);
+            if (this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot) &&
+                snapshot.ActionKind == ExecutionActionKind.AttackArchitecture &&
+                snapshot.TargetArchitectureId == targetArchitecture.ID &&
+                IsSmartSiegeSlotForTargetArchitecture(snapshot.TargetPosition, targetArchitecture))
+            {
+                if (hasCommittedSiegePosition && cachedSiegePosition != snapshot.TargetPosition)
+                {
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[SmartSiege][PreferCommitted] {this.DisplayName} prefers committed siege slot {cachedSiegePosition} over stale snapshot {snapshot.TargetPosition}");
+#endif
+                    this.ClearExecutionTarget();
+                    resolvedSiegePosition = cachedSiegePosition;
+                }
+                else
+                {
+                    resolvedSiegePosition = snapshot.TargetPosition;
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[SmartSiege][ReuseSnapshot] {this.DisplayName} reuses execution snapshot siege slot {resolvedSiegePosition}");
+#endif
+                }
+            }
+            else if (hasCommittedSiegePosition)
+            {
+                resolvedSiegePosition = cachedSiegePosition;
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine(
+                    $"[SmartSiege][ReuseCommitted] {this.DisplayName} reuses committed siege slot {resolvedSiegePosition}, current RealDestination={this.RealDestination}");
+#endif
+            }
+            else if (IsSmartSiegeSlotForTargetArchitecture(this.RealDestination, targetArchitecture))
+            {
+                resolvedSiegePosition = this.RealDestination;
+                this.RememberCommittedSmartSiegePosition(targetArchitecture, resolvedSiegePosition);
+            }
+
+            if (!IsValidDestination(resolvedSiegePosition))
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine(
+                    $"[SmartSiege][Recompute] {this.DisplayName} recomputes siege slot because RealDestination={this.RealDestination} is not a committed slot for {targetArchitecture.Name}");
+#endif
+                resolvedSiegePosition = this.GetSmartSiegePosition(targetArchitecture);
+            }
+
+            if (!IsValidDestination(resolvedSiegePosition))
+            {
+                this.ClearExecutionTarget();
+                this.ClearCommittedSmartSiegePosition();
+                return InvalidPosition;
+            }
+
+            this.RememberCommittedSmartSiegePosition(targetArchitecture, resolvedSiegePosition);
+            return resolvedSiegePosition;
+        }
+
+        internal void BeginExecutionTargetFromCurrentState()
+        {
+            if (this.HasArchitectureAttackCommandContext() && this.TargetArchitecture != null)
+            {
+                Point targetPosition = this.ResolveAttackArchitectureExecutionTarget(this.TargetArchitecture);
+                if (!IsValidDestination(targetPosition))
+                {
+                    return;
+                }
+
+                this.BeginExecutionTarget(
+                    ExecutionActionKind.AttackArchitecture,
+                    targetPosition,
+                    this.TargetArchitecture.ID);
+                return;
+            }
+
+            this.ClearCommittedSmartSiegePosition();
+
+            if (this.HasTroopAttackCommandContext() && this.TargetTroop != null)
+            {
+                Point targetPosition = IsValidDestination(this.RealDestination)
+                    ? this.RealDestination
+                    : this.GetOptimalAttackPosition(this.TargetTroop);
+                this.BeginExecutionTarget(
+                    ExecutionActionKind.AttackTroop,
+                    targetPosition,
+                    -1,
+                    this.TargetTroop.Id);
+                return;
+            }
+
+            if (this.Command == GameObjects.TroopCommand.Stratagem)
+            {
+                Point targetPosition = IsValidDestination(this.RealDestination)
+                    ? this.RealDestination
+                    : this.Position;
+                Guid targetTroopId = this.TargetTroop?.Id ?? Guid.Empty;
+                this.BeginExecutionTarget(
+                    ExecutionActionKind.Stratagem,
+                    targetPosition,
+                    -1,
+                    targetTroopId);
+                return;
+            }
+
+            if (this.Command == GameObjects.TroopCommand.Enter && this.TargetArchitecture != null)
+            {
+                Point targetPosition = IsValidDestination(this.RealDestination)
+                    ? this.RealDestination
+                    : this.TargetArchitecture.Position;
+                this.BeginExecutionTarget(
+                    ExecutionActionKind.Enter,
+                    targetPosition,
+                    this.TargetArchitecture.ID);
+                return;
+            }
+
+            if (this.Command == GameObjects.TroopCommand.Move && IsValidDestination(this.RealDestination))
+            {
+                this.BeginExecutionTarget(
+                    ExecutionActionKind.Move,
+                    this.RealDestination);
+                return;
+            }
+
+            this.ClearExecutionTarget();
+        }
+
+        internal void ClearExecutionTarget()
+        {
+            this._executionTargetSnapshot = null;
+        }
+
+        internal bool HasExecutionTarget => this.TryGetExecutionTargetSnapshot(out _);
+
+        internal bool HasExecutionTargetFor(ExecutionActionKind actionKind)
+        {
+            return this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot) &&
+                snapshot.ActionKind == actionKind;
+        }
+
+        internal Point GetExecutionTargetPosition()
+        {
+            return this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot)
+                ? snapshot.TargetPosition
+                : this.realDestination;
+        }
+
+        internal int GetExecutionTargetArrivalTolerance()
+        {
+            return this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot)
+                ? snapshot.ArrivalTolerance
+                : 0;
+        }
+
+        internal bool IsExecutionTargetFriendlyBlockWaitAllowed()
+        {
+            return this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot) &&
+                snapshot.AllowFriendlyBlockWait;
+        }
+
+        internal bool IsExecutionTargetLockedForCurrentTick()
+        {
+            if (!this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot))
+            {
+                return false;
+            }
+
+            int currentTick = Session.Current?.Scenario?.DaySince ?? snapshot.IssuedTick;
+            return currentTick <= snapshot.CommitTick;
+        }
+
+        internal Architecture GetExecutionTargetArchitecture()
+        {
+            if (!this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot) ||
+                snapshot.TargetArchitectureId < 0)
+            {
+                return null;
+            }
+
+            return Session.Current?.Scenario?.Architectures.GetGameObject(snapshot.TargetArchitectureId) as Architecture;
+        }
+
+        private Point ResolveExecutionPathTarget(Point logicalTarget)
+        {
+            if (!IsValidDestination(logicalTarget))
+            {
+                return logicalTarget;
+            }
+
+            Troop targetTroop = this.TargetTroop;
+            if (targetTroop != null && !targetTroop.Destroyed)
+            {
+                return this.CanAttack(targetTroop)
+                    ? this.Position
+                    : this.GetOptimalAttackPosition(targetTroop);
+            }
+
+            if (this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture))
+            {
+                if (this.HasReachedAttackArchitectureExecutionTarget(logicalTarget))
+                {
+                    return this.Position;
+                }
+
+                if (!CanStopAtStrict(logicalTarget))
+                {
+                    Point fallbackPathTarget = this.FindNearestPassableToTarget(
+                        logicalTarget,
+                        Math.Max(1, this.GetExecutionTargetArrivalTolerance()));
+                    if (IsValidDestination(fallbackPathTarget))
+                    {
+                        return fallbackPathTarget;
+                    }
+                }
+            }
+
+            return logicalTarget;
+        }
+
         [DataMember]
         public Point RealDestination
         {
@@ -19496,6 +20217,19 @@ namespace GameObjects
             set
             {
                 if (this.realDestination == value) return;
+                if (!this._allowForceRealDestinationOverride &&
+                    this.TryGetExecutionTargetSnapshot(out TroopExecutionTargetSnapshot snapshot) &&
+                    snapshot.TargetPosition != value)
+                {
+                    #if DEBUG
+                    System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} ignored execution overwrite frozen={snapshot.TargetPosition}, attempt={value}");
+                    #endif
+                    return;
+                }
+
+                this.SetRealDestinationCore(value);
+                return;
+#if false
                 
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[RealDestination] {this.DisplayName} setter 被调用: 旧值={this.realDestination}, 新值={value}");
@@ -19549,6 +20283,7 @@ namespace GameObjects
                 #if DEBUG
                 System.Diagnostics.Debug.WriteLine($"[RealDestination] 设置完成, realDestination={this.realDestination}, destination={this.destination}");
                 #endif
+#endif
             }
         }
 
@@ -20564,14 +21299,18 @@ namespace GameObjects
                     // 解决：保留 Move/Stratagem 的保护，并排除攻击部队/城破后转打守军的上下文，避免读档链接阶段误触发建筑寻点
                     bool isPlayerManualCommand = this.mingling is "Move" or "Stratagem";
                     bool isTroopTargetCommand =
-                        this.Command is GameObjects.TroopCommand.AttackTroop or GameObjects.TroopCommand.Attack ||
+                        this.HasTroopAttackCommandContext() ||
                         this.mingling is "攻击军队" or "Attack";
                     bool hasBrokenArchitectureTroopFallback =
                         value.Endurance <= 0 &&
                         (this.targetTroopID >= 0 || this.willTroopID >= 0 || this.targetTroop != null || this.willTroop != null);
                     bool isInvalidDestination = (this.RealDestination.X == -1 && this.RealDestination.Y == -1);
                     
-                    if (!isPlayerManualCommand && !isTroopTargetCommand && !hasBrokenArchitectureTroopFallback && isInvalidDestination)
+                    if (!this.IsExecutionTargetLockedForCurrentTick() &&
+                        !isPlayerManualCommand &&
+                        !isTroopTargetCommand &&
+                        !hasBrokenArchitectureTroopFallback &&
+                        isInvalidDestination)
                     {
                         Point closestPoint = Session.Current.Scenario.GetClosestPoint(value.ArchitectureArea, this.Position);
                         System.Diagnostics.Debug.WriteLine($"[WillArch设置] {this.DisplayName} GetClosestPoint返回: {closestPoint}");
@@ -20594,7 +21333,8 @@ namespace GameObjects
                     //       导致玩家部队第一回合无法移动
                     // 解决：只有在 RealDestination 本身就是无效值（-1, -1）时才重置
                     //       Point.Zero 是有效的地图坐标，不应该被重置
-                    if (this.RealDestination.X == -1 && this.RealDestination.Y == -1)
+                    if (!this.IsExecutionTargetLockedForCurrentTick() &&
+                        this.RealDestination.X == -1 && this.RealDestination.Y == -1)
                     {
                         // RealDestination 已经是无效值，保持不变即可
                         System.Diagnostics.Debug.WriteLine($"[WillArch设置] {this.DisplayName} RealDest已是无效值，保持不变");
@@ -21091,6 +21831,33 @@ namespace GameObjects
             }
             
             // 确保 RealDestination 被设置
+            if (this.IsExecutionTargetLockedForCurrentTick())
+            {
+                return;
+            }
+
+            Architecture siegeTarget = this.TargetArchitecture ?? this.WillArchitecture;
+            if (siegeTarget != null && siegeTarget.BelongedFaction != this.BelongedFaction)
+            {
+                if (IsSmartSiegeSlotForTargetArchitecture(this.RealDestination, siegeTarget))
+                {
+                    return;
+                }
+
+                if (this.stuckedFor < SmartSiegeCommitReleaseStuckThreshold &&
+                    this.TryGetCommittedSmartSiegePosition(siegeTarget, out Point committedSiegePosition))
+                {
+                    this.RealDestination = committedSiegePosition;
+                    return;
+                }
+
+                if (this.CanAttack(siegeTarget))
+                {
+                    this.RealDestination = this.Position;
+                    return;
+                }
+            }
+
             if (this.WillArchitecture != null)
             {
                 this.RealDestination = Session.Current.Scenario.GetClosestPoint(this.WillArchitecture.ArchitectureArea, this.Position);
@@ -22032,7 +22799,7 @@ namespace GameObjects
                 // 原因：如果 ShowNumber/PreAction/WaitForDeepChaosFrameCount/_isPathfinding 有残留，
                 //       IsAnimationPlaying 会返回 true，导致 CurrentQueueTroopMove 死锁
                 // 解决：在非移动状态下，调用统一清理方法
-                this.ClearTransientExecutionState();
+                this.ClearTransientExecutionState(clearExecutionTarget: false);
                 
                 // 非移动状态下清理路径，防止切回状态后瞬移
                 if (_cachedPath.Count > 0) _cachedPath.Clear();
@@ -22264,6 +23031,52 @@ namespace GameObjects
         }
 
         /// <summary>
+        /// 统一判定当前攻击命令是否处于“攻击建筑”语义，避免 Attack/AttackArch 在不同系统中被分裂解释。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool HasArchitectureAttackCommandContext()
+        {
+            if (this.Command == GameObjects.TroopCommand.AttackArch)
+            {
+                return this.TargetArchitecture != null;
+            }
+
+            if (this.Command != GameObjects.TroopCommand.Attack)
+            {
+                return false;
+            }
+
+            Architecture targetArchitecture = this.TargetArchitecture;
+            if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
+            {
+                return false;
+            }
+
+            Troop targetTroop = this.TargetTroop;
+            return targetTroop == null || targetTroop.Destroyed;
+        }
+
+        /// <summary>
+        /// 统一判定当前攻击命令是否处于“攻击部队”语义，避免与围城攻击互相覆写目标点。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool HasTroopAttackCommandContext()
+        {
+            if (this.Command == GameObjects.TroopCommand.AttackTroop)
+            {
+                return this.TargetTroop != null;
+            }
+
+            if (this.Command != GameObjects.TroopCommand.Attack)
+            {
+                return false;
+            }
+
+            Troop targetTroop = this.TargetTroop;
+            return targetTroop != null && !targetTroop.Destroyed;
+        }
+
+        /// <summary>
         /// 辅助判断：当前是否有合法的目标点
         /// </summary>
         private bool HasValidDestination()
@@ -22418,7 +23231,7 @@ namespace GameObjects
                 bool shouldApplyPath = true;
                 
                 // 检查1：攻击城池指令 - 检查是否已在攻击范围内
-                if (this.Command == GameObjects.TroopCommand.AttackArch)
+                if (this.HasArchitectureAttackCommandContext())
                 {
                     var targetArchitecture = this.TargetArchitecture;
                     if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
@@ -22530,6 +23343,7 @@ namespace GameObjects
                         // 🔥 修复：同步更新 FirstTierPath，确保路径数据一致性
                         // 使用 Clear + AddRange 避免分配新对象
                         this.UpdateFirstTierPath(pathPoints);
+                        ClearLegacyMoveInvalidation();
                         
                         // 🔥 关键修复：寻路成功后设置 Action = Move
                         // 日期：2026-02-27
@@ -23130,6 +23944,7 @@ namespace GameObjects
                     Architecture retreatTarget = GetBestRetreatTarget();
                     if (retreatTarget != null)
                     {
+                        this.ClearExecutionTarget();
                         this.WillArchitecture = retreatTarget;
                         // 🔥 数据验证：如果 ArchitectureArea 无效，让它崩溃，暴露数据源问题
                         this.RealDestination = GetClosestFriendlyEntryPoint(retreatTarget);
@@ -23150,12 +23965,13 @@ namespace GameObjects
                     // 🔥 修复：有目标但 RealDestination 无效，重新计算
                     // 不做防御性检查，如果 ArchitectureArea 无效，让 GetClosestPoint 抛出异常
                     System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 撤退目标有效但RealDest无效({this.RealDestination})，重新计算");
+                    this.ClearExecutionTarget();
                     this.RealDestination = GetClosestFriendlyEntryPoint(this.WillArchitecture);
                     System.Diagnostics.Debug.WriteLine($"[UpdateLegionMandate] {this.DisplayName} 重新计算RealDest: {this.RealDestination}");
                 }
                 // 撤退军团有自己的目标，继续处理
             }
-            else if (this.BelongedLegion.WillArchitecture != null)
+            else if (this.BelongedLegion.WillArchitecture != null && !this.IsExecutionTargetLockedForCurrentTick())
             {
                 // 🔥 修复：玩家军团不强制同步 WillArchitecture
                 // 日期：2026-03-08
@@ -23609,6 +24425,9 @@ namespace GameObjects
             }
             retreatLegion.AddTroop(this);
             this.CurrentAIState = TroopAIState.Retreating;
+            this.SetCommand(GameObjects.TroopCommand.None);
+            this.TargetTroop = null;
+            this.TargetArchitecture = null;
             this.WillArchitecture = target;
             
             // 🔥 修复：必须设置IsRetreating标志，否则军团会被CleanupCompletedLegions立即解散
@@ -23763,6 +24582,39 @@ namespace GameObjects
             return GetLeaderCapabilityFactorStatic(this.Leader);
         }
 
+        private bool TryPrepareInRangeArchitectureCombat()
+        {
+            if (this.ManualControl ||
+                this.CurrentAIState == TroopAIState.Retreating ||
+                this.CurrentAIState == TroopAIState.EnterCity)
+            {
+                return false;
+            }
+
+            Architecture willArchitecture = this.WillArchitecture;
+            if (willArchitecture == null || willArchitecture.BelongedFaction == this.BelongedFaction || !this.CanAttack(willArchitecture))
+            {
+                return false;
+            }
+
+            if (this.TargetArchitecture != willArchitecture)
+            {
+                this.TargetArchitecture = willArchitecture;
+            }
+
+            if (this.RealDestination != this.Position ||
+                this.Destination != this.Position ||
+                this.HasPath ||
+                this.CurrentAIState == TroopAIState.Waiting)
+            {
+                ResetLegacyMoveTaskDestination(this.Position);
+            }
+
+            this._friendlyBlockWaitUntilTurn = -1;
+            this.CurrentAIState = TroopAIState.Combat;
+            return true;
+        }
+
         private void ExecuteTactics()
         {
             // 🔥 调试：记录 ExecuteTactics 的调用
@@ -23771,6 +24623,10 @@ namespace GameObjects
             // 🔥 修复：在执行战术前先检查占领机会
             // PreActionAI 包含占领逻辑，必须在移动前执行
             PreActionAI();
+            if (this.TryPrepareInRangeArchitectureCombat())
+            {
+                System.Diagnostics.Debug.WriteLine($"[ExecuteTactics] {this.DisplayName} already in siege attack range, switching to Combat");
+            }
             
             // 记录执行前的Action状态
             TroopAction actionBefore = this.Action;
@@ -23800,7 +24656,7 @@ namespace GameObjects
                                     $"[UpdateMovementLogic] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
                             }
 #endif
-                            this.ClearTransientExecutionState();
+                            this.ClearTransientExecutionState(clearExecutionTarget: false);
                             break;
                         }
                         if (!this.CanStartMoveTurnTask(out nextPoint, out nextStepCost))
@@ -23812,7 +24668,7 @@ namespace GameObjects
                                     $"[UpdateMovementLogic] {this.DisplayName} 停止重启移动任务: MovLeft={this.MovabilityLeft}, NextPoint={nextPoint}, NextCost={nextStepCost}, RealDest={this.RealDestination}");
                             }
 #endif
-                            this.ClearTransientExecutionState();
+                            this.ClearTransientExecutionState(clearExecutionTarget: false);
                             break;
                         }
                         // 取消之前的任务（如果有）
@@ -23851,7 +24707,7 @@ namespace GameObjects
 #endif
                             _oldSystemMoveCts.Dispose();
                             _oldSystemMoveCts = null;
-                            this.ClearTransientExecutionState();
+                            this.ClearTransientExecutionState(clearExecutionTarget: false);
                             break;
                         }
 
@@ -23973,7 +24829,7 @@ namespace GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool HasReachedEffectiveLegacyDestination()
         {
-            Point realDestination = this.RealDestination;
+            Point realDestination = this.GetExecutionTargetPosition();
             if (!IsValidDestination(realDestination))
             {
                 return false;
@@ -23984,14 +24840,31 @@ namespace GameObjects
                 return true;
             }
 
+            if (this.CurrentAIState == TroopAIState.Retreating ||
+                this.CurrentAIState == TroopAIState.EnterCity)
+            {
+                return false;
+            }
+
+            if (this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture))
+            {
+                return this.HasReachedAttackArchitectureExecutionTarget(realDestination);
+            }
+
             Troop targetTroop = this.TargetTroop;
-            if (targetTroop != null && !targetTroop.Destroyed && this.CanAttack(targetTroop))
+            if (targetTroop != null &&
+                !targetTroop.Destroyed &&
+                !targetTroop.IsFriendly(this.BelongedFaction) &&
+                this.CanAttack(targetTroop))
             {
                 return true;
             }
 
             Architecture targetArchitecture = this.TargetArchitecture;
-            if (targetArchitecture != null && targetArchitecture.Endurance > 0 && this.CanAttack(targetArchitecture))
+            if (targetArchitecture != null &&
+                targetArchitecture.Endurance > 0 &&
+                !targetArchitecture.IsFriendly(this.BelongedFaction) &&
+                this.CanAttack(targetArchitecture))
             {
                 return true;
             }
@@ -24003,9 +24876,35 @@ namespace GameObjects
                 && this.CanAttack(willArchitecture);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool HasReachedAttackArchitectureExecutionTarget(Point logicalTarget)
+        {
+            if (!IsValidDestination(logicalTarget))
+            {
+                return false;
+            }
+
+            int arrivalTolerance = Math.Max(0, this.GetExecutionTargetArrivalTolerance());
+            Architecture targetArchitecture = this.GetExecutionTargetArchitecture() ?? this.TargetArchitecture ?? this.WillArchitecture;
+            if (targetArchitecture != null &&
+                targetArchitecture.Endurance > 0 &&
+                targetArchitecture.BelongedFaction != this.BelongedFaction &&
+                this.CanAttack(targetArchitecture))
+            {
+                if (IsSmartSiegeSlotForTargetArchitecture(logicalTarget, targetArchitecture))
+                {
+                    return GetChebyshevDistance(this.Position, logicalTarget) <= Math.Max(1, arrivalTolerance);
+                }
+
+                return true;
+            }
+
+            return GetChebyshevDistance(this.Position, logicalTarget) <= arrivalTolerance;
+        }
+
         private bool TryResolveAdjacentBlockedLegacyDestination()
         {
-            Point realDestination = this.RealDestination;
+            Point realDestination = this.GetExecutionTargetPosition();
             if (!IsValidDestination(realDestination) || realDestination == this.Position)
             {
                 return false;
@@ -24057,6 +24956,73 @@ namespace GameObjects
             return true;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void MarkLegacyMoveInvalidated(byte reason)
+        {
+            this._legacyMoveInvalidationFlags |= reason;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void ClearLegacyMoveInvalidation()
+        {
+            this._legacyMoveInvalidationFlags = LegacyMoveInvalidationNone;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool ShouldAllowLegacyPathExhaustedRepath(Point retryTarget)
+        {
+            int remainingDistance = GetChebyshevDistance(this.Position, retryTarget);
+            if (remainingDistance > LEGACY_SYNC_REPATH_MIN_REMAINING_DISTANCE)
+            {
+                return true;
+            }
+
+            byte decisiveReasons = (byte)(LegacyMoveInvalidationTargetChanged | LegacyMoveInvalidationSiegeSlotChanged | LegacyMoveInvalidationFriendlyBlock);
+            return (this._legacyMoveInvalidationFlags & decisiveReasons) != 0;
+        }
+
+        private bool TryResolveOccupiedSiegeDestinationIfNeeded(bool force = false)
+        {
+            if (this.IsExecutionTargetLockedForCurrentTick() &&
+                this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture))
+            {
+                return false;
+            }
+
+            Point realDestination = this.GetExecutionTargetPosition();
+            if (!force)
+            {
+                if (this.WillArchitecture == null || this.WillArchitecture.BelongedFaction == this.BelongedFaction)
+                {
+                    return false;
+                }
+
+                if (!IsValidDestination(realDestination) || realDestination == this.Position)
+                {
+                    return false;
+                }
+
+                int currentTurn = Session.Current?.Scenario?.DaySince ?? int.MinValue;
+                if (this._lastOccupiedSiegeValidationTurn == currentTurn
+                    && this._lastOccupiedSiegeValidationDestination == realDestination
+                    && GetChebyshevDistance(this.Position, this._lastOccupiedSiegeValidationPosition) < LEGACY_SIEGE_DESTINATION_RECHECK_DISTANCE)
+                {
+                    return false;
+                }
+            }
+
+            bool changed = this.TryResolveOccupiedSiegeDestination();
+            this._lastOccupiedSiegeValidationTurn = Session.Current?.Scenario?.DaySince ?? int.MinValue;
+            this._lastOccupiedSiegeValidationPosition = this.Position;
+            this._lastOccupiedSiegeValidationDestination = this.RealDestination;
+            if (changed)
+            {
+                MarkLegacyMoveInvalidated(LegacyMoveInvalidationSiegeSlotChanged);
+            }
+
+            return changed;
+        }
+
         private bool CanStartMoveTurnTask(out Point nextPoint, out int nextStepCost)
         {
             nextPoint = Point.Zero;
@@ -24070,7 +25036,8 @@ namespace GameObjects
             Point? nextPointOpt = this.GetNextPathPoint();
             if (!nextPointOpt.HasValue)
             {
-                if (!IsValidDestination(this.RealDestination))
+                Point executionTarget = this.GetExecutionTargetPosition();
+                if (!IsValidDestination(executionTarget))
                 {
                     return false;
                 }
@@ -24083,7 +25050,7 @@ namespace GameObjects
 
                 if (this.TryResolveAdjacentBlockedLegacyDestination())
                 {
-                    return this.RealDestination != this.Position;
+                    return this.GetExecutionTargetPosition() != this.Position;
                 }
 
                 if (this.stuckedFor >= 10)
@@ -24096,7 +25063,7 @@ namespace GameObjects
                     return false;
                 }
 
-                return !IsAtPosition(this.RealDestination);
+                return !IsAtPosition(executionTarget);
             }
 
             nextPoint = nextPointOpt.Value;
@@ -24208,13 +25175,15 @@ namespace GameObjects
             }
 
             // 🔥 修复：纠正Destination被重置为当前位置的问题
-            if (this.Destination == this.Position && this.RealDestination != this.Position
-                && this.RealDestination != new Point(-1, -1) && this.RealDestination != Point.Zero)
+            Point logicalTarget = this.GetExecutionTargetPosition();
+            if (this.Destination == this.Position && logicalTarget != this.Position
+                && logicalTarget != new Point(-1, -1) && logicalTarget != Point.Zero)
             {
-                this.Destination = this.RealDestination;
+                this.Destination = logicalTarget;
             }
 
-            this.TryResolveOccupiedSiegeDestination();
+            this.TryResolveOccupiedSiegeDestinationIfNeeded(force: true);
+            logicalTarget = this.GetExecutionTargetPosition();
 
             // 🔥 修复：验证路径有效性，如果路径失效则重新寻路
             bool needPathfinding = false;
@@ -24225,7 +25194,7 @@ namespace GameObjects
                 needPathfinding = true;
             }
             // 情况2：已到达目标
-            else if (IsAtPosition(this.RealDestination))
+            else if (IsAtPosition(logicalTarget))
             {
                 needPathfinding = false; // 已到达，不需要寻路
             }
@@ -24233,9 +25202,10 @@ namespace GameObjects
             else if (this._firstTierPath.Count > 0)
             {
                 Point pathEnd = this._firstTierPath[this._firstTierPath.Count - 1];
-                int distance = GetChebyshevDistance(pathEnd, this.RealDestination);
+                int distance = GetChebyshevDistance(pathEnd, logicalTarget);
                 if (distance > 3) // 允许3格误差，避免频繁重新寻路
                 {
+                    MarkLegacyMoveInvalidated(LegacyMoveInvalidationTargetChanged);
                     System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 路径目标偏离: 路径终点={pathEnd}, 实际目标={this.RealDestination}, 距离={distance}，重新寻路");
                     needPathfinding = true;
                 }
@@ -24243,9 +25213,9 @@ namespace GameObjects
             
             // 执行寻路
             if (needPathfinding 
-                && this.RealDestination != new Point(-1, -1)
-                && this.RealDestination != Point.Zero
-                && !IsAtPosition(this.RealDestination))
+                && logicalTarget != new Point(-1, -1)
+                && logicalTarget != Point.Zero
+                && !IsAtPosition(logicalTarget))
             {
                 if (cancellationToken.IsCancellationRequested || this.Destroyed) return false;
 
@@ -24271,8 +25241,8 @@ namespace GameObjects
 
                 // 🔥 2026-03-11 修复：如果有攻击目标，使用 GetOptimalAttackPosition 计算安全目标点
                 // 问题：RealDestination 可能是敌军位置（不可通行），导致 A* 9500次失败
-                Point pathTarget = this.RealDestination;
-                Troop pathTargetTroop = this.TargetTroop;
+                Point pathTarget = this.ResolveExecutionPathTarget(logicalTarget);
+                Troop pathTargetTroop = null;
                 if (pathTargetTroop != null && !pathTargetTroop.Destroyed)
                 {
                     bool canAttackTarget = this.CanAttack(pathTargetTroop);
@@ -24305,6 +25275,10 @@ namespace GameObjects
                 }
 
                 bool pathFound = pathFinder.GetFirstTierPath(this.Position, pathTarget, armyKind);
+                if (pathFound && this._firstTierPath != null && this._firstTierPath.Count > 0)
+                {
+                    ClearLegacyMoveInvalidation();
+                }
 #if DEBUG
                 if (!pathFound)
                 {
@@ -24319,8 +25293,8 @@ namespace GameObjects
                 if (!pathFound || this._firstTierPath == null || this._firstTierPath.Count == 0)
                 {
                     // 尝试简单移动：计算朝向目标的方向
-                    int dx = Math.Sign(this.RealDestination.X - this.Position.X);
-                    int dy = Math.Sign(this.RealDestination.Y - this.Position.Y);
+                    int dx = Math.Sign(pathTarget.X - this.Position.X);
+                    int dy = Math.Sign(pathTarget.Y - this.Position.Y);
                     Point simpleNext = new Point(this.Position.X + dx, this.Position.Y + dy);
                     
                     // 如果简单移动的目标点可达，创建单步路径
@@ -24364,16 +25338,21 @@ namespace GameObjects
                 if (cancellationToken.IsCancellationRequested || this.Destroyed) return movedAtLeastOnce;
 
                 safetyCounter++;
-                this.TryResolveOccupiedSiegeDestination();
 
                 // A. 获取路径的下一步
                 Point? nextPointOpt = this.GetNextPathPoint();
                 
                 if (nextPointOpt == null)
                 {
-                    if (this.WillArchitecture != null
-                        && this.WillArchitecture.BelongedFaction != this.BelongedFaction
-                        && this.CanAttack(this.WillArchitecture))
+                    logicalTarget = this.GetExecutionTargetPosition();
+                    this.TryResolveOccupiedSiegeDestinationIfNeeded();
+                    bool stopForCurrentSiegePosition =
+                        this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture)
+                            ? this.HasReachedAttackArchitectureExecutionTarget(logicalTarget)
+                            : this.WillArchitecture != null
+                              && this.WillArchitecture.BelongedFaction != this.BelongedFaction
+                              && this.CanAttack(this.WillArchitecture);
+                    if (stopForCurrentSiegePosition)
                     {
 #if DEBUG
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 已进入可攻城位置，停止继续移动");
@@ -24395,7 +25374,7 @@ namespace GameObjects
 
                     if (this.TryResolveAdjacentBlockedLegacyDestination())
                     {
-                        if (this.RealDestination == this.Position)
+                        if (this.GetExecutionTargetPosition() == this.Position)
                         {
                             break;
                         }
@@ -24403,9 +25382,9 @@ namespace GameObjects
                         continue;
                     }
 
-                    if (!IsAtPosition(this.RealDestination) 
-                        && this.RealDestination != new Point(-1, -1)
-                        && this.RealDestination != Point.Zero
+                    if (!IsAtPosition(logicalTarget) 
+                        && logicalTarget != new Point(-1, -1)
+                        && logicalTarget != Point.Zero
                         && !this.Destroyed)
                     {
                         TroopPathFinder pathFinder = this.pathFinder;
@@ -24429,14 +25408,21 @@ namespace GameObjects
                         }
 
                         // 🔥 2026-03-11 修复：重新寻路时也要使用安全目标点
-                        Point retryTarget = this.RealDestination;
-                        Troop retryTargetTroop = this.TargetTroop;
+                        Point retryTarget = this.ResolveExecutionPathTarget(logicalTarget);
+                        Troop retryTargetTroop = null;
                         if (retryTargetTroop != null && !retryTargetTroop.Destroyed)
                         {
                             retryTarget = this.CanAttack(retryTargetTroop) 
                                 ? this.Position 
                                 : this.GetOptimalAttackPosition(retryTargetTroop);
                             this.RealDestination = retryTarget;
+                        }
+                        MarkLegacyMoveInvalidated(LegacyMoveInvalidationPathExhausted);
+                        if (!ShouldAllowLegacyPathExhaustedRepath(retryTarget))
+                        {
+                            this.stuckedFor++;
+                            SyncCompatStuckCounter();
+                            break;
                         }
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 路径走完但未到达目标，重新寻路: {this.Position} -> {retryTarget}");
 
@@ -24449,6 +25435,10 @@ namespace GameObjects
                         }
                         
                         bool pathFound = pathFinder.GetFirstTierPath(this.Position, retryTarget, armyKind);
+                        if (pathFound && this._firstTierPath.Count > 0)
+                        {
+                            ClearLegacyMoveInvalidation();
+                        }
                         
                         #if DEBUG
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 重新寻路结果: {pathFound}, 新路径长度={this._firstTierPath.Count}");
@@ -24644,9 +25634,13 @@ namespace GameObjects
                         }
                     }
 
-                    if (this.WillArchitecture != null
-                        && this.WillArchitecture.BelongedFaction != this.BelongedFaction
-                        && this.CanAttack(this.WillArchitecture))
+                    bool stopAfterMoveForCurrentSiegePosition =
+                        this.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture)
+                            ? this.HasReachedAttackArchitectureExecutionTarget(this.GetExecutionTargetPosition())
+                            : this.WillArchitecture != null
+                              && this.WillArchitecture.BelongedFaction != this.BelongedFaction
+                              && this.CanAttack(this.WillArchitecture);
+                    if (stopAfterMoveForCurrentSiegePosition)
                     {
 #if DEBUG
                         System.Diagnostics.Debug.WriteLine($"[ExecuteMoveTurnAsync] {this.DisplayName} 移动后已可攻城，停止继续寻路");

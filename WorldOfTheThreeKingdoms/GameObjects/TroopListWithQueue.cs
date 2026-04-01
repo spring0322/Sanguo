@@ -79,6 +79,7 @@ namespace GameObjects
                 {
                     if (obj is Troop troop)
                     {
+                        troop.BeginExecutionTargetFromCurrentState();
                         troops.Add(troop);
                     }
                 }
@@ -88,8 +89,9 @@ namespace GameObjects
                 for (int i = 0; i < troops.Count; i++)
                 {
                     var t = troops[i];
-                    bool hasTarget = t.RealDestination.X >= 0 && t.RealDestination.Y >= 0;
-                    int dist = hasTarget ? Math.Abs(t.Position.X - t.RealDestination.X) + Math.Abs(t.Position.Y - t.RealDestination.Y) : -1;
+                    Point target = t.GetExecutionTargetPosition();
+                    bool hasTarget = target.X >= 0 && target.Y >= 0;
+                    int dist = hasTarget ? Math.Abs(t.Position.X - target.X) + Math.Abs(t.Position.Y - target.Y) : -1;
                     System.Diagnostics.Debug.WriteLine($"  [{i}] {t.DisplayName} 位置={t.Position} 目标={t.RealDestination} 距离={dist} 速度={t.Speed}");
                 }
                 #endif
@@ -115,8 +117,10 @@ namespace GameObjects
                     // 原因：没有目标的部队（驻守、待命）不应该参与移动排序
                     // 解决：没有目标的部队排在最后（距离视为无穷大）
                     // 注意：RealDestination 初始值是 (-1, -1)，表示无目标
-                    bool hasTargetA = a.RealDestination.X >= 0 && a.RealDestination.Y >= 0;
-                    bool hasTargetB = b.RealDestination.X >= 0 && b.RealDestination.Y >= 0;
+                    Point targetA = a.GetExecutionTargetPosition();
+                    Point targetB = b.GetExecutionTargetPosition();
+                    bool hasTargetA = targetA.X >= 0 && targetA.Y >= 0;
+                    bool hasTargetB = targetB.X >= 0 && targetB.Y >= 0;
                     
                     // 有目标的部队优先于没有目标的部队
                     if (hasTargetA && !hasTargetB)
@@ -136,10 +140,10 @@ namespace GameObjects
                     if (!hasTargetA && !hasTargetB) return 0;  // 都没有目标，顺序无所谓
                     
                     // 都有目标：按距离目标排序（曼哈顿距离）
-                    int distA = Math.Abs(a.Position.X - a.RealDestination.X) + 
-                                Math.Abs(a.Position.Y - a.RealDestination.Y);
-                    int distB = Math.Abs(b.Position.X - b.RealDestination.X) + 
-                                Math.Abs(b.Position.Y - b.RealDestination.Y);
+                    int distA = Math.Abs(a.Position.X - targetA.X) + 
+                                Math.Abs(a.Position.Y - targetA.Y);
+                    int distB = Math.Abs(b.Position.X - targetB.X) + 
+                                Math.Abs(b.Position.Y - targetB.Y);
                     
                     int distCompare = distA.CompareTo(distB);
                     
@@ -181,6 +185,7 @@ namespace GameObjects
                 // 解决：无条件调用 InitializeInQueue()，确保冷却、MovabilityLeft 等状态被重置
                 //       只有"是否入队"需要 canMove 判断
                 troop.InitializeInQueue();
+                troop.BeginExecutionTargetFromCurrentState();
                 
                 bool canMove = troop.CanMoveAnyway();
                 
@@ -593,6 +598,7 @@ namespace GameObjects
                             // 注意：如果 RealDestination 为 Zero，TroopChangeRealDestination 会处理
                             
                             // AI 决策：去哪？(保留原有逻辑)
+                            this.CurrentTroop.BeginExecutionTargetFromCurrentState();
                             this.TroopChangeRealDestination(this.CurrentTroop);
 
                             // 🔍 诊断：记录 TroopChangeRealDestination 后的状态
@@ -651,7 +657,7 @@ namespace GameObjects
                             bool shouldAttackImmediately = false;
                             
                             // 检查1：攻击城池 - 检查是否已在攻击范围内
-                            if (this.CurrentTroop.Command == TroopCommand.AttackArch)
+                            if (this.CurrentTroop.HasArchitectureAttackCommandContext())
                             {
                                 var targetArchitecture = this.CurrentTroop.TargetArchitecture;
                                 if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
@@ -717,7 +723,8 @@ namespace GameObjects
                                 if (inRange)
                                 {
                                     // 已经在射程内，使用战术评分系统决定是否需要调整位置
-                                    bool needsPositionAdjustment = (this.CurrentTroop.RealDestination != this.CurrentTroop.Position);
+                                    Point currentTarget = this.CurrentTroop.GetExecutionTargetPosition();
+                                    bool needsPositionAdjustment = (currentTarget != this.CurrentTroop.Position);
                                     
                                     if (needsPositionAdjustment)
                                     {
@@ -725,7 +732,7 @@ namespace GameObjects
                                         float currentPosScore = AITacticalPositioner.EvaluateRangedPosition(
                                             this.CurrentTroop, this.CurrentTroop.Position, targetTroop);
                                         float targetPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                                            this.CurrentTroop, this.CurrentTroop.RealDestination, targetTroop);
+                                            this.CurrentTroop, currentTarget, targetTroop);
                                         
                                         // 如果目标位置的评分显著高于当前位置，继续移动
                                         // 阈值：50分（避免为了微小的改进而频繁移动）
@@ -834,7 +841,7 @@ namespace GameObjects
                     }
 
                     if (!troop.ManualControl &&
-                        troop.Command != TroopCommand.AttackArch &&
+                        !troop.HasArchitectureAttackCommandContext() &&
                         authorityContext.TryGetIntent(troop.ID, out _))
                     {
                         authorityContext.ApplyIntentProjection(scenario, troop);
@@ -855,7 +862,12 @@ namespace GameObjects
             // - Move：玩家已设置 RealDestination，保持不变
             
             // 攻击城池指令：不设置 RealDestination，等待 SmartSiege 系统处理
-            if (troop.Command == TroopCommand.AttackArch)
+            if (troop.IsExecutionTargetLockedForCurrentTick())
+            {
+                return;
+            }
+
+            if (troop.HasArchitectureAttackCommandContext())
             {
                 var targetArchitecture = troop.TargetArchitecture;
                 if (targetArchitecture == null || targetArchitecture.Endurance <= 0)
@@ -873,7 +885,7 @@ namespace GameObjects
                     }
                 }
 
-                if (troop.Command == TroopCommand.AttackArch)
+                if (troop.HasArchitectureAttackCommandContext())
                 {
                     #if DEBUG
                     System.Diagnostics.Debug.WriteLine($"[TroopChangeRealDestination] {troop.DisplayName} 攻击城池指令，交给 SmartSiege 处理");

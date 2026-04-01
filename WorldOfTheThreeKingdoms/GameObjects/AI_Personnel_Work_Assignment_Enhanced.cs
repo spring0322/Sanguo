@@ -213,6 +213,65 @@ namespace GameObjects
         /// 基于现有的AIWorkSmart逻辑提取城市需求
         /// </summary>
         /// <returns>工作需求权重数组 [农业,商业,技术,统治,民心,耐久,训练]</returns>
+        private const float SectionPreferredWorkBiasMultiplier = 1.8f;
+
+        private bool IsSectionPreferenceEnabled(ArchitectureWorkKind kind)
+        {
+            var detail = this.BelongedSection?.AIDetail;
+            if (detail == null || !detail.AutoRun)
+            {
+                return false;
+            }
+
+            return kind switch
+            {
+                ArchitectureWorkKind.农业 => detail.ValueAgriculture,
+                ArchitectureWorkKind.商业 => detail.ValueCommerce,
+                ArchitectureWorkKind.技术 => detail.ValueTechnology,
+                ArchitectureWorkKind.统治 => detail.ValueDomination,
+                ArchitectureWorkKind.民心 => detail.ValueMorale,
+                ArchitectureWorkKind.耐久 => detail.ValueEndurance,
+                ArchitectureWorkKind.训练 => detail.ValueTraining,
+                ArchitectureWorkKind.补充 => detail.ValueRecruitment,
+                _ => false
+            };
+        }
+
+        private float GetSectionPreferenceMultiplier(ArchitectureWorkKind kind)
+        {
+            return this.IsSectionPreferenceEnabled(kind) ? SectionPreferredWorkBiasMultiplier : 1f;
+        }
+
+        private void ApplySectionPreferenceBias(float[] workWeights)
+        {
+            if (workWeights == null || workWeights.Length < 8)
+            {
+                return;
+            }
+
+            this.ApplySectionPreferenceBias(workWeights, 0, ArchitectureWorkKind.农业);
+            this.ApplySectionPreferenceBias(workWeights, 1, ArchitectureWorkKind.商业);
+            this.ApplySectionPreferenceBias(workWeights, 2, ArchitectureWorkKind.技术);
+            this.ApplySectionPreferenceBias(workWeights, 3, ArchitectureWorkKind.统治);
+            this.ApplySectionPreferenceBias(workWeights, 4, ArchitectureWorkKind.民心);
+            this.ApplySectionPreferenceBias(workWeights, 5, ArchitectureWorkKind.耐久);
+            this.ApplySectionPreferenceBias(workWeights, 6, ArchitectureWorkKind.训练);
+            this.ApplySectionPreferenceBias(workWeights, 7, ArchitectureWorkKind.补充);
+        }
+
+        private void ApplySectionPreferenceBias(float[] workWeights, int index, ArchitectureWorkKind kind)
+        {
+            if (workWeights[index] <= 0f)
+            {
+                return;
+            }
+
+            workWeights[index] *= this.GetSectionPreferenceMultiplier(kind);
+        }
+
+        /// <summary>
+        /// Builds the current city's work demand weights for delegated AI.
+        /// </summary>
         private float[] GetCityWorkNeeds()
         {
             // 获取动态阈值
@@ -336,6 +395,8 @@ namespace GameObjects
             {
                 workWeights[8] = Math.Max(workWeights[8], 260.0f);
             }
+
+            this.ApplySectionPreferenceBias(workWeights);
 
             if (this.RecentlyAttacked > 0)
             {
@@ -605,14 +666,14 @@ namespace GameObjects
             bool canUsePaidInternal = p.InternalNoFundNeeded ||
                                       this.CountAssignedPaidInternalWorkersForAI() < this.GetPaidInternalWorkSlotsForAI();
             ArchitectureWorkKind bestWorkKind = (ArchitectureWorkKind)0;
-            int bestAbility = int.MinValue;
+            float bestScore = float.MinValue;
 
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)4, _architectureKind.HasDomination, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)5, _architectureKind.HasMorale, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)6, _architectureKind.HasEndurance, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)1, _architectureKind.HasAgriculture, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)2, _architectureKind.HasCommerce, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
-            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)3, _architectureKind.HasTechnology, canUsePaidInternal, ref bestWorkKind, ref bestAbility);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)4, _architectureKind.HasDomination, canUsePaidInternal, ref bestWorkKind, ref bestScore);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)5, _architectureKind.HasMorale, canUsePaidInternal, ref bestWorkKind, ref bestScore);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)6, _architectureKind.HasEndurance, canUsePaidInternal, ref bestWorkKind, ref bestScore);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)1, _architectureKind.HasAgriculture, canUsePaidInternal, ref bestWorkKind, ref bestScore);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)2, _architectureKind.HasCommerce, canUsePaidInternal, ref bestWorkKind, ref bestScore);
+            this.ConsiderGenericIdleWork(p, (ArchitectureWorkKind)3, _architectureKind.HasTechnology, canUsePaidInternal, ref bestWorkKind, ref bestScore);
 
             if (bestWorkKind == (ArchitectureWorkKind)0)
             {
@@ -623,7 +684,7 @@ namespace GameObjects
             return true;
         }
 
-        private void ConsiderGenericIdleWork(Person p, ArchitectureWorkKind kind, bool isAvailable, bool canUsePaidInternal, ref ArchitectureWorkKind bestWorkKind, ref int bestAbility)
+        private void ConsiderGenericIdleWork(Person p, ArchitectureWorkKind kind, bool isAvailable, bool canUsePaidInternal, ref ArchitectureWorkKind bestWorkKind, ref float bestScore)
         {
             if (!isAvailable)
             {
@@ -635,10 +696,10 @@ namespace GameObjects
                 return;
             }
 
-            int ability = p.GetWorkAbility(kind);
-            if (ability > bestAbility)
+            float score = p.GetWorkAbility(kind) * this.GetSectionPreferenceMultiplier(kind);
+            if (score > bestScore)
             {
-                bestAbility = ability;
+                bestScore = score;
                 bestWorkKind = kind;
             }
         }
@@ -1025,6 +1086,7 @@ namespace GameObjects
             }
 
             float score = this.GetPersonWorkEfficiency(p, kind) * bias;
+            score *= this.GetSectionPreferenceMultiplier(kind);
             if (this.HasWorkforceSurplusForAI())
             {
                 score *= 0.75f + Math.Min(1.25f, p.GetWorkAbility(kind) / 100.0f);

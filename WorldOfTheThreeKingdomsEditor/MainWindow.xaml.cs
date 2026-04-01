@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -23,46 +24,82 @@ using GameObjects.FactionDetail;
 using GameManager;
 using System.Drawing;
 using OfficeOpenXml;
+using WorldOfTheThreeKingdomsEditor.Core;
 
 namespace WorldOfTheThreeKingdomsEditor
 {
     /// <summary>
     /// MainWindow.xaml 的互動邏輯
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, INotifyPropertyChanged
     {
-        private GameScenario scen;
-        private bool scenLoaded = false;
+    private GameScenario scen;
+    private bool scenLoaded = false;
+    private EditorDataManager _dataManager;
+    private bool _isLoading;
 
-        private ArchitectureTab architectureTab;
-        private FactionTab factionTab;
-        private PersonTab personTab;
-        private EventTab eventTab;
-        private DictionaryTab<int, int> fatherTab;
-        private DictionaryTab<int, int> motherTab;
-        private DictionaryTab<int, int> spouseTab;
-        private DictionaryintTab brotherIdsTab;
-        private DictionaryintTab suoshuIdsTab;
-        private DictionaryintTab closeIdsTab;
-        private DictionaryintTab hatedIdsTab;
-        private RegionTab regionTab;
-        private StateTab stateTab;
-        private TerrainDetailTab terrainDetailTab;
-        private string scename;
+    public event PropertyChangedEventHandler? PropertyChanged;
 
-        public bool CopyIncludeTitle = true;
-
-        public MainWindow()
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set
         {
-            InitializeComponent();
-            //Platforms.Platform.Current.editing = true;
-            CommonData.Current = Tools.SimpleSerializer.DeserializeJsonFile<CommonData>(@"Content\Data\Common\CommonData.json", false, false);
-
-            scen = new GameScenario();
-            scen.GameCommonData = CommonData.Current;
-            populateTables();
+            if (_isLoading != value)
+            {
+                _isLoading = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsLoading)));
+            }
         }
-        private bool hasScen = false;
+    }
+
+private ArchitectureTab architectureTab;
+private FactionTab factionTab;
+private PersonTab personTab;
+private EventTab eventTab;
+private DictionaryTab<int, int> fatherTab;
+private DictionaryTab<int, int> motherTab;
+private DictionaryTab<int, int> spouseTab;
+private DictionaryintTab brotherIdsTab;
+private DictionaryintTab suoshuIdsTab;
+private DictionaryintTab closeIdsTab;
+private DictionaryintTab hatedIdsTab;
+private RegionTab regionTab;
+private StateTab stateTab;
+private TerrainDetailTab terrainDetailTab;
+private string scename;
+
+public bool CopyIncludeTitle = true;
+
+public MainWindow()
+{
+    InitializeComponent();
+    
+    try
+    {
+        // 🔥 关键修复：使用 CommonDataLoader 替代 SimpleSerializer
+        // 日期：2026-04-01
+        // 原因：迁移到 .NET 8 + System.Text.Json + AOT
+        CommonData.Current = CommonDataLoader.LoadCommonData(@"Content\Data\Common\CommonData.json");
+        
+        _dataManager = new EditorDataManager();
+        scen = new GameScenario();
+        scen.GameCommonData = CommonData.Current;
+        
+        populateTables();
+    }
+    catch (Exception ex)
+    {
+        // 🔥 Fail-Fast：CommonData 加载失败则退出
+        MessageBox.Show(
+            $"加载 CommonData 失败，编辑器无法启动：\n{ex.Message}", 
+            "启动错误", 
+            MessageBoxButton.OK, 
+            MessageBoxImage.Error);
+        Application.Current.Shutdown();
+    }
+}
+private bool hasScen = false;
         public void initTables(string[] strs)
         {
             foreach (string s in strs)
@@ -331,7 +368,7 @@ namespace WorldOfTheThreeKingdomsEditor
             return dt;
         }
 
-        private void OpenCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e)
+        private async void OpenCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "剧本档 (*.json)|*.json";
@@ -341,19 +378,38 @@ namespace WorldOfTheThreeKingdomsEditor
             {
                 String filename = openFileDialog.FileName;
                 scename = filename;
-                scen = WorldOfTheThreeKingdoms.GameScreens.MainGameScreen.LoadScenarioData(filename, true, null, true);
-                scen.GameCommonData = CommonData.Current;
-                hasScen = true;
-                SaveSce.IsEnabled = true;
-                SaveSav.IsEnabled = false;
-                populateTables();
-                scenLoaded = true;
-                Title = "中华三国志剧本编辑器 - " + openFileDialog.SafeFileName;
-                openFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
+                
+                // 🔥 关键修复：使用异步加载避免 UI 线程阻塞
+                // 日期：2026-04-01
+                IsLoading = true;
+                try
+                {
+                    scen = await _dataManager.LoadScenarioAsync(filename);
+                    scen.GameCommonData = CommonData.Current;
+                    hasScen = true;
+                    SaveSce.IsEnabled = true;
+                    SaveSav.IsEnabled = false;
+                    populateTables();
+                    scenLoaded = true;
+                    Title = "中华三国志剧本编辑器 - " + openFileDialog.SafeFileName;
+                    openFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        $"加载剧本失败：\n{ex.Message}", 
+                        "加载错误", 
+                        MessageBoxButton.OK, 
+                        MessageBoxImage.Error);
+                }
+                finally
+                {
+                    IsLoading = false;
+                }
             }
         }
 
-        private void OpenSave(object sender, RoutedEventArgs e)
+        private async void OpenSave(object sender, RoutedEventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "存档 (*.json)|*.json";
@@ -390,116 +446,188 @@ namespace WorldOfTheThreeKingdomsEditor
                 String filename = openFileDialog.FileName;
                 String scenName = filename.Substring(filename.LastIndexOf(@"\") + 1, filename.LastIndexOf(".") - filename.LastIndexOf(@"\") - 1);
                 string filename2 = String.Format(@"Save\{0}.json", scenName);
-                scen = WorldOfTheThreeKingdoms.GameScreens.MainGameScreen.LoadScenarioData(filename2, false, null, true);
-                scen.GameCommonData = CommonData.Current;
-                hasScen = true;
-                SaveSce.IsEnabled = false;
-                SaveSav.IsEnabled = true;
-                populateTables();
-                scenLoaded = true;
-                Title = "中华三国志剧本编辑器 - " + openFileDialog.SafeFileName;
-                openFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
-            }
-        }
-        private void Save_Click(object sender, RoutedEventArgs e)
-        {
-            if (scenLoaded)
-            {
-                scen.ProcessScenarioData(true, true);//保存前再读取一进度，是为了把新增加的信息重新刷到scen里
-                SaveFileDialog saveFileDialog = new SaveFileDialog();
-                saveFileDialog.Filter = "剧本档 (*.json)|*.json";
                 
-                string initialDir;
+                // 🔥 关键修复：使用异步加载避免 UI 线程阻塞
+                // 日期：2026-04-01
+                IsLoading = true;
                 try
                 {
-                    // 1. 取「文件」目錄
-                    string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                    if (string.IsNullOrWhiteSpace(docs))
-                        throw new InvalidOperationException(); // 直接跳 catch
+                    scen = await _dataManager.LoadSaveFileAsync(filename2);
+                    scen.GameCommonData = CommonData.Current;
+                    hasScen = true;
+                    SaveSce.IsEnabled = false;
+                    SaveSav.IsEnabled = true;
+                    populateTables();
+                    scenLoaded = true;
+                    Title = "中华三国志剧本编辑器 - " + openFileDialog.SafeFileName;
+                    openFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(
+                        $"加载存档失败：\n{ex.Message}", 
+                        "加载错误", 
+                        MessageBoxButton.OK, 
+                        MessageBoxImage.Error);
+                }
+                finally
+                {
+                    IsLoading = false;
+                }
+            }
+        }
+        // 🔥 关键修复：改为异步事件处理器，避免 UI 线程阻塞
+        // 日期：2026-04-01
+        // 原因：.sav.gz 压缩和 JSON 序列化耗时，必须使用异步 API
+        private async void Save_Click(object sender, RoutedEventArgs e)
+        {
+            if (scenLoaded)
+            {
+                IsLoading = true;
+                try
+                {
+                    scen.ProcessScenarioData(true, true);//保存前再读取一进度，是为了把新增加的信息重新刷到scen里
+                    SaveFileDialog saveFileDialog = new SaveFileDialog();
+                    saveFileDialog.Filter = "存档档 (*.sav.gz)|*.sav.gz";
+                    
+                    string initialDir;
+                    try
+                    {
+                        // 1. 取「文件」目錄
+                        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                        if (string.IsNullOrWhiteSpace(docs))
+                            throw new InvalidOperationException(); // 直接跳 catch
 
-                    // 2. 組合子目錄
-                    string wanted = System.IO.Path.Combine(docs, "WorldOfTheThreeKingdoms", "Save");
+                        // 2. 組合子目錄
+                        string wanted = System.IO.Path.Combine(docs, "WorldOfTheThreeKingdoms", "Save");
 
-                    // 3. 存在就用；不存在就退到「文件」；再不行就當前目錄
-                    if (Directory.Exists(wanted))
-                        initialDir = wanted;
-                    else if (Directory.Exists(docs))
-                        initialDir = docs;
-                    else
+                        // 3. 存在就用；不存在就退到「文件」；再不行就當前目錄
+                        if (Directory.Exists(wanted))
+                            initialDir = wanted;
+                        else if (Directory.Exists(docs))
+                            initialDir = docs;
+                        else
+                            initialDir = Environment.CurrentDirectory;
+                    }
+                    catch
+                    {
+                        // 任何意外都降級到當前目錄
                         initialDir = Environment.CurrentDirectory;
+                    }
+                    saveFileDialog.InitialDirectory = initialDir;
+                    
+                    if (saveFileDialog.ShowDialog() == true)
+                    {
+                        String filename = saveFileDialog.FileName;
+                        
+                        // 🔥 关键修复：使用 EditorDataManager.SaveSaveFileAsync 替代 scen.SaveGameScenario
+                        await _dataManager.SaveSaveFileAsync(scen, filename);
+
+                        // GameCommonData.json
+                        String commonPath = @"Content\Data\Common\CommonData.json";
+                        saveGameCommonData(commonPath);
+
+                        MessageBox.Show("存档已储存为" + filename + " CommonData已储存为" + commonPath);
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 任何意外都降級到當前目錄
-                    initialDir = Environment.CurrentDirectory;
+                    MessageBox.Show($"保存存档失败：{ex.Message}", "保存错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
-                saveFileDialog.InitialDirectory = initialDir;
-                
-                if (saveFileDialog.ShowDialog() == true)
+                finally
                 {
-                    String filename = saveFileDialog.SafeFileName;
-                    scen.SaveGameScenario(filename, true, false, false, false, false, true);
-
-                    // GameCommonData.json
-                    String commonPath = @"Content\Data\Common\CommonData.json";
-                    saveGameCommonData(commonPath);
-
-
-                    MessageBox.Show("存档已储存为" + filename + " CommonData已储存为" + commonPath);
+                    IsLoading = false;
                 }
             }
         }
 
-        private void SaveCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e)
+        // 🔥 关键修复：改为异步事件处理器，避免 UI 线程阻塞
+        // 日期：2026-04-01
+        // 原因：.sav.gz 压缩和 JSON 序列化耗时，必须使用异步 API
+        private async void SaveCommandBinding_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             if (scenLoaded)
             {
-                scen.ProcessScenarioData(true, true);//保存前再读取一进度，是为了把新增加的信息重新刷到scen里
-                SaveFileDialog saveFileDialog = new SaveFileDialog();
-                saveFileDialog.Filter = "剧本档 (*.json)|*.json";
-                saveFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
-                if (saveFileDialog.ShowDialog() == true)
+                IsLoading = true;
+                try
                 {
-                    String filename = saveFileDialog.FileName;
-                    String scenName = filename.Substring(filename.LastIndexOf(@"\") + 1, filename.LastIndexOf(".") - filename.LastIndexOf(@"\") - 1);
-                    String scenPath = filename.Substring(0, filename.LastIndexOf(@"\"));
-
-                    scen.SaveGameScenario(filename, true, false, false, false, true, true);
-
-                    // GameCommonData.json
-                    String commonPath = @"Content\Data\Common\CommonData.json";
-                    saveGameCommonData(commonPath);
-
-                    // Scenarios.json
-                    String scenariosPath = scenPath + @"\Scenarios.json";
-                    List<Scenario> scesList = null;
-                    if (File.Exists(scenariosPath))
+                    scen.ProcessScenarioData(true, true);//保存前再读取一进度，是为了把新增加的信息重新刷到scen里
+                    SaveFileDialog saveFileDialog = new SaveFileDialog();
+                    saveFileDialog.Filter = "剧本档 (*.sav.gz)|*.sav.gz";
+                    saveFileDialog.InitialDirectory = Directory.GetCurrentDirectory() + @"\Content\Data\Scenario";
+                    if (saveFileDialog.ShowDialog() == true)
                     {
-                        scesList = SimpleSerializer.DeserializeJsonFile<List<Scenario>>(scenariosPath, false, false).NullToEmptyList();
-                    }
-                    if (scesList == null)
-                    {
-                        scesList = new List<Scenario>();
-                    }
+                        String filename = saveFileDialog.FileName;
+                        String scenName = filename.Substring(filename.LastIndexOf(@"\") + 1, filename.LastIndexOf(".") - filename.LastIndexOf(@"\") - 1);
+                        String scenPath = filename.Substring(0, filename.LastIndexOf(@"\"));
 
-                    Scenario s1 = createScenarioObject(scen, scenName);
-                    if (s1 != null)
-                    {
-                        int index = scesList.FindIndex(x => x.Name == scenName);
-                        if (index >= 0)
+                        // 🔥 关键修复：使用 EditorDataManager.SaveScenarioAsync 替代 scen.SaveGameScenario
+                        await _dataManager.SaveScenarioAsync(scen, filename);
+
+                        // GameCommonData.json
+                        String commonPath = @"Content\Data\Common\CommonData.json";
+                        saveGameCommonData(commonPath);
+
+                        // Scenarios.json
+                        String scenariosPath = scenPath + @"\Scenarios.json";
+                        List<Scenario> scesList = null;
+                        if (File.Exists(scenariosPath))
                         {
-                            scesList[index] = s1;
+                            // 🔥 关键修复：Scenarios.json 不使用 CommonDataLoader（它是剧本列表，不是 CommonData）
+                            // 使用 System.Text.Json 直接反序列化
+                            // 日期：2026-04-01
+                            try
+                            {
+                                string json = File.ReadAllText(scenariosPath);
+                                var options = new System.Text.Json.JsonSerializerOptions
+                                {
+                                    PropertyNameCaseInsensitive = true,
+                                    AllowTrailingCommas = true
+                                };
+                                scesList = System.Text.Json.JsonSerializer.Deserialize<List<Scenario>>(json, options);
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[MainWindow] 加载 Scenarios.json 失败: {ex.Message}");
+                                scesList = null;
+                            }
                         }
-                        else
+                        if (scesList == null)
                         {
-                            scesList.Add(s1);
+                            scesList = [];
                         }
+
+                        Scenario s1 = createScenarioObject(scen, scenName);
+                        if (s1 != null)
+                        {
+                            int index = scesList.FindIndex(x => x.Name == scenName);
+                            if (index >= 0)
+                            {
+                                scesList[index] = s1;
+                            }
+                            else
+                            {
+                                scesList.Add(s1);
+                            }
+                        }
+
+                        // 🔥 AOT 兼容：使用泛型重载
+                        string s2 = System.Text.Json.JsonSerializer.Serialize<List<Scenario>>(scesList, new System.Text.Json.JsonSerializerOptions
+                        {
+                            WriteIndented = true
+                        });
+                        File.WriteAllText(scenariosPath, s2);
+
+                        MessageBox.Show("剧本已储存为" + filename + "。CommonData已储存为" + commonPath);
                     }
-
-                    string s2 = Newtonsoft.Json.JsonConvert.SerializeObject(scesList, Newtonsoft.Json.Formatting.Indented);
-                    File.WriteAllText(scenariosPath, s2);
-
-                    MessageBox.Show("剧本已储存为" + filename + "。CommonData已储存为" + commonPath);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"保存剧本失败：{ex.Message}", "保存错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                finally
+                {
+                    IsLoading = false;
                 }
             }
             else
@@ -517,15 +645,13 @@ namespace WorldOfTheThreeKingdomsEditor
             GameScenario.SaveGameCommonData(scen);
             string ss1 = "";
             System.Runtime.Serialization.Json.DataContractJsonSerializer serializer = new System.Runtime.Serialization.Json.DataContractJsonSerializer(typeof(CommonData));
-            using (MemoryStream stream = new MemoryStream())
+            using MemoryStream stream = new MemoryStream();
+            //lock (Platform.SerializerLock)
             {
-                //lock (Platform.SerializerLock)
-                {
-                    serializer.WriteObject(stream, scen.GameCommonData);
-                }
-                var array = stream.ToArray();
-                ss1 = Encoding.UTF8.GetString(array, 0, array.Length);
+                serializer.WriteObject(stream, scen.GameCommonData);
             }
+            var array = stream.ToArray();
+            ss1 = Encoding.UTF8.GetString(array, 0, array.Length);
             ss1 = ss1.Replace("{\"", "{\r\n\"");
             ss1 = ss1.Replace("[{", "[\r\n{");
             ss1 = ss1.Replace(",\"", ",\r\n\"");
@@ -550,9 +676,9 @@ namespace WorldOfTheThreeKingdomsEditor
             }
             return new Scenario()
             {
-                Create = DateTime.Now.ToSeasonDateTime(),
+                Create = DateTime.Now.ToString("yyyy-MM-dd"),
                 Desc = scen.ScenarioDescription,
-                First = StaticMethods.SaveToString(scen.ScenarioMap.JumpPosition),
+                First = string.Join(",", scen.ScenarioMap.JumpPosition.X, scen.ScenarioMap.JumpPosition.Y),
                 IDs = gameObjectList.GameObjects.Select(x => x.ID.ToString()).Aggregate((a, b) => a + "," + b),
                 Info = "电脑",
                 Name = (scenName.IndexOf(".json") >= 0) ? scenName.Substring(0, scenName.IndexOf(".json")) : scenName,
@@ -638,7 +764,7 @@ namespace WorldOfTheThreeKingdomsEditor
 
                         DataColumnCollection columns = dt.Columns;
                         DataRow row = dt.NewRow();
-                        List<string> tempids = new List<string>();
+                        List<string> tempids = [];
                         if (!dataGrid.Name.Equals("dgDiplomaticRelation") && !dataGrid.Name.Equals("dgPersonRelations"))
                         {
                             foreach (DataRow dataRow in dt.Rows)
@@ -698,21 +824,34 @@ namespace WorldOfTheThreeKingdomsEditor
             MessageBoxResult result = MessageBox.Show("更新" + scenariosPath + "檔案，使遊戲能辨認劇本資料夾裡的劇本。是否繼續？", "更新Scenarios.json", MessageBoxButton.OKCancel);
             if (result == MessageBoxResult.OK)
             {
-                List<Scenario> scesList = new List<Scenario>();
+                List<Scenario> scesList = [];
 
-                FileInfo[] files = new DirectoryInfo(@"Content\Data\Scenario").GetFiles("*.json", SearchOption.TopDirectoryOnly);
+                // 🔥 关键修复：使用 EditorDataManager.LoadScenarioAsync 替代 MainGameScreen.LoadScenarioData
+                // 日期：2026-04-01
+                // 注意：这是同步方法中调用异步方法，使用 .Result 阻塞等待
+                FileInfo[] files = new DirectoryInfo(@"Content\Data\Scenario").GetFiles("*.sav.gz", SearchOption.TopDirectoryOnly);
                 foreach (FileInfo file in files)
                 {
-                    if (file.Name.Equals("Scenarios.json")) continue;
-                    GameScenario s = WorldOfTheThreeKingdoms.GameScreens.MainGameScreen.LoadScenarioData(file.FullName, true, null, true);
-                    Scenario s1 = createScenarioObject(s, file.Name);
-                    if (s1 != null)
+                    try
                     {
-                        scesList.Add(s1);
+                        GameScenario s = _dataManager.LoadScenarioAsync(file.FullName).Result;
+                        Scenario s1 = createScenarioObject(s, file.Name);
+                        if (s1 != null)
+                        {
+                            scesList.Add(s1);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MainWindow] 加载剧本 {file.Name} 失败: {ex.Message}");
                     }
                 }
 
-                string s2 = Newtonsoft.Json.JsonConvert.SerializeObject(scesList, Newtonsoft.Json.Formatting.Indented);
+                // 🔥 AOT 兼容：使用泛型重载
+                string s2 = System.Text.Json.JsonSerializer.Serialize<List<Scenario>>(scesList, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
                 File.WriteAllText(scenariosPath, s2);
 
                 MessageBox.Show("已更新" + scenariosPath);
@@ -731,41 +870,37 @@ namespace WorldOfTheThreeKingdomsEditor
 
                 foreach (var filename in filenames)
                 {
-                    using (var img = System.Drawing.Image.FromFile(filename))
+                    using var img = System.Drawing.Image.FromFile(filename);
+                    var bitmap = new Bitmap(img, img.Width, img.Height);
+
+                    var target = new Bitmap(img.Width, img.Height);
+
+                    using Graphics g = Graphics.FromImage(bitmap);
+                    g.DrawImage(target, 0, 0);
+                    for (int h = 0; h < bitmap.Height; h++)
                     {
-                        var bitmap = new Bitmap(img, img.Width, img.Height);
-
-                        var target = new Bitmap(img.Width, img.Height);
-
-                        using (Graphics g = Graphics.FromImage(bitmap))
+                        for (int w = 0; w < bitmap.Width; w++)
                         {
-                            g.DrawImage(target, 0, 0);
-                            for (int h = 0; h < bitmap.Height; h++)
-                            {
-                                for (int w = 0; w < bitmap.Width; w++)
-                                {
-                                    var color = bitmap.GetPixel(w, h);
-                                    color = PremultiplyAlpha(color);
-                                    target.SetPixel(w, h, color);
-                                }
-                            }
+                            var color = bitmap.GetPixel(w, h);
+                            color = PremultiplyAlpha(color);
+                            target.SetPixel(w, h, color);
                         }
-
-                        var dir = filename.Substring(0, filename.LastIndexOf('\\') + 1);
-
-                        var file = filename.Substring(filename.LastIndexOf('\\') + 1);
-
-                        var newDir = dir + "Alpha\\";
-
-                        var newFile = newDir + file;
-
-                        if (!Directory.Exists(newDir))
-                        {
-                            Directory.CreateDirectory(newDir);
-                        }
-
-                        target.Save(newFile, System.Drawing.Imaging.ImageFormat.Png);
                     }
+
+                    var dir = filename.Substring(0, filename.LastIndexOf('\\') + 1);
+
+                    var file = filename.Substring(filename.LastIndexOf('\\') + 1);
+
+                    var newDir = dir + "Alpha\\";
+
+                    var newFile = newDir + file;
+
+                    if (!Directory.Exists(newDir))
+                    {
+                        Directory.CreateDirectory(newDir);
+                    }
+
+                    target.Save(newFile, System.Drawing.Imaging.ImageFormat.Png);
                 }
 
                 MessageBox.Show("PNG圖片PreMultiplied!");
@@ -854,7 +989,8 @@ namespace WorldOfTheThreeKingdomsEditor
                             f.Capital.PersonsString = oldArch.PersonsString;
                             oldArch.PersonsString = "";
 
-                            f.ArchitecturesString = f.Capital.ID.ToString();
+                            // 🔥 移除废弃字段：ArchitecturesString 已改用 ArchitectureIDs
+                            // 日期：2026-04-01
                         }
                         else
                         {
@@ -886,7 +1022,8 @@ namespace WorldOfTheThreeKingdomsEditor
                             if (selected.BelongedFaction == null)
                             {
                                 f.AddArchitecture(selected);
-                                f.ArchitecturesString += " " + selected.ID;
+                                // 🔥 移除废弃字段：ArchitecturesString 已改用 ArchitectureIDs
+                                // 日期：2026-04-01
                                 added = 10;
                             }
                         }
@@ -1227,11 +1364,9 @@ namespace WorldOfTheThreeKingdomsEditor
                     package.Save();
 
                 }
-                StreamWriter sw = new StreamWriter(Environment.CurrentDirectory + "\\转换生成文件\\" + scenName + "地形信息.txt", false, Encoding.GetEncoding("gb2312"));
+                using StreamWriter sw = new StreamWriter(Environment.CurrentDirectory + "\\转换生成文件\\" + scenName + "地形信息.txt", false, Encoding.GetEncoding("gb2312"));
                 sw.Write(scen.ScenarioMap.MapDataString);
                 sw.Flush();
-                sw.Close();
-                sw.Dispose();
                 MessageBox.Show("转换完毕,请查阅根目录下转换生成文件夹");
             }
             else
@@ -1604,5 +1739,4 @@ namespace WorldOfTheThreeKingdomsEditor
 
         #endregion
     }
-
 }

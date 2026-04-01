@@ -1281,8 +1281,27 @@ namespace GameObjects
                 return distA.CompareTo(distB);
             });
 
+            HashSet<int> lockedTroopIds = [];
             foreach (Troop troop in sortedTroops)
             {
+                if (!troop.TryReserveCommittedSmartSiegePosition(this.WillArchitecture, takenPositions))
+                {
+                    continue;
+                }
+
+                lockedTroopIds.Add(troop.ID);
+                this.TakenPositions.Add(troop.RealDestination);
+                System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 锁定已承诺攻城位 {troop.RealDestination}");
+            }
+
+            foreach (Troop troop in sortedTroops)
+            {
+                if (lockedTroopIds.Contains(troop.ID))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 保持已承诺攻城位 {troop.RealDestination}");
+                    continue;
+                }
+
                 // 🔥 修复：跳过已在城池接触区的部队（与攻击触发条件一致）
                 // 使用 GetContactArea 而非 IsBaseViewingArchitecture，确保部队不会被重新分配坑位
                 bool inContactArea = this.WillArchitecture.ArchitectureArea.GetContactArea(false).HasPoint(troop.Position);
@@ -1346,6 +1365,13 @@ namespace GameObjects
                 {
                     if (siegePos == troop.Position)
                     {
+                        if (troop.RealDestination != troop.Position ||
+                            troop.Destination != troop.Position ||
+                            troop.CurrentAIState == TroopAIState.Waiting)
+                        {
+                            troop.ApplySmartSiegePosition(troop.Position);
+                        }
+
                         takenPositions.Add(troop.Position);
                         this.TakenPositions.Add(troop.Position);
                         System.Diagnostics.Debug.WriteLine($"[SmartSiege] {troop.DisplayName} 当前攻击位评分最高，保持原位");
@@ -1388,7 +1414,14 @@ namespace GameObjects
 
                 if (contactArea.HasPoint(troop.Position) || troop.CanAttack(this.WillArchitecture))
                 {
-                    takenPositions.Add(troop.Position);
+                        if (troop.RealDestination != troop.Position ||
+                            troop.Destination != troop.Position ||
+                            troop.CurrentAIState == TroopAIState.Waiting)
+                        {
+                            troop.ApplySmartSiegePosition(troop.Position);
+                        }
+
+                        takenPositions.Add(troop.Position);
                 }
 
                 Point reservedPosition = troop.RealDestination;

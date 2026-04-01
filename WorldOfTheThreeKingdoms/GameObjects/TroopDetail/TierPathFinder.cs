@@ -266,13 +266,14 @@ namespace GameObjects.TroopDetail
             int nearPathCostLimit = manhattanDist <= 4
                 ? Math.Max(360, directDistanceCost * 24)
                 : int.MaxValue;
+            int pathCostLimit = Math.Max(0xdac, directDistanceCost * 64);
 
             // 近距离目标不应该跑成大范围盲搜，给更严格的迭代上限。
             int maxIterations = manhattanDist <= 4
                 ? 256 + manhattanDist * 64
                 : 500 + manhattanDist * manhattanDist * 50;
             
-            while (!flag && square.RealG < 0xdac)
+            while (!flag && square.RealG < pathCostLimit)
             {
                 CheckAdjacentSquares(square, end, true, kind);
                 
@@ -281,11 +282,11 @@ namespace GameObjects.TroopDetail
                 square = this.AddToCloseList();
                 if (square == null) break;
 
-                if (square.G >= 0xdac)
+                if (square.G >= pathCostLimit)
                 {
                     #if DEBUG
                     string troopInfo = DebugTroopName ?? kind?.Name ?? "null";
-                    System.Diagnostics.Debug.WriteLine($"[寻路早退] {troopInfo}: {start}→{end}, bestG={square.G} >= 0xdac");
+                    System.Diagnostics.Debug.WriteLine($"[寻路早退] {troopInfo}: {start}→{end}, bestG={square.G} >= pathLimit={pathCostLimit}");
                     #endif
                     break;
                 }

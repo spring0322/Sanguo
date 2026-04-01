@@ -615,14 +615,15 @@ public class CommandBufferScheduler
             
             if (inRange)
             {
-                bool needsPositionAdjustment = (_currentTroop.RealDestination != _currentTroop.Position);
+                Point currentTarget = _currentTroop.GetExecutionTargetPosition();
+                bool needsPositionAdjustment = (currentTarget != _currentTroop.Position);
                 
                 if (needsPositionAdjustment)
                 {
                     float currentPosScore = AITacticalPositioner.EvaluateRangedPosition(
                         _currentTroop, _currentTroop.Position, targetTroop);
                     float targetPosScore = AITacticalPositioner.EvaluateRangedPosition(
-                        _currentTroop, _currentTroop.RealDestination, targetTroop);
+                        _currentTroop, currentTarget, targetTroop);
                     
                     return targetPosScore <= currentPosScore + 50.0f;
                 }
@@ -824,7 +825,8 @@ public class CommandBufferScheduler
 
     private void BeginExecutionAudit(Troop troop, in ExecutionCommand command)
     {
-        Point projectedDestination = troop.RealDestination;
+        troop.BeginExecutionTarget(command);
+        Point projectedDestination = troop.GetExecutionTargetPosition();
         _activeExecutionAuditByTroop[troop.Id] = new ActiveExecutionAudit(
             command,
             troop.Position,
@@ -970,6 +972,10 @@ public class CommandBufferScheduler
             
             if (!troop.Destroyed)
             {
+                troop.BeginExecutionTarget(
+                    ExecutionActionKind.Enter,
+                    enterCmd.TargetPosition,
+                    enterCmd.ArchitectureId);
                 EnqueueTroop(troop);
                 ProcessedEnterCommands++;
                 return true;
@@ -984,6 +990,11 @@ public class CommandBufferScheduler
             
             if (!troop.Destroyed)
             {
+                troop.BeginExecutionTarget(
+                    troop.CurrentStratagem != null ? ExecutionActionKind.Stratagem : ExecutionActionKind.AttackTroop,
+                    attackTroopCmd.OptimalPosition,
+                    -1,
+                    attackTroopCmd.TargetTroopId);
                 EnqueueTroop(troop);
                 ProcessedAttackTroopCommands++;
                 
@@ -1009,7 +1020,10 @@ public class CommandBufferScheduler
             {
                 if (IsValidCommandPosition(attackArchCmd.SiegePosition))
                 {
-                    troop.RealDestination = attackArchCmd.SiegePosition;
+                    troop.BeginExecutionTarget(
+                        ExecutionActionKind.AttackArchitecture,
+                        attackArchCmd.SiegePosition,
+                        attackArchCmd.ArchitectureId);
                 }
 
                 EnqueueTroop(troop);
@@ -1026,6 +1040,9 @@ public class CommandBufferScheduler
             
             if (!troop.Destroyed)
             {
+                troop.BeginExecutionTarget(
+                    ExecutionActionKind.Move,
+                    moveCmd.TargetPosition);
                 EnqueueTroop(troop);
                 ProcessedMoveCommands++;
                 return true;
@@ -1040,6 +1057,7 @@ public class CommandBufferScheduler
             
             if (!troop.Destroyed)
             {
+                troop.BeginExecutionTargetFromCurrentState();
                 EnqueueTroop(troop);
                 ProcessedStratagemCommands++;
                 return true;
@@ -1156,14 +1174,9 @@ public class CommandBufferScheduler
     {
         troop.WillArchitecture = targetArchitecture;
 
-        if (troop.CanAttack(targetArchitecture))
-        {
-            troop.ApplySmartSiegePosition(troop.Position);
-            return;
-        }
-
         Legion legion = troop.BelongedLegion;
-        if (legion != null &&
+        if (!troop.CanAttack(targetArchitecture) &&
+            legion != null &&
             (!_normalizedSiegeTargetByLegionId.TryGetValue(legion.ID, out int normalizedTargetId) ||
              normalizedTargetId != targetArchitecture.ID))
         {
@@ -1172,29 +1185,22 @@ public class CommandBufferScheduler
             legion.AssignSmartSiegePositions();
         }
 
-        if (troop.RealDestination.X >= 0 &&
-            troop.RealDestination.Y >= 0 &&
-            (troop.RealDestination != Point.Zero ||
-             troop.Position == Point.Zero ||
-             troop.CanAttack(targetArchitecture)))
+        Point executionPosition = troop.ResolveAttackArchitectureExecutionTarget(targetArchitecture);
+        if (IsValidCommandPosition(executionPosition))
         {
+#if DEBUG
+            if (troop.HasExecutionTargetFor(ExecutionActionKind.AttackArchitecture))
+            {
+                System.Diagnostics.Debug.Assert(
+                    troop.GetExecutionTargetPosition() == executionPosition,
+                    $"[SmartSiege] AttackArchitecture execution target drift detected: troop={troop.DisplayName}, snapshot={troop.GetExecutionTargetPosition()}, resolved={executionPosition}");
+            }
+#endif
+            troop.ForceSetRealDestination(executionPosition);
             return;
         }
 
-        Point siegePosition = troop.GetSmartSiegePosition(targetArchitecture);
-        if (IsValidCommandPosition(siegePosition))
-        {
-            troop.ApplySmartSiegePosition(siegePosition);
-            return;
-        }
-
-        if (troop.CanAttack(targetArchitecture))
-        {
-            troop.ApplySmartSiegePosition(troop.Position);
-            return;
-        }
-
-        troop.RealDestination = troop.Position;
+        troop.ForceSetRealDestination(troop.Position);
     }
 
     private static bool IsValidCommandPosition(Point position)
@@ -1216,6 +1222,10 @@ public class CommandBufferScheduler
         if (authorityContext != null && authorityContext.TryGetIntent(troop.ID, out TroopIntent intent))
         {
             authorityContext.ApplyIntentProjection(scenario, troop);
+            if (authorityContext.TryGetIntent(troop.ID, out TroopIntent refreshedIntent))
+            {
+                intent = refreshedIntent;
+            }
             command = MaterializeCommandFromIntent(scenario, troop, intent);
             if (command != TroopCommand.None)
             {
@@ -1274,9 +1284,31 @@ public class CommandBufferScheduler
         switch (intent.Target.Kind)
         {
             case IntentTargetKind.Architecture:
+                Architecture targetArchitecture = null;
                 if (intent.Target.TargetId >= 0)
                 {
-                    troop.TargetArchitecture = scenario.Architectures.GetGameObject(intent.Target.TargetId) as Architecture;
+                    targetArchitecture = scenario.Architectures.GetGameObject(intent.Target.TargetId) as Architecture;
+                    troop.TargetArchitecture = targetArchitecture;
+                }
+
+                if (intent.Kind == TroopIntentKind.AttackArchitecture)
+                {
+                    Architecture siegeTarget = targetArchitecture ?? troop.WillArchitecture;
+                    if (siegeTarget != null)
+                    {
+                        Point executionPosition = troop.ResolveAttackArchitectureExecutionTarget(siegeTarget);
+                        if (IsValidCommandPosition(executionPosition))
+                        {
+                            troop.ForceSetRealDestination(executionPosition);
+                            if (IsValidCommandPosition(intent.Target.Position) &&
+                                intent.Target.Position != siegeTarget.Position)
+                            {
+                                throw new InvalidOperationException(
+                                    $"[SmartSiege] AttackArchitecture intent slot contamination in scheduler: troop={troop.DisplayName}, intentPos={intent.Target.Position}, architecturePos={siegeTarget.Position}");
+                            }
+                        }
+                    }
+                    break;
                 }
 
                 if (IsValidCommandPosition(intent.Target.Position))
@@ -1293,6 +1325,20 @@ public class CommandBufferScheduler
                 break;
 
             case IntentTargetKind.Position:
+                if (intent.Kind == TroopIntentKind.AttackArchitecture)
+                {
+                    Architecture siegeTarget = troop.TargetArchitecture ?? troop.WillArchitecture;
+                    if (siegeTarget != null)
+                    {
+                        Point executionPosition = troop.ResolveAttackArchitectureExecutionTarget(siegeTarget);
+                        if (IsValidCommandPosition(executionPosition))
+                        {
+                            troop.ForceSetRealDestination(executionPosition);
+                        }
+                    }
+                    break;
+                }
+
                 if (IsValidCommandPosition(intent.Target.Position))
                 {
                     troop.RealDestination = intent.Target.Position;

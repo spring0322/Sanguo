@@ -6831,8 +6831,48 @@ namespace GameObjects
 
             DeleteInvalidRelations();
             
-            // 🔥 修复：在InitializeMapData之前重建所有建筑的ArchitectureArea
+            // 🔥 修复：新开剧本也必须清空共享影响的应用记录
 
+            try
+            {
+                int clearedCount = 0;
+
+                foreach (var facilityKind in this.GameCommonData.AllFacilityKinds.FacilityKinds.Values)
+                {
+                    foreach (var influence in facilityKind.Influences.Influences.Values)
+                    {
+                        if (influence.appliedArch.Count > 0)
+                        {
+                            influence.appliedArch.Clear();
+                            clearedCount++;
+                        }
+                    }
+                }
+
+                foreach (var technique in this.GameCommonData.AllTechniques.Techniques.Values)
+                {
+                    foreach (var influence in technique.Influences.Influences.Values)
+                    {
+                        if (influence.appliedArch.Count > 0 || influence.appliedFaction.Count > 0 ||
+                            influence.appliedPerson.Count > 0 || influence.appliedTroop.Count > 0)
+                        {
+                            influence.appliedArch.Clear();
+                            influence.appliedFaction.Clear();
+                            influence.appliedPerson.Clear();
+                            influence.appliedTroop.Clear();
+                            clearedCount++;
+                        }
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"[AfterLoadGameScenario] 清空了 {clearedCount} 个共享影响的应用记录");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AfterLoadGameScenario] 清空共享影响记录失败: {ex.Message}");
+            }
+
+            // 🔥 修复：在InitializeMapData之前重建所有建筑的ArchitectureArea
             int rebuiltCount = 0;
             foreach (Architecture architecture in this.Architectures)
             {

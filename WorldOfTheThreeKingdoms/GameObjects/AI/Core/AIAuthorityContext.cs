@@ -134,15 +134,52 @@ public sealed class AIAuthorityContext
         if (!ShouldAuthorityOwnTroop(scenario, troop)) return false;
         if (!IntentRegistry.TryGetCurrentIntent(troop.ID, out TroopIntent intent)) return false;
 
+        if (intent.Kind == TroopIntentKind.AttackArchitecture &&
+            intent.Target.Kind != IntentTargetKind.Architecture)
+        {
+            Architecture normalizedTarget = troop.TargetArchitecture ?? troop.WillArchitecture;
+            if (normalizedTarget == null)
+            {
+                throw new InvalidOperationException(
+                    $"[SmartSiege] AttackArchitecture intent lost target architecture: troop={troop.DisplayName}, intentKind={intent.Target.Kind}, intentPos={intent.Target.Position}");
+            }
+
+            intent = intent with
+            {
+                Target = IntentTargetRef.ForArchitecture(
+                    normalizedTarget.ID,
+                    normalizedTarget.Position,
+                    normalizedTarget.BelongedFaction?.ID ?? -1)
+            };
+            IntentRegistry.SetCurrentIntent(intent);
+        }
+
         TroopExecutionState executionState = GetOrCreateExecutionState(troop.ID);
         SyncLegacyCompatibilityState(scenario.DaySince, troop, executionState);
         RefreshPostureState(scenario, troop, intent, executionState, IntentCheckpointKind.BeforeProjection);
         bool preserveExplicitDestination = ShouldPreserveExplicitCommandDestination(troop);
+        bool executionTargetLocked = troop.IsExecutionTargetLockedForCurrentTick();
 
         switch (intent.Target.Kind)
         {
             case IntentTargetKind.Position:
-                if (!preserveExplicitDestination && IsValidPosition(intent.Target.Position))
+                if (intent.Kind == TroopIntentKind.AttackArchitecture)
+                {
+                    Architecture siegeTarget = troop.TargetArchitecture ?? troop.WillArchitecture;
+                    if (siegeTarget != null)
+                    {
+                        Point executionPosition = troop.ResolveAttackArchitectureExecutionTarget(siegeTarget);
+                        if (IsValidPosition(executionPosition))
+                        {
+                            troop.ForceSetRealDestination(executionPosition);
+                        }
+                    }
+                    break;
+                }
+
+                if (!executionTargetLocked &&
+                    !preserveExplicitDestination &&
+                    IsValidPosition(intent.Target.Position))
                 {
                     troop.RealDestination = intent.Target.Position;
                 }
@@ -159,16 +196,16 @@ public sealed class AIAuthorityContext
                     if (projectAsAttackTroop)
                     {
                         Point attackPosition = troop.GetOptimalAttackPosition(targetTroop);
-                        if (IsValidPosition(attackPosition))
+                        if (!executionTargetLocked && IsValidPosition(attackPosition))
                         {
                             troop.RealDestination = attackPosition;
                         }
-                        else if (IsValidPosition(targetTroop.Position))
+                        else if (!executionTargetLocked && IsValidPosition(targetTroop.Position))
                         {
                             troop.RealDestination = targetTroop.Position;
                         }
                     }
-                    else if (IsValidPosition(targetTroop.Position))
+                    else if (!executionTargetLocked && IsValidPosition(targetTroop.Position))
                     {
                         troop.RealDestination = targetTroop.Position;
                     }
@@ -180,28 +217,34 @@ public sealed class AIAuthorityContext
                 if (targetArchitecture != null)
                 {
                     troop.TargetArchitecture = targetArchitecture;
-
-                    Point projectedPosition = IsValidPosition(intent.Target.Position)
-                        ? intent.Target.Position
-                        : targetArchitecture.Position;
-                    bool intentUsesDefaultArchitecturePosition =
-                        !IsValidPosition(intent.Target.Position) ||
-                        intent.Target.Position == targetArchitecture.Position;
-                    bool preserveExplicitSiegePosition =
-                        preserveExplicitDestination &&
-                        troop.Command == TroopCommand.AttackArch &&
-                        intentUsesDefaultArchitecturePosition;
-
-                    bool preserveLegacySiegePosition =
-                        troop.Command == TroopCommand.AttackArch &&
-                        !IsValidPosition(intent.Target.Position) &&
-                        IsValidPosition(troop.RealDestination);
-
-                    if (!preserveExplicitSiegePosition &&
-                        !preserveLegacySiegePosition &&
-                        IsValidPosition(projectedPosition))
+                    bool projectAsArchitectureAttack =
+                        intent.Kind == TroopIntentKind.AttackArchitecture ||
+                        troop.HasArchitectureAttackCommandContext();
+                    if (projectAsArchitectureAttack)
                     {
-                        troop.RealDestination = projectedPosition;
+                        Point executionPosition = troop.ResolveAttackArchitectureExecutionTarget(targetArchitecture);
+                        if (IsValidPosition(executionPosition))
+                        {
+                            troop.ForceSetRealDestination(executionPosition);
+                            if (IsValidPosition(intent.Target.Position) &&
+                                intent.Target.Position != targetArchitecture.Position)
+                            {
+                                throw new InvalidOperationException(
+                                    $"[SmartSiege] AttackArchitecture intent must not carry siege slot: troop={troop.DisplayName}, intentPos={intent.Target.Position}, architecturePos={targetArchitecture.Position}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Point projectedPosition = IsValidPosition(intent.Target.Position)
+                            ? intent.Target.Position
+                            : targetArchitecture.Position;
+                        if (!executionTargetLocked &&
+                            !preserveExplicitDestination &&
+                            IsValidPosition(projectedPosition))
+                        {
+                            troop.RealDestination = projectedPosition;
+                        }
                     }
                 }
                 break;

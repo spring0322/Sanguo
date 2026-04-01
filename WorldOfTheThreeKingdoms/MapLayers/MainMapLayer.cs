@@ -85,6 +85,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     string ddsPath = basePath + ".dds";
                     if (File.Exists(ddsPath))
                     {
+                        // 🔥 Fail-Fast：确保 GraphicsDevice 已初始化
+                        if (Platform.GraphicsDevice == null)
+                        {
+                            throw new InvalidOperationException(
+                                $"[MainMapLayer] GraphicsDevice 未初始化，无法加载地图瓦片 DDS: {ddsPath}");
+                        }
+                        
                         maptile.TileTexture = WorldOfTheThreeKingdoms.Helpers.DDSLoader.Load(Platform.GraphicsDevice, ddsPath);
                     }
                     

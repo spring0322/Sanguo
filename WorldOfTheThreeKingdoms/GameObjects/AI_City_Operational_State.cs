@@ -348,7 +348,15 @@ namespace GameObjects
 
             if (this.NeedsSortieMoraleRecoveryForAI())
             {
-                workWeights[6] = Math.Max(workWeights[6], 260f);
+                for (int i = 0; i < 6; i++)
+                {
+                    if (workWeights[i] > 30f)
+                    {
+                        workWeights[i] = 30f;
+                    }
+                }
+
+                workWeights[6] = Math.Max(workWeights[6], 280f);
                 workWeights[7] = 0f;
             }
 
@@ -457,7 +465,7 @@ namespace GameObjects
                 return false;
             }
 
-            if (!this.IsFoodAbundant || this.HasHostileTroopsInView() || this.RecentlyAttacked > 0)
+            if (!this.IsFoodAbundant || this.RecentlyAttacked > 0)
             {
                 return false;
             }

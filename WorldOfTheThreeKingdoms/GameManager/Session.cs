@@ -20,6 +20,7 @@ using System.Threading;
 using Tools;
 using TroopDetailPlugin;
 using WorldOfTheThreeKingdoms;
+using WorldOfTheThreeKingdoms.GameObjects.Duel;
 using WorldOfTheThreeKingdoms.GameScreens;
 
 
@@ -858,6 +859,15 @@ namespace GameManager
                         if (mainGameScreen.cloudLayer != null)
                         {
                             mainGameScreen.cloudLayer.Start();
+                        }
+
+                        if (DuelCoordinator.TryStartPendingDemo(mainGameScreen, out string duelError))
+                        {
+                            System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ✅ 启动单挑演示\n");
+                        }
+                        else if (!string.IsNullOrEmpty(duelError))
+                        {
+                            System.IO.File.AppendAllText(logPath, $"[{System.DateTime.Now:HH:mm:ss.fff}] [PendingInit] ⚠️ 单挑演示启动失败: {duelError}\n");
                         }
 
                         // AfterInit / AI Detail / 部队注册

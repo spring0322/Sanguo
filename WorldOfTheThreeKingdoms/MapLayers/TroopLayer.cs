@@ -329,7 +329,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                 if (troop._attackAnimationFrameCounter >= DEFENSE_ANIMATION_DURATION_FRAMES)
                                 {
                                     // 调用统一清理方法
-                                    troop.ClearTransientExecutionState();
+                                    troop.ClearTransientExecutionState(clearExecutionTarget: false);
                                     troop._attackAnimationFrameCounter = 0;
                                 }
                                 nullable = null;

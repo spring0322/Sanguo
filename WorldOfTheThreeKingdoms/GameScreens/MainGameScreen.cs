@@ -317,6 +317,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         public CloudLayer cloudLayer = new CloudLayer();
 
         public DantiaoLayer dantiaoLayer = null;
+        public WorldOfTheThreeKingdoms.GameObjects.Duel.DuelController duelController = null;
 
         // 四叉树优化
         private SimpleQuadtree _simpleQuadtree;
@@ -1695,9 +1696,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 _weatherParticleSystem.Draw(Session.MainGame.SpriteBatch);
             }
 
+            if (this.duelController != null)
+            {
+                this.duelController.Draw();
+                return;
+            }
+
             if (this.dantiaoLayer != null)
             {
                 this.dantiaoLayer.Draw();
+                return;
             }
 
             this.tileAnimationLayer.Draw(base.viewportSize);
@@ -2119,6 +2127,27 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             if (this.oldDialogShowTime >= 0)
             {
                 Setting.Current.GlobalVariables.DialogShowTime = this.oldDialogShowTime;
+            }
+        }
+
+        private void EnsureObserverAutoplayRunning()
+        {
+            GameScenario scenario = Session.Current?.Scenario;
+            if (scenario == null || !scenario.IsObserverModeActive() || this.Plugins?.DateRunnerPlugin == null)
+            {
+                return;
+            }
+
+            if (!observerAutoRunStarted)
+            {
+                this.StartAutoplayMode();
+                return;
+            }
+
+            if (!this.Plugins.DateRunnerPlugin.IsPlaying &&
+                (scenario.Date == null || !scenario.Date.IsRunning))
+            {
+                this.Plugins.DateRunnerPlugin.RunDays(-999);
             }
         }
 
@@ -11683,6 +11712,15 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         // 🎨 GlobalInfluenceMap 已初始化，现在可以安全调用水墨渲染器
                         _inkRenderer?.UpdateInfluenceMap();
                         
+                        // 🆕 修复：初始化完成后立即刷新小地图（2026-03-30）
+                        // 原因：SyncAfterFactionTopologyChange 不触发 OnAfterEnergyCompetition 事件
+                        //       导致加载时小地图停留在空白地形图，需手动触发首次刷新
+                        if (this.Plugins?.AirViewPlugin is AirViewPlugin.AirViewPlugin airView)
+                        {
+                            airView.CreateStrategicMinimap(Session.Current.Scenario);
+                            System.Diagnostics.Debug.WriteLine("[MainGameScreen] ✅ 小地图首次刷新完成");
+                        }
+                        
                         System.Diagnostics.Debug.WriteLine("[MainGameScreen] 🗺️ 势力范围系统初始化完成");
                     }
                     // 场景未加载时跳过初始化，等待下一帧
@@ -12016,14 +12054,17 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                 cloudLayer.Update(Convert.ToSingle(gameTime.ElapsedGameTime.TotalSeconds));
             }
 
-            if (dantiaoLayer == null)
+            if (duelController != null)
             {
-
+                float duelDeltaSeconds = Convert.ToSingle(gameTime.ElapsedGameTime.TotalSeconds);
+                duelController.UpdateView(duelDeltaSeconds);
+                duelController.Tick(duelDeltaSeconds);
+                return;
             }
-            else
+
+            if (dantiaoLayer != null)
             {
                 dantiaoLayer.Update(Convert.ToSingle(gameTime.ElapsedGameTime.TotalSeconds));
-
                 return;
             }
 
@@ -12130,6 +12171,7 @@ private void ShowExecutorSelectionForEnhanceDiplomatic(Faction faction)
                         this.HandleLaterMouseEvent(gameTime);
                         this.ScrollTheMainMap(gameTime);
                         this.HandleKey(gameTime);
+                        this.EnsureObserverAutoplayRunning();
 
                         if (Session.GlobalVariables.EnableResposiveThreading)
                         {

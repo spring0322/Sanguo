@@ -84,15 +84,18 @@ namespace GameManager
             var io = ImGui.GetIO();
             io.Fonts.Clear(); 
 
-            string fontPath = @"C:\Windows\Fonts\msyh.ttc";
-            if (!System.IO.File.Exists(fontPath))
-            {
-                fontPath = @"C:\Windows\Fonts\simhei.ttf";
-            }
+            string fontPath = ResolveImGuiFontPath();
 
             try 
             {
-                io.Fonts.AddFontFromFileTTF(fontPath, 24.0f, null, io.Fonts.GetGlyphRangesChineseFull());
+                if (!string.IsNullOrEmpty(fontPath))
+                {
+                    io.Fonts.AddFontFromFileTTF(fontPath, 24.0f, null, io.Fonts.GetGlyphRangesChineseFull());
+                }
+                else
+                {
+                    io.Fonts.AddFontDefault();
+                }
             }
             catch 
             {
@@ -100,6 +103,29 @@ namespace GameManager
             }
 
             _imGuiRenderer.RebuildFontAtlas(); 
+        }
+
+        private static string ResolveImGuiFontPath()
+        {
+            string fontsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+            if (string.IsNullOrEmpty(fontsDirectory))
+            {
+                return string.Empty;
+            }
+
+            string yaheiPath = Path.Combine(fontsDirectory, "msyh.ttc");
+            if (File.Exists(yaheiPath))
+            {
+                return yaheiPath;
+            }
+
+            string simheiPath = Path.Combine(fontsDirectory, "simhei.ttf");
+            if (File.Exists(simheiPath))
+            {
+                return simheiPath;
+            }
+
+            return string.Empty;
         }
 
         public void Update(GameTime gameTime)

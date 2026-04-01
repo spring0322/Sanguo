@@ -3206,7 +3206,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             // If troop creation failed (e.g., no valid persons), abort gracefully
             if (this.CurrentTroop == null)
             {
-                System.Diagnostics.Debug.WriteLine("[SetCreatingTroopPosition] Troop creation failed - CurrentTroop is null. Persons list may contain only Military objects.");
+                System.Diagnostics.Debug.WriteLine("[SetCreatingTroopPosition] Troop creation failed - CreateTroop returned null.");
                 return;
             }
             

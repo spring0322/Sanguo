@@ -14,6 +14,7 @@ using GamePanels;
 using Tools;
 using Platforms;
 using WorldOfTheThreeKingdoms.Serialization.SystemTextJson;
+using WorldOfTheThreeKingdoms.GameObjects.Duel;
 
 namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 {
@@ -42,10 +43,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public static void LoadConfig()
         {
-            string path = Path.Combine("Content", "DantiaoConfig.json");
+            string path = ResolveConfigPath();
             try
             {
-                if (File.Exists(path))
+                if (!string.IsNullOrEmpty(path) && File.Exists(path))
                 {
                     string jsonString = File.ReadAllText(path);
                     
@@ -88,11 +89,234 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             // 1. 优先查找专属皮肤 (ID转String)
             if (Config.SpecialGenerals != null && Config.SpecialGenerals.ContainsKey(personId.ToString()))
             {
-                return Config.SpecialGenerals[personId.ToString()];
+                string style = Config.SpecialGenerals[personId.ToString()];
+                if (!string.IsNullOrEmpty(style) && style.StartsWith("General_", StringComparison.Ordinal))
+                {
+                    style = style["General_".Length..];
+                }
+                return style;
             }
 
             // 2. 返回默认皮肤
             return isLeft ? Config.DefaultStyleLeft : Config.DefaultStyleRight;
+        }
+        public static void EnsureStyleTextureRecs(string style, string fallbackStyle)
+        {
+            if (string.IsNullOrEmpty(style) || Session.TextureRecs == null)
+            {
+                return;
+            }
+
+            string probeKey = @"Content\Textures\Resources\Dantiao\" + style + "#WalkLeft";
+            if (Session.TextureRecs.ContainsKey(probeKey))
+            {
+                return;
+            }
+
+            string fallbackKey = @"Content\Textures\Resources\Dantiao\" + fallbackStyle + "#WalkLeft";
+            if (!Session.TextureRecs.ContainsKey(fallbackKey))
+            {
+                return;
+            }
+
+            string assetPath = @"Content\Textures\Resources\Dantiao\" + style;
+            Texture2D texture = Platform.Current.LoadTexture(assetPath + ".png", false);
+            if (texture == null)
+            {
+                return;
+            }
+
+            string[] names = ["WalkLeft", "WalkRight", "AttackLeft", "AttackRight", "Failure"];
+            TextureRecs fallbackRec = Session.TextureRecs[fallbackKey];
+            int fallbackFrameWidth = fallbackRec.Recs[0].Width;
+            int fallbackFrameHeight = fallbackRec.Recs[0].Height;
+            int columns = Math.Max(1, fallbackRec.Width / fallbackFrameWidth);
+            int rows = Math.Max(1, fallbackRec.Height / fallbackFrameHeight);
+            int frameWidth = Math.Max(1, texture.Width / columns);
+            int frameHeight = Math.Max(1, texture.Height / rows);
+            int repeat = fallbackRec.Recs.Length;
+            Rectangle[][] generatedRecs = new Rectangle[names.Length][];
+
+            for (int index = 0; index < names.Length; index++)
+            {
+                generatedRecs[index] = TextureRecsManager.FindOneTexRectangles(index, repeat, frameWidth, texture.Width, frameHeight);
+            }
+
+            Rectangle trimRect = FindSharedOpaqueTrim(texture, generatedRecs, 8);
+            if (trimRect.Width > 0 && trimRect.Height > 0 && (trimRect.Width < frameWidth || trimRect.Height < frameHeight))
+            {
+                for (int index = 0; index < generatedRecs.Length; index++)
+                {
+                    generatedRecs[index] = ApplyTrim(generatedRecs[index], trimRect);
+                }
+            }
+
+            for (int index = 0; index < names.Length; index++)
+            {
+                string key = assetPath + "#" + names[index];
+                if (Session.TextureRecs.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                Session.TextureRecs.Add(key, new TextureRecs()
+                {
+                    Width = texture.Width,
+                    Height = texture.Height,
+                    CacheType = fallbackRec.CacheType,
+                    Ext = "png",
+                    Recs = generatedRecs[index]
+                });
+            }
+        }
+
+        public static float GetStyleScale(string style, string fallbackStyle)
+        {
+            if (string.IsNullOrEmpty(style) || Session.TextureRecs == null)
+            {
+                return 1f;
+            }
+
+            string styleKey = @"Content\Textures\Resources\Dantiao\" + style + "#WalkLeft";
+            string fallbackKey = @"Content\Textures\Resources\Dantiao\" + fallbackStyle + "#WalkLeft";
+            if (!Session.TextureRecs.ContainsKey(styleKey) || !Session.TextureRecs.ContainsKey(fallbackKey))
+            {
+                return 1f;
+            }
+
+            TextureRecs styleRec = Session.TextureRecs[styleKey];
+            TextureRecs fallbackRec = Session.TextureRecs[fallbackKey];
+            if (styleRec.Recs == null || styleRec.Recs.Length == 0 || fallbackRec.Recs == null || fallbackRec.Recs.Length == 0)
+            {
+                return 1f;
+            }
+
+            int fallbackFrameWidth = fallbackRec.Recs[0].Width;
+            int fallbackFrameHeight = fallbackRec.Recs[0].Height;
+            int columns = Math.Max(1, fallbackRec.Width / fallbackFrameWidth);
+            int rows = Math.Max(1, fallbackRec.Height / fallbackFrameHeight);
+            int styleFrameWidth = Math.Max(1, styleRec.Width / columns);
+            int styleFrameHeight = Math.Max(1, styleRec.Height / rows);
+            if (styleFrameWidth <= 0 || styleFrameHeight <= 0 || fallbackFrameWidth <= 0 || fallbackFrameHeight <= 0)
+            {
+                return 1f;
+            }
+
+            float scaleX = (float)fallbackFrameWidth / styleFrameWidth;
+            float scaleY = (float)fallbackFrameHeight / styleFrameHeight;
+            return Math.Min(scaleX, scaleY);
+        }
+
+        static Rectangle FindSharedOpaqueTrim(Texture2D texture, Rectangle[][] rectangleGroups, byte minAlpha)
+        {
+            if (texture == null || rectangleGroups == null || rectangleGroups.Length == 0)
+            {
+                return Rectangle.Empty;
+            }
+
+            Color[] pixels = new Color[texture.Width * texture.Height];
+            texture.GetData(pixels);
+
+            int left = int.MaxValue;
+            int top = int.MaxValue;
+            int right = int.MinValue;
+            int bottom = int.MinValue;
+            bool found = false;
+
+            for (int groupIndex = 0; groupIndex < rectangleGroups.Length; groupIndex++)
+            {
+                Rectangle[] recs = rectangleGroups[groupIndex];
+                if (recs == null)
+                {
+                    continue;
+                }
+
+                for (int recIndex = 0; recIndex < recs.Length; recIndex++)
+                {
+                    Rectangle rec = recs[recIndex];
+                    if (TryFindOpaqueBounds(pixels, texture.Width, rec, minAlpha, out Rectangle bounds))
+                    {
+                        left = Math.Min(left, bounds.X);
+                        top = Math.Min(top, bounds.Y);
+                        right = Math.Max(right, bounds.Right);
+                        bottom = Math.Max(bottom, bounds.Bottom);
+                        found = true;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                return Rectangle.Empty;
+            }
+
+            return new Rectangle(left, top, right - left, bottom - top);
+        }
+
+        static bool TryFindOpaqueBounds(Color[] pixels, int textureWidth, Rectangle rec, byte minAlpha, out Rectangle bounds)
+        {
+            int left = rec.Width;
+            int top = rec.Height;
+            int right = -1;
+            int bottom = -1;
+
+            for (int y = 0; y < rec.Height; y++)
+            {
+                int rowStart = (rec.Y + y) * textureWidth + rec.X;
+                for (int x = 0; x < rec.Width; x++)
+                {
+                    if (pixels[rowStart + x].A > minAlpha)
+                    {
+                        if (x < left) left = x;
+                        if (y < top) top = y;
+                        if (x > right) right = x;
+                        if (y > bottom) bottom = y;
+                    }
+                }
+            }
+
+            if (right < left || bottom < top)
+            {
+                bounds = Rectangle.Empty;
+                return false;
+            }
+
+            bounds = new Rectangle(left, top, right - left + 1, bottom - top + 1);
+            return true;
+        }
+
+        static Rectangle[] ApplyTrim(Rectangle[] recs, Rectangle trimRect)
+        {
+            Rectangle[] trimmed = new Rectangle[recs.Length];
+            for (int i = 0; i < recs.Length; i++)
+            {
+                Rectangle rec = recs[i];
+                trimmed[i] = new Rectangle(rec.X + trimRect.X, rec.Y + trimRect.Y, trimRect.Width, trimRect.Height);
+            }
+            return trimmed;
+        }
+
+        static string ResolveConfigPath()
+        {
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string[] candidates =
+            [
+                Path.Combine("Content", "Textures", "Resources", "Dantiao", "DantiaoConfig.json"),
+                Path.Combine("Content", "DantiaoConfig.json"),
+                Path.Combine(baseDirectory, "Content", "Textures", "Resources", "Dantiao", "DantiaoConfig.json"),
+                Path.Combine(baseDirectory, "Content", "DantiaoConfig.json")
+            ];
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                string candidate = candidates[i];
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return string.Empty;
         }
     }
 
@@ -121,6 +345,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public string Status { get; set; }
 
         Dictionary<string, AnimatedTexture> atGeneralStatus = new Dictionary<string, AnimatedTexture>();
+        private readonly DuelRandom duelRandom;
 
         // 修改：不再需要 hardcode 的 styles 数组，改为动态加载
         string[] statusNames = new string[] { "WalkLeft", "WalkRight", "AttackLeft", "AttackRight", "Failure" };
@@ -165,13 +390,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         }
         
         // 修改构造函数：增加 isLeftSide 和 isPlayer 参数
-        public General(Person p, bool isLeftSide, bool isPlayer)
+        public General(Person p, bool isLeftSide, bool isPlayer, DuelRandom duelRandom)
         {
             Person = p;
             IsPlayerControlled = isPlayer;
+            if (duelRandom == null)
+            {
+                throw new ArgumentNullException(nameof(duelRandom));
+            }
+            this.duelRandom = duelRandom;
 
             // 1. 动态获取兵模名称
             Style = DantiaoConfigManager.GetStyle(((GameObject)p).ID, isLeftSide);
+            string defaultStyle = isLeftSide ? DantiaoConfigManager.Config.DefaultStyleLeft : DantiaoConfigManager.Config.DefaultStyleRight;
+            DantiaoConfigManager.EnsureStyleTextureRecs(Style, defaultStyle);
+            float styleScale = DantiaoConfigManager.GetStyleScale(Style, defaultStyle);
 
             foreach (var gen in statusNames)
             {
@@ -184,7 +417,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                         // 动态加载选定的 Style
                         var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\" + Style, gen, "", true, 5)
                         {
-                            Depth = DantiaoLayer.depth - 0.035f
+                            Depth = DantiaoLayer.depth - 0.035f,
+                            Scale = styleScale
                         };
 
                         atGeneralStatus.Add(Style + "-" + gen, genStatus);
@@ -195,12 +429,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                         System.Diagnostics.Debug.WriteLine($"[单挑警告] TextureRecs中缺失配置: {textureKey}");
                         
                         // 尝试使用默认配置
-                        if (Style != "General01A")
+                        if (Style != defaultStyle)
                         {
-                            string fallbackKey = @"Content\Textures\Resources\Dantiao\General01A#" + gen;
+                            string fallbackKey = @"Content\Textures\Resources\Dantiao\" + defaultStyle + "#" + gen;
                             if (Session.TextureRecs != null && Session.TextureRecs.ContainsKey(fallbackKey))
                             {
-                                var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\General01A", gen, "", true, 5)
+                                var genStatus = new AnimatedTexture(@"Content\Textures\Resources\Dantiao\" + defaultStyle, gen, "", true, 5)
                                 {
                                     Depth = DantiaoLayer.depth - 0.035f
                                 };
@@ -269,12 +503,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 if (Life < 30)
                 {
                     // 血少时 70% 概率龟缩防御
-                    CurrentTactic = (new Random().Next(0, 10) < 7) ? DuelTactic.Defensive : DuelTactic.Normal;
+                    CurrentTactic = duelRandom.Next(0, 10) < 7 ? DuelTactic.Defensive : DuelTactic.Normal;
                 }
                 else
                 {
                     // 随机切换
-                    int rand = new Random().Next(0, 10);
+                    int rand = duelRandom.Next(0, 10);
                     if (rand < 3) CurrentTactic = DuelTactic.Defensive;
                     else if (rand < 6) CurrentTactic = DuelTactic.Aggressive;
                     else CurrentTactic = DuelTactic.Normal;
@@ -291,6 +525,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             if (atGeneralStatus.ContainsKey(Style + "-" + Status))
             {
                 atCurrent = atGeneralStatus[Style + "-" + Status];
+                atCurrent.Reset();
             }
         }
 
@@ -346,10 +581,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             LandPosition = landPos;
         }
 
-        public void Update(float gameTime, Vector2 screenPos)
+        public void Update(float gameTime, Vector2 screenPos, bool updateAi = true)
         {
             // 每一帧更新 AI
-            UpdateAI(gameTime);
+            if (updateAi)
+            {
+                UpdateAI(gameTime);
+            }
 
             if (atCurrent == null)
             {
@@ -505,15 +743,16 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
     }
 
-    public class DantiaoLayer
+    public class DantiaoLayer : IDuelView
     {
-        public static List<Person> Persons = null;
-
         float totalTime = 0f;
 
         float elapsedTime = 0f;
 
         float fightTime = 0f;
+        private readonly DuelRandom duelRandom;
+        // Visual effects must not consume duelRandom sequence.
+        private readonly Random visualRandom = new Random();
 
         Vector2 scale = Vector2.One;
 
@@ -556,7 +795,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         // --- 新增：指令按钮 ---
         ButtonTexture btnAtk, btnDef, btnNrm;
 
-        General genLeft, genRight;
+        General genLeft, genRight, playerGeneral;
+        Vector2 leftPlaybackHomePosition = Vector2.Zero;
+        Vector2 rightPlaybackHomePosition = Vector2.Zero;
 
         int moveDistance = 0;
 
@@ -572,17 +813,92 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public TroopDamage damage = null;
         
+        public Action OnDemoExit { get; set; }
+        public bool UseExternalLifecycle { get; set; }
+        public event Action<int, int, Person, Person> Completed;
+        public event Action PresentationCompleted;
+        public event Action<DuelCommand> CommandInput;
+        bool controllerDrivenMode = false;
+        bool commandWindowVisible = false;
+        int commandTicksRemaining = 0;
+        DuelStage controllerStage = DuelStage.Intro;
+        DuelOutcome controllerOutcome = DuelOutcome.None;
+        DuelPlaybackScript activePlaybackScript = null;
+        int activeBeatIndex = -1;
+        float activeBeatRemaining = 0f;
+        bool presentationCompletionRaised = false;
+        float resultElapsedTime = 0f;
+        
         // --- 新增：演示模式开关 ---
         public bool IsDemoMode = false;
+        public int Round => round;
+        public DuelStage CurrentStage => controllerDrivenMode ? controllerStage : DuelResolver.ResolveStageFromLegacy(Stage);
+        public DuelOutcome CurrentOutcome => controllerDrivenMode ? controllerOutcome : DuelResolver.ResolveOutcomeFromLegacyResult(Result);
+
+        static bool IsPlayerControlledSide(Person person)
+        {
+            if (person == null || person.BelongedFaction == null || Session.Current?.Scenario == null)
+            {
+                return false;
+            }
+
+            if (Session.Current.Scenario.CurrentPlayer != null)
+            {
+                return Session.Current.Scenario.IsCurrentPlayer(person.BelongedFaction);
+            }
+
+            return Session.Current.Scenario.IsPlayer(person.BelongedFaction);
+        }
+
+        void ApplyPlayerTactic(DuelTactic tactic)
+        {
+            if (!commandWindowVisible)
+            {
+                return;
+            }
+
+            DuelCommandType commandType = tactic switch
+            {
+                DuelTactic.Aggressive => DuelCommandType.Aggressive,
+                DuelTactic.Defensive => DuelCommandType.Defensive,
+                _ => DuelCommandType.Normal
+            };
+
+            CommandInput?.Invoke(new DuelCommand(commandType));
+        }
+
+        static Vector2 GetCenteredBasePosition()
+        {
+            float logicalWidth = global::GameManager.ScreenManager.VirtualWidth;
+            float logicalHeight = global::GameManager.ScreenManager.VirtualHeight;
+
+            if (Platform.GraphicsDevice != null)
+            {
+                float scaleX = global::GameManager.ScreenManager.ScaleX > 0f ? global::GameManager.ScreenManager.ScaleX : 1f;
+                float scaleY = global::GameManager.ScreenManager.ScaleY > 0f ? global::GameManager.ScreenManager.ScaleY : 1f;
+                logicalWidth = Platform.GraphicsDevice.Viewport.Width / scaleX;
+                logicalHeight = Platform.GraphicsDevice.Viewport.Height / scaleY;
+            }
+            else if (Session.ResolutionX > 0 && Session.ResolutionY > 0)
+            {
+                logicalWidth = Session.ResolutionX;
+                logicalHeight = Session.ResolutionY;
+            }
+
+            return new Vector2((logicalWidth - 1000f) / 2f, (logicalHeight - 620f) / 2f);
+        }
 
         // 修改构造函数，增加 demoMode 默认参数
-        public DantiaoLayer(Person left, Person right, bool demoMode = false)
+        public DantiaoLayer(Person left, Person right, bool demoMode = false, int? seed = null)
         {
+            duelRandom = new DuelRandom(seed ?? Environment.TickCount);
             IsDemoMode = demoMode;
+            bool leftPlayerControlled = !IsDemoMode && IsPlayerControlledSide(left);
+            bool rightPlayerControlled = IsDemoMode || (!leftPlayerControlled && IsPlayerControlledSide(right));
 
             //scale = new Vector2(Convert.ToSingle(Session.ResolutionX) / 800f, Convert.ToSingle(Session.ResolutionY) / 480f);
 
-            basePos = new Vector2((Session.ResolutionX - 1000) / 2, (Session.ResolutionY - 620) / 2);
+            basePos = GetCenteredBasePosition();
 
             btnStory = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Story", "Story", basePos + new Vector2(25, 545))
             {
@@ -659,20 +975,23 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 // 临时使用 "Page" 按钮资源代替，你可以替换为 Content\Textures\Resources\Dantiao\Attack 等
                 // 修复：使用通用的 Button 纹理，避免 KeyNotFound 或 IndexOutOfRange 导致的崩溃
                 // Button 纹理大小为 100x42 (每帧)，Scale 0.5f 后为 50x21，间隔 60px 刚好合适
-                btnAtk = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos) { Visible = !IsDemoMode, Scale = 0.5f }; 
-                btnAtk.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Aggressive; };
+                bool enablePlayerCommand = leftPlayerControlled || rightPlayerControlled;
+                btnAtk = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos) { Visible = enablePlayerCommand, Scale = 0.5f }; 
+                btnAtk.OnButtonPress += (s, e) => ApplyPlayerTactic(DuelTactic.Aggressive);
 
-                btnNrm = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(60, 0)) { Visible = !IsDemoMode, Scale = 0.5f };
-                btnNrm.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Normal; };
+                btnNrm = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(60, 0)) { Visible = enablePlayerCommand, Scale = 0.5f };
+                btnNrm.OnButtonPress += (s, e) => ApplyPlayerTactic(DuelTactic.Normal);
 
-                btnDef = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(120, 0)) { Visible = !IsDemoMode, Scale = 0.5f };
-                btnDef.OnButtonPress += (s, e) => { if(genLeft != null) genLeft.CurrentTactic = DuelTactic.Defensive; };
+                btnDef = new ButtonTexture(@"Content\Textures\Resources\Dantiao\Button", "Button", cmdPos + new Vector2(120, 0)) { Visible = enablePlayerCommand, Scale = 0.5f };
+                btnDef.OnButtonPress += (s, e) => ApplyPlayerTactic(DuelTactic.Defensive);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[单挑警告] 指令按钮纹理加载失败: {ex.Message}，将禁用玩家控制");
                 // 如果按钮纹理加载失败，强制进入演示模式
                 IsDemoMode = true;
+                leftPlayerControlled = false;
+                rightPlayerControlled = false;
                 btnAtk = null;
                 btnNrm = null;
                 btnDef = null;
@@ -682,7 +1001,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             DantiaoConfigManager.LoadConfig();
 
             // genLeft: 左侧位置 (true), 如果是 DemoMode 则为 AI (isPlayer=false)，否则为玩家 (isPlayer=true)
-            genLeft = new General(left, true, !IsDemoMode)
+            genLeft = new General(left, true, leftPlayerControlled, duelRandom)
             {
                 Force = left.ChallengeStrength,
                 Life = 100,
@@ -692,11 +1011,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             genLeft.ChangeStatus(genLeft.Style, "WalkRight");
 
             genLeft.ChangePosition(basePos + new Vector2(500-100, 250));
+            leftPlaybackHomePosition = genLeft.LandPosition;
 
             genLeft.Pause();
 
             // genRight: 右侧位置 (false), 永远是 AI (isPlayer=false)
-            genRight = new General(right, false, false)
+            genRight = new General(right, false, rightPlayerControlled, duelRandom)
             {
                 Force = right.ChallengeStrength,
                 Life = 100,
@@ -706,8 +1026,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
             genRight.ChangeStatus(genRight.Style, "WalkLeft");
 
             genRight.ChangePosition(basePos + new Vector2(2200-1000+500-80, 250));
+            rightPlaybackHomePosition = genRight.LandPosition;
 
             genRight.Pause();
+            playerGeneral = leftPlayerControlled ? genLeft : (rightPlayerControlled ? genRight : null);
 
             AudioManager.Instance?.PlayCombatMusic();
             System.Diagnostics.Debug.WriteLine($"[单挑] DantiaoLayer 初始化完成: {left.Name} vs {right.Name}");
@@ -716,7 +1038,323 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
         public void Start()
         {
             elapsedTime = 0f;
+            totalTime = 0f;
             IsVisible = true;
+            IsStart = true;
+            controllerDrivenMode = UseExternalLifecycle;
+            commandWindowVisible = false;
+            commandTicksRemaining = 0;
+            controllerStage = DuelStage.Intro;
+            controllerOutcome = DuelOutcome.None;
+            activePlaybackScript = null;
+            activeBeatIndex = -1;
+            activeBeatRemaining = 0f;
+            presentationCompletionRaised = false;
+            resultElapsedTime = 0f;
+            if (controllerDrivenMode)
+            {
+                Stage = "Start";
+                Result = 0;
+                Title = string.Empty;
+                Alpha = 0f;
+                SetCommandButtonsVisible(false);
+                genLeft.ChangeStatus(genLeft.Style, "WalkRight");
+                genRight.ChangeStatus(genRight.Style, "WalkLeft");
+                genLeft.Pause();
+                genRight.Pause();
+                SetScreenPos();
+            }
+        }
+
+        public void SyncState(DuelSessionState sessionState)
+        {
+            if (sessionState == null)
+            {
+                throw new ArgumentNullException(nameof(sessionState));
+            }
+
+            round = sessionState.Round;
+            controllerStage = sessionState.Stage;
+            controllerOutcome = sessionState.Outcome;
+            genLeft.Life = sessionState.LeftSide.CurrentLife;
+            genRight.Life = sessionState.RightSide.CurrentLife;
+            genLeft.CurrentTactic = ResolveTactic(sessionState.LeftSide.CommandLocked ? sessionState.LeftSide.LockedCommand : sessionState.LeftSide.LastCommand);
+            genRight.CurrentTactic = ResolveTactic(sessionState.RightSide.CommandLocked ? sessionState.RightSide.LockedCommand : sessionState.RightSide.LastCommand);
+        }
+
+        public void ShowCommandWindow(int remainingTicks)
+        {
+            controllerStage = DuelStage.Command;
+            commandWindowVisible = true;
+            commandTicksRemaining = remainingTicks;
+            presentationCompletionRaised = false;
+            SetCommandButtonsVisible(playerGeneral != null);
+        }
+
+        public void UpdateCommandWindow(int remainingTicks)
+        {
+            commandTicksRemaining = remainingTicks;
+        }
+
+        public void HideCommandWindow()
+        {
+            commandWindowVisible = false;
+            SetCommandButtonsVisible(false);
+        }
+
+        public void PlayScript(DuelPlaybackScript script)
+        {
+            if (script == null)
+            {
+                throw new ArgumentNullException(nameof(script));
+            }
+
+            controllerStage = DuelStage.Playback;
+            controllerOutcome = script.Outcome;
+            activePlaybackScript = script;
+            activeBeatIndex = -1;
+            activeBeatRemaining = 0f;
+            presentationCompletionRaised = false;
+            commandWindowVisible = false;
+            SetCommandButtonsVisible(false);
+            PreparePlaybackPose();
+        }
+
+        public void ShowResult(DuelOutcome outcome, string title)
+        {
+            controllerStage = DuelStage.Result;
+            controllerOutcome = outcome;
+            Result = DuelResolver.ResolveLegacyResult(outcome);
+            Title = title ?? string.Empty;
+            presentationCompletionRaised = false;
+            resultElapsedTime = 0f;
+            commandWindowVisible = false;
+            SetCommandButtonsVisible(false);
+            ApplyResultPose(outcome);
+        }
+
+        public void UpdateView(float gameTime)
+        {
+            Update(gameTime);
+        }
+
+        static DuelTactic ResolveTactic(in DuelCommand command)
+        {
+            return command.CommandType switch
+            {
+                DuelCommandType.Aggressive => DuelTactic.Aggressive,
+                DuelCommandType.Defensive => DuelTactic.Defensive,
+                _ => DuelTactic.Normal
+            };
+        }
+
+        void SetCommandButtonsVisible(bool visible)
+        {
+            if (btnAtk != null)
+            {
+                btnAtk.Visible = visible;
+            }
+
+            if (btnNrm != null)
+            {
+                btnNrm.Visible = visible;
+            }
+
+            if (btnDef != null)
+            {
+                btnDef.Visible = visible;
+            }
+        }
+
+        void RaisePresentationCompleted()
+        {
+            if (presentationCompletionRaised)
+            {
+                return;
+            }
+
+            presentationCompletionRaised = true;
+            PresentationCompleted?.Invoke();
+        }
+
+        void PreparePlaybackPose()
+        {
+            ResetPlaybackGeneral(genLeft, leftPlaybackHomePosition, "WalkRight");
+            ResetPlaybackGeneral(genRight, rightPlaybackHomePosition, "WalkLeft");
+            SetScreenPos();
+        }
+
+        void ApplyResultPose(DuelOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case DuelOutcome.LeftWin:
+                case DuelOutcome.RightDead:
+                    genRight.ChangeStatus(genRight.Style, "Failure");
+                    genRight.Pause();
+                    break;
+                case DuelOutcome.RightWin:
+                case DuelOutcome.LeftDead:
+                    genLeft.ChangeStatus(genLeft.Style, "Failure");
+                    genLeft.Pause();
+                    break;
+            }
+        }
+
+        void ResetPlaybackGeneral(General general, Vector2 homePosition, string status)
+        {
+            general.SpeedExt = 0f;
+            general.SpeedPlus = 0f;
+            general.SpeedNow = 0f;
+            general.Duration = 0f;
+            general.Delay = 0f;
+            general.ActionTime = 0f;
+            general.ChangePosition(homePosition);
+            general.StartPos = homePosition;
+            general.ChangeStatus(general.Style, status);
+            general.Pause();
+        }
+
+        void PlayPlaybackAttack(General general, Vector2 homePosition, string attackStatus, string direction, float beatDuration)
+        {
+            general.SpeedExt = 42f;
+            general.SpeedPlus = -36f;
+            general.SpeedNow = 0f;
+            general.Delay = 0f;
+            general.ActionTime = 0f;
+            general.Duration = Math.Max(0.12f, beatDuration);
+            general.ChangePosition(homePosition);
+            general.StartPos = homePosition;
+            general.ChangeStatus(general.Style, attackStatus);
+            general.Direction = direction;
+            general.Start();
+        }
+
+        void AdvancePlaybackBeat(float gameTime)
+        {
+            if (activePlaybackScript == null)
+            {
+                RaisePresentationCompleted();
+                return;
+            }
+
+            if (activeBeatRemaining > 0f)
+            {
+                activeBeatRemaining -= gameTime;
+                if (activeBeatRemaining > 0f)
+                {
+                    return;
+                }
+
+                PreparePlaybackPose();
+            }
+
+            activeBeatIndex++;
+            if (activeBeatIndex >= activePlaybackScript.Beats.Count)
+            {
+                activePlaybackScript = null;
+                RaisePresentationCompleted();
+                return;
+            }
+
+            DuelPlaybackBeat beat = activePlaybackScript.Beats[activeBeatIndex];
+            activeBeatRemaining = beat.Duration;
+            ApplyPlaybackBeat(beat);
+        }
+
+        void ApplyPlaybackBeat(in DuelPlaybackBeat beat)
+        {
+            switch (beat.Clip)
+            {
+                case "left_attack":
+                    PlayPlaybackAttack(genLeft, leftPlaybackHomePosition, "AttackRight", "Right", beat.Duration);
+                    Platform.Current.PlayEffect(@"Content\Sound\Dantiao\NormalAttack");
+                    break;
+                case "right_attack":
+                    PlayPlaybackAttack(genRight, rightPlaybackHomePosition, "AttackLeft", "Left", beat.Duration);
+                    Platform.Current.PlayEffect(@"Content\Sound\Dantiao\NormalAttack");
+                    break;
+                case "finish":
+                    ApplyResultPose(controllerOutcome);
+                    break;
+                default:
+                    PreparePlaybackPose();
+                    break;
+            }
+
+            SetScreenPos();
+        }
+
+        void UpdateSharedPresentation(float gameTime, bool updateAi)
+        {
+            btnStory.Update();
+
+            if (btnStory.Selected)
+            {
+                btnPagePre.Update();
+                btnPageNext.Update();
+            }
+
+            btnSpeed.Update();
+            btnSpeedUp.Update();
+            btnSpeedDown.Update();
+
+            if (commandWindowVisible && playerGeneral != null && btnAtk != null && btnDef != null && btnNrm != null)
+            {
+                btnAtk.Update();
+                btnDef.Update();
+                btnNrm.Update();
+            }
+
+            landRec.Height = 620 - 10 - Convert.ToInt32(landPos.Y);
+            cloudRec.X = Convert.ToInt32(screenPos.X * 0.2f);
+            treeRec.X = Convert.ToInt32(screenPos.X * 0.5f);
+            landRec.X = Convert.ToInt32(screenPos.X);
+            genLeft.Update(gameTime, screenPos, updateAi);
+            genRight.Update(gameTime, screenPos, updateAi);
+        }
+
+        void UpdateControllerDriven(float gameTime)
+        {
+            if (!(IsVisible && IsStart))
+            {
+                return;
+            }
+
+            totalTime += gameTime;
+            elapsedTime += gameTime;
+            SetScreenPos();
+
+            switch (controllerStage)
+            {
+                case DuelStage.Intro:
+                    Alpha = Math.Min(1f, elapsedTime / 0.45f);
+                    if (elapsedTime >= 0.45f)
+                    {
+                        RaisePresentationCompleted();
+                    }
+                    break;
+                case DuelStage.Command:
+                    Alpha = 1f;
+                    break;
+                case DuelStage.Playback:
+                    Alpha = 1f;
+                    AdvancePlaybackBeat(gameTime);
+                    break;
+                case DuelStage.Result:
+                    Alpha = 1f;
+                    resultElapsedTime += gameTime;
+                    if (resultElapsedTime >= 0.25f && InputManager.IsDown)
+                    {
+                        RaisePresentationCompleted();
+                    }
+                    break;
+                case DuelStage.Exit:
+                    Alpha = Math.Max(0f, Alpha - gameTime);
+                    break;
+            }
+
+            UpdateSharedPresentation(gameTime, false);
         }
 
         public void SetScreenPos()
@@ -743,6 +1381,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
         public void Update(float gameTime)
         {
+            if (controllerDrivenMode)
+            {
+                UpdateControllerDriven(gameTime);
+                return;
+            }
+
             if (IsVisible && IsStart)
             {
                 totalTime += gameTime;
@@ -751,7 +1395,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                 if (Stage == "Cloud")
                 {
-                    if (elapsedTime <= 1f)
+                    if (IsDemoMode)
+                    {
+                        Alpha = 1f;
+                        Stage = "Start";
+                        elapsedTime = 2f;
+                    }
+                    else if (elapsedTime <= 1f)
                     {
                         Alpha = 0f;
                     }
@@ -964,13 +1614,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                             genLeft.ChangeAttackToWalk();
 
-                            genLeft.SpeedPlus = -new Random().Next(3, 7);
+                            genLeft.SpeedPlus = -duelRandom.Next(3, 7);
 
                             genLeft.Start();
 
                             genRight.ChangeAttackToWalk();
 
-                            genRight.SpeedPlus = -new Random().Next(3, 7);
+                            genRight.SpeedPlus = -duelRandom.Next(3, 7);
 
                             genRight.Start();
 
@@ -999,11 +1649,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                         {
                             genLeft.ChangeStatusDirection();
 
-                            genLeft.SpeedPlus = new Random().Next(1, 8);
+                            genLeft.SpeedPlus = duelRandom.Next(1, 8);
 
                             genRight.ChangeStatusDirection();
 
-                            genRight.SpeedPlus = new Random().Next(1, 8);
+                            genRight.SpeedPlus = duelRandom.Next(1, 8);
 
                             genLeft.Start();
 
@@ -1023,7 +1673,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                         {
                             General gen1, gen2;
 
-                            var ran = new Random().Next(0, 10);
+                            var ran = duelRandom.Next(0, 10);
 
                             if (ran == 0 || ran == 2 || ran == 4 || ran == 6 || ran == 8)
                             {
@@ -1145,14 +1795,29 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                     {
                         if (elapsedTime >= 1f)
                         {
-                            Session.MainGame.mainGameScreen.dantiaoLayer = null;
+                            if (UseExternalLifecycle)
+                            {
+                                IsStart = false;
+                                IsVisible = false;
+                                Completed?.Invoke(Result, round, genLeft?.Person, genRight?.Person);
+                                return;
+                            }
 
                             if (damage == null)
                             {
-                                Session.MainGame.mainGameScreen.ReturnToMainMenu();
+                                if (OnDemoExit != null)
+                                {
+                                    OnDemoExit();
+                                }
+                                else
+                                {
+                                    Session.MainGame.mainGameScreen.dantiaoLayer = null;
+                                    Session.MainGame.mainGameScreen.ReturnToMainMenu();
+                                }
                             }
                             else
                             {
+                                Session.MainGame.mainGameScreen.dantiaoLayer = null;
                                 Session.MainGame.mainGameScreen.cloudLayer.IsStart = false;
                                 Session.MainGame.mainGameScreen.cloudLayer.IsVisible = false;
                                 Session.MainGame.mainGameScreen.cloudLayer.Reverse = false;
@@ -1162,64 +1827,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                                 damage.ChallengeStarted = false;
 
                                 damage.ChallengeResult = Result;
-                                // 🔥 安全修复：避免IndexOutOfRangeException
-                                if (DantiaoLayer.Persons != null && DantiaoLayer.Persons.Count >= 2)
-                                {
-                                    damage.ChallengeSourcePerson = DantiaoLayer.Persons[0]; //maxStrengthPerson;
-                                    damage.ChallengeDestinationPerson = DantiaoLayer.Persons[1];
-                                }
-                                else
-                                {
-                                    damage.ChallengeSourcePerson = null;
-                                    damage.ChallengeDestinationPerson = null;
-                                }
+                                damage.ChallengeSourcePerson = genLeft?.Person;
+                                damage.ChallengeDestinationPerson = genRight?.Person;
 
                                 Session.MainGame.mainGameScreen.EnableUpdate = true;
                             }
-
-                            DantiaoLayer.Persons = null;
 
                         }
                         Alpha = 1 - elapsedTime;
                     }
 
-                    float elapsedTime2 = elapsedTime < 1f ? elapsedTime : 1f;
+                    UpdateSharedPresentation(gameTime, true);
 
                     // --- 更新按钮 ---
-                    btnStory.Update();
-
-                    if (btnStory.Selected)
-                    {
-                        btnPagePre.Update();
-
-                        btnPageNext.Update();
-                    }
-
-                    btnSpeed.Update();
-
-                    btnSpeedUp.Update();
-
-                    btnSpeedDown.Update();
                     
                     // 更新指令按钮（非演示模式）
-                    if (!IsDemoMode)
-                    {
-                        btnAtk.Update();
-                        btnDef.Update();
-                        btnNrm.Update();
-                    }
-
-                    landRec.Height = 620 - 10 - Convert.ToInt32(landPos.Y);
-
-                    cloudRec.X = Convert.ToInt32(screenPos.X * 0.2f);
-
-                    treeRec.X = Convert.ToInt32(screenPos.X * 0.5f);
-
-                    landRec.X = Convert.ToInt32(screenPos.X);
-
-                    genLeft.Update(gameTime, screenPos);
-
-                    genRight.Update(gameTime, screenPos);
 
 
                     landPos = new Vector2(15, 225 - screenPos.Y);
@@ -1264,8 +1886,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 // --- 修改后的伤害计算 (带战术修正) ---
                 
                 // 1. 基础伤害 (随机部分)
-                float rawDmgLeft = Convert.ToSingle(new Random().Next(0, genLeft.Force / 5) * 8) / 10f;
-                float rawDmgRight = Convert.ToSingle(new Random().Next(0, genRight.Force / 5) * 8) / 10f;
+                float rawDmgLeft = Convert.ToSingle(duelRandom.Next(0, genLeft.Force / 5) * 8) / 10f;
+                float rawDmgRight = Convert.ToSingle(duelRandom.Next(0, genRight.Force / 5) * 8) / 10f;
                 
                 // 2. 最终伤害 = 基础 * 攻击者战术修正 * 防御者战术修正
                 float finalDmgLeft = rawDmgLeft * genLeft.GetAttackModifier() * genRight.GetDefenseModifier();
@@ -1396,7 +2018,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
                 btnSpeedUp.Draw();
                 
                 // 绘制指令按钮（非演示模式）
-                if (!IsDemoMode)
+                if (commandWindowVisible && playerGeneral != null && btnAtk != null && btnNrm != null && btnDef != null)
                 {
                     btnAtk.Draw();
                     btnNrm.Draw();
@@ -1404,11 +2026,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens.ScreenLayers
 
                     // 绘制按钮文字
                     Vector2 cmdTextBase = basePos + new Vector2(350, 550);
+                    CacheManager.DrawString(null, $"Tick {commandTicksRemaining}", cmdTextBase + new Vector2(200, 2), Color.DarkGoldenrod, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, depth - 0.06f);
                     CacheManager.DrawString(null, "攻", cmdTextBase + new Vector2(15, 2), Color.Red, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
                     CacheManager.DrawString(null, "普", cmdTextBase + new Vector2(60 + 15, 2), Color.Black, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
                     CacheManager.DrawString(null, "守", cmdTextBase + new Vector2(120 + 15, 2), Color.Blue, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, depth - 0.06f);
                 }
-                else
+                else if (playerGeneral == null)
                 {
                     // 演示模式提示
                     CacheManager.DrawString(null, "演示模式 - AI托管中", basePos + new Vector2(400, 550), Color.Yellow * Alpha, 0f, Vector2.Zero, scale.X, SpriteEffects.None, depth - 0.045f);

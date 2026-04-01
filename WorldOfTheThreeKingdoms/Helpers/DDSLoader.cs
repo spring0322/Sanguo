@@ -24,6 +24,15 @@ namespace WorldOfTheThreeKingdoms.Helpers
 
         public static Texture2D Load(GraphicsDevice graphicsDevice, string filePath)
         {
+            // 🔥 Fail-Fast：GraphicsDevice 必须已初始化
+            // 日期：2026-03-31
+            // 原因：在 GraphicsDeviceManager 初始化之前调用会导致崩溃
+            if (graphicsDevice == null)
+            {
+                throw new InvalidOperationException(
+                    $"[DDSLoader] GraphicsDevice 未初始化，无法加载 DDS 文件: {filePath}");
+            }
+
             try
             {
                 if (!File.Exists(filePath)) return null;

@@ -12,6 +12,8 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Tools;
+using WorldOfTheThreeKingdoms.GameObjects.Duel;
+using WorldOfTheThreeKingdoms.GameScreens.ScreenLayers;
 using WorldOfTheThreeKingdoms.Tools;
 
 namespace WorldOfTheThreeKingdoms.GameScreens
@@ -62,6 +64,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         GameScenario scenario = null;
 
         Faction faction = null;
+        DantiaoLayer duelDemoLayer = null;
 
         float textGameElapsed = 0f;
 
@@ -127,10 +130,23 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         Frame frame_PlayersList = null;
         List<CheckBox> btScenarioPlayersList = new List<CheckBox>();
-        //List<ButtonTexture> btScenarioPlayersListPaged = new List<ButtonTexture>();
+        List<CheckBox> btScenarioPlayersListPaged = new List<CheckBox>();
 
         List<ButtonTexture> btDantiaoPlayersList = new List<ButtonTexture>();
         List<ButtonTexture> btDantiaoPlayersListPaged = new List<ButtonTexture>();
+
+        sealed class DuelScenarioLoadResult
+        {
+            public int RequestVersion;
+            public string ScenarioName;
+            public GameScenario Scenario;
+            public string Error;
+        }
+
+        readonly object duelScenarioLoadLock = new object();
+        DuelScenarioLoadResult pendingDuelScenarioLoadResult = null;
+        int duelScenarioLoadVersion = 0;
+        bool duelScenarioLoading = false;
 
         string CurrentSetting = "基本";
 
@@ -334,11 +350,13 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 scenario = null;
                 faction = null;
                 InitScenarioList();
+                ResetDuelScenarioPreviewState();
                 if (btScenarioSelectList.Count > 0)
                 {
                     btScenarioSelectList[0].PressButton();
                 }
-                ScreenLayers.DantiaoLayer.Persons = null;
+                DuelDemoSelection.Clear();
+                DuelCoordinator.ClearPendingDemoRequest();
             };
             btList.Add(btOne);
 
@@ -405,50 +423,42 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 {
                     if (dantiao)
                     {
-                        if (ScreenLayers.DantiaoLayer.Persons.NullToEmptyList().Count < 2)
+                        if (DuelDemoSelection.Count < 2)
                         {
                             message = "请选择两名武将。";
                         }
                         else
                         {
-                            Session.globalVariablesTemp = Session.globalVariablesBasic.Clone();
-                            Session.parametersTemp = Session.parametersBasic.Clone();
+                            
 
-                            //InitConfig();
-
-                            MenuType = MenuType.New;
-
-                            btScenarioSelectList.ForEach(bt =>
-                            {
-                                bt.Selected = false;
-                            });
-
-                            btScenarioPlayersList.Clear();
-
-                            pageIndex1 = 1;
 
                             // 🔥 修复：单挑模式也需要设置势力ID
                             if (CurrentScenario != null)
                             {
                                 try
                                 {
-                                    var selectedFactionIDs = ScreenLayers.DantiaoLayer.Persons.NullToEmptyList()
-                                        .Select(pe => ((Person)pe).BelongedFaction.ID)
-                                        .Distinct()
-                                        .ToList();
+                                    var selectedFactionIDs = DuelDemoSelection.GetSelectedFactionIds();
                                     
                                     Session.MainGame.InitializationFactionIDs = selectedFactionIDs;
                                     System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 单挑模式设置势力IDs: [{string.Join(", ", selectedFactionIDs)}]");
+
+                                    var selectedPersonIds = DuelDemoSelection.GetLastTwoPersonIds();
+                                    if (selectedPersonIds.Count >= 2)
+                                    {
+                                        DuelCoordinator.QueueDemoRequest(selectedPersonIds[0], selectedPersonIds[1]);
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
                                     System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 单挑模式解析势力ID失败: {ex.Message}");
                                     Session.MainGame.InitializationFactionIDs = new List<int>();
+                                    DuelCoordinator.ClearPendingDemoRequest();
                                 }
                             }
                             else
                             {
                                 Session.MainGame.InitializationFactionIDs = new List<int>();
+                                DuelCoordinator.ClearPendingDemoRequest();
                             }
 
                             Session.StartScenario(CurrentScenario.Name, true, @"Content\Data\Scenario\" + CurrentScenario.Name + ".json");
@@ -458,6 +468,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             //scenario = null;
 
                             //faction = null;
+                            return;
                         }
                     }
                     else
@@ -486,18 +497,21 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                     
                                     Session.MainGame.InitializationFactionIDs = selectedFactionIDs;
                                     System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 设置玩家势力IDs: [{string.Join(", ", selectedFactionIDs)}]");
+                                    DuelCoordinator.ClearPendingDemoRequest();
                                 }
                                 catch (Exception ex)
                                 {
                                     System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 解析势力ID失败: {ex.Message}");
                                     // 如果解析失败，设置为空列表，进入观察者模式
                                     Session.MainGame.InitializationFactionIDs = new List<int>();
+                                    DuelCoordinator.ClearPendingDemoRequest();
                                 }
                             }
                             else
                             {
                                 System.Diagnostics.Debug.WriteLine("[MainMenuScreen] 没有选择势力，进入观察者模式");
                                 Session.MainGame.InitializationFactionIDs = new List<int>();
+                                DuelCoordinator.ClearPendingDemoRequest();
                             }
                             
                             Session.StartScenario(CurrentScenario.Name, true, @"Content\Data\Scenario\" + CurrentScenario.Name + ".json");
@@ -513,7 +527,22 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             {
                 if (MenuType == MenuType.New)
                 {
+                    if (dantiao && faction != null)
+                    {
+                        faction = null;
+                        btDantiaoPlayersListPaged = [];
+                        pageIndex2 = 1;
+                        pageCount2 = 0;
+                        message = string.Empty;
+                        return;
+                    }
+
                     selectfaction = false;
+                    if (dantiao)
+                    {
+                        ResetDuelScenarioPreviewState();
+                        DuelDemoSelection.Clear();
+                    }
                     menuTypeElapsed = 0.5f;
                 }
                 else
@@ -2533,6 +2562,27 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             btBack = new ButtonTexture(@"Content\Textures\Resources\Start\back-alpha", "back", new Vector2(730, 600)) { Scale = 0.6f };
             btBack.OnButtonPress += (sender, e) =>
             {
+                if (MenuType == MenuType.New && selectfaction)
+                {
+                    if (dantiao && faction != null)
+                    {
+                        faction = null;
+                        btDantiaoPlayersListPaged = [];
+                        pageIndex2 = 1;
+                        pageCount2 = 0;
+                        message = string.Empty;
+                        return;
+                    }
+
+                    selectfaction = false;
+                    if (dantiao)
+                    {
+                        ResetDuelScenarioPreviewState();
+                        DuelDemoSelection.Clear();
+                    }
+                    return;
+                }
+
                 isClosing = true;
                 menuTypeElapsed = 0.5f;
             };
@@ -2674,11 +2724,8 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 scenario = null;
                 faction = null;
                 InitScenarioList();
-                if (btScenarioSelectList.Count > 0)
-                {
-                    btScenarioSelectList[0].PressButton();
-                }
-                ScreenLayers.DantiaoLayer.Persons = new List<Person>();
+                ResetDuelScenarioPreviewState();
+                DuelDemoSelection.Clear();
             };
 
             InitSetting();
@@ -2688,6 +2735,373 @@ namespace WorldOfTheThreeKingdoms.GameScreens
         {
             message = "";
             tbGamerName.Selected = tbBattleSpeed.Selected = false;
+        }
+
+        void EndMenuHostedDuelDemo()
+        {
+            duelDemoLayer = null;
+            AudioManager.Instance?.PlayStartMusic();
+        }
+
+        void StartMenuHostedDuelDemo()
+        {
+            if (duelDemoLayer != null)
+            {
+                return;
+            }
+
+            List<Person> selectedPersons = DuelDemoSelection.GetLastTwoPersons();
+            if (selectedPersons.Count < 2)
+            {
+                return;
+            }
+
+            try
+            {
+                DuelCoordinator.ClearPendingDemoRequest();
+                duelDemoLayer = new DantiaoLayer(selectedPersons[0], selectedPersons[1], true)
+                {
+                    OnDemoExit = EndMenuHostedDuelDemo
+                };
+                duelDemoLayer.Start();
+                message = string.Empty;
+            }
+            catch (Exception ex)
+            {
+                duelDemoLayer = null;
+                message = "Duel demo failed.";
+                System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] Failed to start duel demo: {ex.Message}");
+                AudioManager.Instance?.PlayStartMusic();
+            }
+        }
+
+        void ResetDuelScenarioPreviewState(bool clearPendingResult = true)
+        {
+            scenario = null;
+            faction = null;
+            btScenarioPlayersList = new List<CheckBox>();
+            btScenarioPlayersListPaged = new List<CheckBox>();
+            btDantiaoPlayersList = new List<ButtonTexture>();
+            btDantiaoPlayersListPaged = new List<ButtonTexture>();
+            pageIndex1 = 1;
+            pageCount1 = 0;
+            pageIndex2 = 1;
+            pageCount2 = 0;
+            duelScenarioLoading = false;
+
+            if (clearPendingResult)
+            {
+                lock (duelScenarioLoadLock)
+                {
+                    pendingDuelScenarioLoadResult = null;
+                }
+            }
+        }
+
+        void QueueDuelScenarioLoadResult(DuelScenarioLoadResult result)
+        {
+            lock (duelScenarioLoadLock)
+            {
+                pendingDuelScenarioLoadResult = result;
+            }
+        }
+
+        void StartDuelScenarioLoad(Scenario selectedScenario)
+        {
+            if (selectedScenario == null || string.IsNullOrEmpty(selectedScenario.Name))
+            {
+                return;
+            }
+
+            ResetDuelScenarioPreviewState(false);
+            duelScenarioLoading = true;
+            string selectedScenarioName = selectedScenario.Name;
+            int requestVersion = ++duelScenarioLoadVersion;
+
+            new Task(() =>
+            {
+                try
+                {
+                    while (!CommonData.CurrentReady)
+                    {
+                        Platform.Sleep(100);
+                    }
+
+                    string scenarioPath = $@"Content\Data\Scenario\{selectedScenarioName}.json";
+                    GameScenario previousScenario = Session.Current.Scenario;
+                    GameScenario loadedScenario = null;
+
+                    try
+                    {
+                        var serializationManager = new WorldOfTheThreeKingdoms.Serialization.SerializationManager();
+                        loadedScenario = serializationManager.LoadScenario(scenarioPath);
+                    }
+                    finally
+                    {
+                        Session.Current.Scenario = previousScenario;
+                    }
+
+                    QueueDuelScenarioLoadResult(new DuelScenarioLoadResult
+                    {
+                        RequestVersion = requestVersion,
+                        ScenarioName = selectedScenarioName,
+                        Scenario = loadedScenario
+                    });
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 单挑剧本预览加载失败: {selectedScenarioName}");
+                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 异常类型: {ex.GetType().FullName}");
+                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 异常消息: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[MainMenuScreen] 堆栈:\n{ex.StackTrace}");
+
+                    QueueDuelScenarioLoadResult(new DuelScenarioLoadResult
+                    {
+                        RequestVersion = requestVersion,
+                        ScenarioName = selectedScenarioName,
+                        Error = ex.Message
+                    });
+                }
+            }).Start();
+        }
+
+        void ApplyLoadedDuelScenario(GameScenario loadedScenario)
+        {
+            scenario = loadedScenario;
+            faction = null;
+            btScenarioPlayersList = new List<CheckBox>();
+            btScenarioPlayersListPaged = new List<CheckBox>();
+            btDantiaoPlayersList = new List<ButtonTexture>();
+            btDantiaoPlayersListPaged = new List<ButtonTexture>();
+
+            var factions = loadedScenario.Factions;
+
+            for (int i = 0; i < factions.Count; i++)
+            {
+                var loadedFaction = (Faction)factions[i];
+                var btPlayer = new CheckBox(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", "", null)
+                {
+                    ID = loadedFaction.Name,
+                    Text = loadedFaction.Name,
+                    bounds = new List<global::GameManager.Bounds>()
+                };
+                btPlayer.Scale = 0.5f;
+                btPlayer.ViewTextScale = 0.5f;
+                btPlayer.offsetText = new Vector2(-10, 0);
+
+                btPlayer.OnButtonPress += (sender0, e0) =>
+                {
+                    var btP = (CheckBox)sender0;
+                    var selectedFaction = (Faction)loadedScenario.Factions.GetGameObject(btP.ID);
+
+                    faction = selectedFaction;
+
+                    if (Platform.IsMobilePlatForm)
+                    {
+                        InputManager.PoX = 0;
+                        InputManager.PoY = 0;
+                    }
+
+                    BuildDuelPreviewPersonButtons(loadedScenario, selectedFaction);
+                };
+
+                btScenarioPlayersList.Add(btPlayer);
+            }
+
+            pageIndex1 = 1;
+            pageCount1 = 0;
+            pageIndex2 = 1;
+            pageCount2 = 0;
+        }
+
+        void ApplyPendingDuelScenarioLoad()
+        {
+            DuelScenarioLoadResult loadResult = null;
+
+            lock (duelScenarioLoadLock)
+            {
+                if (pendingDuelScenarioLoadResult != null)
+                {
+                    loadResult = pendingDuelScenarioLoadResult;
+                    pendingDuelScenarioLoadResult = null;
+                }
+            }
+
+            if (loadResult == null)
+            {
+                return;
+            }
+
+            if (loadResult.RequestVersion != duelScenarioLoadVersion)
+            {
+                return;
+            }
+
+            duelScenarioLoading = false;
+
+            if (!dantiao || MenuType != MenuType.New)
+            {
+                return;
+            }
+
+            if (CurrentScenario == null || !string.Equals(CurrentScenario.Name, loadResult.ScenarioName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(loadResult.Error))
+            {
+                message = "剧本加载失败";
+                return;
+            }
+
+            ApplyLoadedDuelScenario(loadResult.Scenario);
+        }
+
+        void BuildDuelPreviewPersonButtons(GameScenario duelScenario, Faction duelFaction)
+        {
+            btDantiaoPlayersList = [];
+            btDantiaoPlayersListPaged = [];
+            message = string.Empty;
+
+            List<Person> duelPersons = CollectDuelPreviewPersons(duelScenario, duelFaction);
+            for (int i = 0; i < duelPersons.Count; i++)
+            {
+                Person person = duelPersons[i];
+                var btPer = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", null)
+                {
+                    ID = person.Name,
+                    Sender = person
+                };
+                btPer.OnButtonPress += (sender1, e1) =>
+                {
+                    var btG = (ButtonTexture)sender1;
+                    var selectedPerson = (Person)btG.Sender;
+
+                    DuelDemoSelection.Add(selectedPerson);
+
+                    if (Platform.IsMobilePlatForm)
+                    {
+                        InputManager.PoX = 0;
+                        InputManager.PoY = 0;
+                    }
+                };
+
+                btDantiaoPlayersList.Add(btPer);
+            }
+
+            pageIndex2 = 1;
+            pageCount2 = 0;
+
+            if (duelPersons.Count == 0)
+            {
+                message = "No available duel candidates.";
+            }
+        }
+
+        static List<Person> CollectDuelPreviewPersons(GameScenario duelScenario, Faction duelFaction)
+        {
+            List<Person> persons = [];
+            HashSet<int> addedPersonIds = [];
+
+            static void TryAddPreviewPerson(GameScenario duelScenario, List<Person> persons, HashSet<int> addedPersonIds, int personId)
+            {
+                if (personId < 0 || !addedPersonIds.Add(personId))
+                {
+                    return;
+                }
+
+                if (duelScenario.Persons.GetGameObject(personId) is Person person)
+                {
+                    persons.Add(person);
+                }
+            }
+
+            for (int i = 0; i < duelFaction.PersonIDs.Count; i++)
+            {
+                TryAddPreviewPerson(duelScenario, persons, addedPersonIds, duelFaction.PersonIDs[i]);
+            }
+
+            for (int i = 0; i < duelFaction.Architectures.Count; i++)
+            {
+                Architecture architecture = (Architecture)duelFaction.Architectures[i];
+                PersonList normalPersons = duelScenario.GetPersonList(architecture);
+                for (int j = 0; j < normalPersons.Count; j++)
+                {
+                    TryAddPreviewPerson(duelScenario, persons, addedPersonIds, normalPersons[j].ID);
+                }
+
+                PersonList movingPersons = duelScenario.GetMovingPersonList(architecture);
+                for (int j = 0; j < movingPersons.Count; j++)
+                {
+                    TryAddPreviewPerson(duelScenario, persons, addedPersonIds, movingPersons[j].ID);
+                }
+            }
+
+            for (int i = 0; i < duelFaction.Troops.Count; i++)
+            {
+                Troop troop = (Troop)duelFaction.Troops[i];
+                for (int j = 0; j < troop.Persons.Count; j++)
+                {
+                    TryAddPreviewPerson(duelScenario, persons, addedPersonIds, troop.Persons[j].ID);
+                }
+            }
+
+            for (int i = 0; i < duelScenario.Persons.Count; i++)
+            {
+                Person person = duelScenario.Persons[i] as Person;
+                if (person == null)
+                {
+                    continue;
+                }
+
+                if ((person.Status == global::GameObjects.PersonDetail.PersonStatus.Normal || person.Status == global::GameObjects.PersonDetail.PersonStatus.Moving)
+                    && person.BelongedFactionID == duelFaction.ID)
+                {
+                    TryAddPreviewPerson(duelScenario, persons, addedPersonIds, person.ID);
+                }
+            }
+
+            for (int i = 0; i < duelScenario.Captives.Count; i++)
+            {
+                Captive captive = duelScenario.Captives[i] as Captive;
+                if (captive == null)
+                {
+                    continue;
+                }
+
+                if (captive.CaptiveFactionID == duelFaction.ID)
+                {
+                    TryAddPreviewPerson(duelScenario, persons, addedPersonIds, captive.CaptivePersonID);
+                }
+            }
+
+            return persons;
+        }
+
+        static Person GetDuelPreviewFactionLeader(GameScenario duelScenario, Faction duelFaction)
+        {
+            if (duelScenario == null || duelFaction == null || duelFaction.LeaderID < 0)
+            {
+                return null;
+            }
+
+            return duelScenario.Persons.GetGameObject(duelFaction.LeaderID) as Person;
+        }
+
+        static Architecture GetDuelPreviewFactionCapital(GameScenario duelScenario, Faction duelFaction)
+        {
+            if (duelScenario == null || duelFaction == null || duelFaction.CapitalID < 0)
+            {
+                return null;
+            }
+
+            return duelScenario.Architectures.GetGameObject(duelFaction.CapitalID) as Architecture;
+        }
+
+        static int GetDuelPreviewFightingForce(Person person)
+        {
+            return person.StrengthIncludingExperience * 2 + person.CommandIncludingExperience * 2 + person.IntelligenceIncludingExperience;
         }
 
         void InitScenarioList()
@@ -2742,8 +3156,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                         faction = null;
 
-                        ScreenLayers.DantiaoLayer.Persons = new List<Person>();
+                        DuelDemoSelection.Clear();
+                        StartDuelScenarioLoad(CurrentScenario);
 
+                        if (false)
+                        {
                         new Task(() =>
                         {
                             try
@@ -2800,17 +3217,15 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                         var per = faction.Persons[j] as Person;
                                         var btPer = new ButtonTexture(@"Content\Textures\Resources\Start\CheckBox", "CheckBox", null)
                                         {
-                                            ID = per.Name
+                                            ID = per.Name,
+                                            Sender = per
                                         };
                                         btPer.OnButtonPress += (sender1, e1) =>
                                         {
                                             var btG = (ButtonTexture)sender1;
+                                            var person = (Person)btG.Sender;
 
-                                            var person = faction.Persons.GameObjects.FirstOrDefault(pe => ((Person)pe).Name == btG.ID) as Person;
-
-                                            ScreenLayers.DantiaoLayer.Persons.Add(person);
-
-                                            faction = null;
+                                            DuelDemoSelection.Add(person);
 
                                             if (Platform.IsMobilePlatForm)
                                             {
@@ -2848,6 +3263,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                             }
 
                         }).Start();
+                        }
                     }
                     else
                     {
@@ -3715,9 +4131,9 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
         public void Update(GameTime gameTime)
         {
+            ApplyPendingDuelScenarioLoad();
+
             float seconds = Convert.ToSingle(gameTime.ElapsedGameTime.TotalSeconds);
-
-
 
             if (forward)
             {
@@ -3757,6 +4173,12 @@ namespace WorldOfTheThreeKingdoms.GameScreens
             btList.FirstOrDefault(bt => bt.Name == "Exit").Position = new Vector2(940, 600);
 
             btnDantiao.Position = new Vector2(860 + 260, 650);
+
+            if (duelDemoLayer != null)
+            {
+                duelDemoLayer.Update(seconds);
+                return;
+            }
 
             if (isClosing)
             {
@@ -3805,14 +4227,14 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                     {
                         if (faction == null)
                         {
-                            //btScenarioPlayersListPaged = GenericTools.GetPageList<CheckBox>(btScenarioPlayersList, pageIndex1.ToString(), 15, ref pageCount1, ref page1);
+                            btScenarioPlayersListPaged = GenericTools.GetPageList<CheckBox>(btScenarioPlayersList, pageIndex1.ToString(), 15, ref pageCount1, ref page1);
 
-                            //for (int i = 0; i < btScenarioPlayersListPaged.Count; i++)
-                            //{
-                            //    var btOne = btScenarioPlayersListPaged[i];
-                            //    btOne.Position = new Vector2(480, 151 + 24 * i);
-                            //    btOne.Update();
-                            //}
+                            for (int i = 0; i < btScenarioPlayersListPaged.Count; i++)
+                            {
+                                var btOne = btScenarioPlayersListPaged[i];
+                                btOne.Position = new Vector2(480, 151 + 24 * i);
+                                btOne.Update();
+                            }
                         }
                         else
                         {
@@ -3828,7 +4250,7 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
                         if (CurrentScenario != null)
                         {
-                            CurrentScenario.Players = String.Join(",", ScreenLayers.DantiaoLayer.Persons.NullToEmptyList().Select(pe => ((Person)pe).BelongedFaction.ID));
+                            CurrentScenario.Players = String.Join(",", DuelDemoSelection.GetSelectedFactionIds());
                         }
                     }
                     else
@@ -4724,40 +5146,33 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                         {
                             if (faction == null)
                             {
-                                //    btScenarioPlayersListPaged.ForEach(bt =>
-                                //    {
-                                //        int index = btScenarioPlayersList.IndexOf(bt);
-                                //        Color color = bt.Selected ? Color.Yellow : Color.White;
-                                //        if (index >= 0)
-                                //        {
-                                //            var Name = CurrentScenario.Names.Split(',').NullToEmptyArray()[index];
-                                //            var leader = CurrentScenario.LeaderNames.Split(',').NullToEmptyArray()[index];
-                                //            var Reputation = CurrentScenario.Reputations.Split(',').NullToEmptyArray()[index];
-                                //            var ArchitectureCount = CurrentScenario.ArchitectureCounts.Split(',').NullToEmptyArray()[index];
-                                //            var CapitalName = CurrentScenario.CapitalNames.Split(',').NullToEmptyArray()[index];
-                                //            var Population = CurrentScenario.Populations.Split(',').NullToEmptyArray()[index];
-                                //            var MilitaryCount = CurrentScenario.MilitaryCounts.Split(',').NullToEmptyArray()[index];
-                                //            var Fund = CurrentScenario.Funds.Split(',').NullToEmptyArray()[index];
-                                //            var Food = CurrentScenario.Foods.Split(',').NullToEmptyArray()[index];
-                                //            var LeaderPic = CurrentScenario.LeaderPics.Split(',').NullToEmptyArray()[index];
-                                //            bt.Scale = 0.5f;
-                                //            bt.Draw(null, Color.White * alpha);
+                                CacheManager.DrawString(Session.Current.Font, "势力          君主          城市  武将  都城", new Vector2(505, 126), Color.White * alpha, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 1f);
 
-                                //            CacheManager.DrawString(Session.Current.Font, Name, bt.Position + new Vector2(30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, leader, bt.Position + new Vector2(92, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, Reputation, bt.Position + new Vector2(143, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, ArchitectureCount, bt.Position + new Vector2(190, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, CapitalName, bt.Position + new Vector2(230, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, Population, bt.Position + new Vector2(275, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, MilitaryCount, bt.Position + new Vector2(360, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, Fund, bt.Position + new Vector2(410, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            CacheManager.DrawString(Session.Current.Font, Food, bt.Position + new Vector2(470, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                //            if (bt.MouseOver)
-                                //            {
-                                //                CacheManager.DrawAvatar(@"Content\Textures\GameComponents\PersonPortrait\Images\Default\" + LeaderPic + ".jpg", new Rectangle(221, 81, 191, 191), Color.White * alpha, false, true, TextureShape.None, null);
-                                //            }
-                                //        }
-                                //    });
+                                btScenarioPlayersListPaged.ForEach(bt =>
+                                {
+                                    var duelFaction = scenario.Factions.GetGameObject(bt.ID) as Faction;
+                                    if (duelFaction == null)
+                                    {
+                                        return;
+                                    }
+
+                                    Person leader = GetDuelPreviewFactionLeader(scenario, duelFaction);
+                                    Architecture capital = GetDuelPreviewFactionCapital(scenario, duelFaction);
+                                    Color color = bt.Selected ? Color.Yellow : Color.White;
+
+                                    bt.Alpha = alpha;
+                                    bt.Draw();
+
+                                    CacheManager.DrawString(Session.Current.Font, leader?.Name ?? "----", bt.Position + new Vector2(120, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, duelFaction.Architectures.Count.ToString(), bt.Position + new Vector2(255, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, (duelFaction.PersonIDs?.Count ?? 0).ToString(), bt.Position + new Vector2(320, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, capital?.Name ?? "----", bt.Position + new Vector2(385, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+
+                                    if (bt.MouseOver && leader != null)
+                                    {
+                                        CacheManager.DrawZhsanAvatar(leader, new Rectangle(221, 81, 191, 191), 0f, PortraitSize.Medium, Color.White * alpha, PortraitDefaultType.Military);
+                                    }
+                                });
                             }
                             else
                             {
@@ -4775,36 +5190,32 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                                     //    CacheManager.DrawString(Session.Current.Font, person.Name, bt.Position + new Vector2(45, 2), Color.Black * alpha);
                                     //}
 
-                                    int index = btDantiaoPlayersList.IndexOf(bt);
                                     Color color = bt.Selected ? Color.Yellow : Color.White;
-                                    if (index >= 0)
+                                    var person = (Person)bt.Sender;
+
+                                    bt.Scale = 0.5f;
+                                    bt.Draw(null, Color.White * alpha);
+
+                                    CacheManager.DrawString(Session.Current.Font, person.Name, bt.Position + new Vector2(30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, GetDuelPreviewFightingForce(person).ToString(), bt.Position + new Vector2(92 - 5, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.StrengthIncludingExperience.ToString(), bt.Position + new Vector2(143 + 10, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.CommandIncludingExperience.ToString(), bt.Position + new Vector2(190 + 20, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.IntelligenceIncludingExperience.ToString(), bt.Position + new Vector2(230 + 40, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.PoliticsIncludingExperience.ToString(), bt.Position + new Vector2(275 + 50, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.GlamourIncludingExperience.ToString(), bt.Position + new Vector2(360 + 20, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.BaseBraveness.ToString(), bt.Position + new Vector2(410 + 30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    CacheManager.DrawString(Session.Current.Font, person.BaseCalmness.ToString(), bt.Position + new Vector2(470 + 30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
+                                    if (bt.MouseOver)
                                     {
-                                        var person = faction.Persons[index] as Person;
-
-                                        bt.Scale = 0.5f;
-                                        bt.Draw(null, Color.White * alpha);
-
-                                        CacheManager.DrawString(Session.Current.Font, person.Name, bt.Position + new Vector2(30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.FightingForce.ToString(), bt.Position + new Vector2(92 - 5, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.NormalStrength.ToString(), bt.Position + new Vector2(143 + 10, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.NormalCommand.ToString(), bt.Position + new Vector2(190 + 20, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.NormalIntelligence.ToString(), bt.Position + new Vector2(230 + 40, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.NormalPolitics.ToString(), bt.Position + new Vector2(275 + 50, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.NormalGlamour.ToString(), bt.Position + new Vector2(360 + 20, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.Braveness.ToString(), bt.Position + new Vector2(410 + 30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        CacheManager.DrawString(Session.Current.Font, person.Calmness.ToString(), bt.Position + new Vector2(470 + 30, 2), color * alpha, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 1f);
-                                        if (bt.MouseOver)
-                                        {
-                                            CacheManager.DrawZhsanAvatar(person, new Rectangle(221, 81, 191, 191), 0f, PortraitSize.Medium, Color.White * alpha, PortraitDefaultType.Military);
-                                        }
+                                        CacheManager.DrawZhsanAvatar(person, new Rectangle(221, 81, 191, 191), 0f, PortraitSize.Medium, Color.White * alpha, PortraitDefaultType.Military);
                                     }
 
                                 });
                             }
 
-                            if (ScreenLayers.DantiaoLayer.Persons != null)
+                            if (DuelDemoSelection.Count > 0)
                             {
-                                var pers = ScreenLayers.DantiaoLayer.Persons.GetLast(2).NullToEmptyList();
+                                var pers = DuelDemoSelection.GetLastTwoPersons().NullToEmptyList();
 
                                 var persons = String.Join(", ", pers.Select(p => p.Name).NullToEmptyList());
 
@@ -5384,6 +5795,11 @@ namespace WorldOfTheThreeKingdoms.GameScreens
 
             btPre1.Draw(null, Color.White * alpha);
             btNext1.Draw(null, Color.White * alpha);
+
+            if (duelDemoLayer != null)
+            {
+                duelDemoLayer.Draw();
+            }
 
             if (Platform.PlatFormType == PlatFormType.Win || Platform.PlatFormType == PlatFormType.Desktop || Platform.PlatFormType == PlatFormType.UWP && !Platform.IsMobile)
             {

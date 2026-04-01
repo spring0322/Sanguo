@@ -82,7 +82,7 @@ namespace GameObjects
                 }
                 #endif
 
-                this.ClearTransientExecutionState();
+                this.ClearTransientExecutionState(clearExecutionTarget: false);
                 return true;
             }
 

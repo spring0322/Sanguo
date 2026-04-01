@@ -70,7 +70,10 @@ namespace WorldOfTheThreeKingdoms.GameScreens
                 this.Plugins.GameRecordPlugin.AddBranch(architecture.BelongedFaction, "zaoshougongji", architecture.Position);
                 if (architecture.BelongedFaction.StopToControl)
                 {
-                    this.Plugins.DateRunnerPlugin.Pause();
+                    if (!Session.Current.Scenario.IsObserverModeActive())
+                    {
+                        this.Plugins.DateRunnerPlugin.Pause();
+                    }
                     architecture.BelongedFaction.StopToControl = false;
 
 

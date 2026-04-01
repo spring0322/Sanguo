@@ -18,7 +18,7 @@ public sealed class TroopIntentPlanner
 
         TroopIntentKind kind = ResolveIntentKind(troop, legionIntent);
         TacticalPosture preferredPosture = ResolvePreferredPosture(kind);
-        IntentTargetRef target = ResolveIntentTarget(scenario, troop, legionIntent);
+        IntentTargetRef target = ResolveIntentTarget(scenario, troop, legionIntent, kind);
         int priority = Math.Max(ResolvePriority(kind), legionIntent.Priority);
         priority = Math.Max(1, priority + ResolveSpatialPriorityBias(scenario, troop, target, legionIntent));
         int commitUntilTick = issuedTick + ResolveCommitTicks(kind);
@@ -153,8 +153,45 @@ public sealed class TroopIntentPlanner
         };
     }
 
-    private static IntentTargetRef ResolveIntentTarget(GameScenario scenario, Troop troop, LegionIntent legionIntent)
+    private static IntentTargetRef ResolveIntentTarget(
+        GameScenario scenario,
+        Troop troop,
+        LegionIntent legionIntent,
+        TroopIntentKind intentKind)
     {
+        if (intentKind == TroopIntentKind.AttackArchitecture)
+        {
+            if (troop.TargetArchitecture != null)
+            {
+                return IntentTargetRef.ForArchitecture(
+                    troop.TargetArchitecture.ID,
+                    troop.TargetArchitecture.Position,
+                    troop.TargetArchitecture.BelongedFaction?.ID ?? -1);
+            }
+
+            if (legionIntent.Target.Kind == IntentTargetKind.Architecture && legionIntent.Target.TargetId >= 0)
+            {
+                Architecture targetArchitecture = scenario.Architectures.GetGameObject(legionIntent.Target.TargetId) as Architecture;
+                if (targetArchitecture != null)
+                {
+                    return IntentTargetRef.ForArchitecture(
+                        targetArchitecture.ID,
+                        targetArchitecture.Position,
+                        targetArchitecture.BelongedFaction?.ID ?? -1);
+                }
+            }
+
+            if (troop.WillArchitecture != null)
+            {
+                return IntentTargetRef.ForArchitecture(
+                    troop.WillArchitecture.ID,
+                    troop.WillArchitecture.Position,
+                    troop.WillArchitecture.BelongedFaction?.ID ?? -1);
+            }
+
+            return IntentTargetRef.None;
+        }
+
         if (troop.TargetTroop != null && !troop.TargetTroop.Destroyed)
         {
             return IntentTargetRef.ForTroop(
@@ -165,15 +202,9 @@ public sealed class TroopIntentPlanner
 
         if (troop.TargetArchitecture != null)
         {
-            Point architectureTargetPosition = troop.TargetArchitecture.Position;
-            if (troop.Command == TroopCommand.AttackArch && IsValidPosition(troop.RealDestination))
-            {
-                architectureTargetPosition = troop.RealDestination;
-            }
-
             return IntentTargetRef.ForArchitecture(
                 troop.TargetArchitecture.ID,
-                architectureTargetPosition,
+                troop.TargetArchitecture.Position,
                 troop.TargetArchitecture.BelongedFaction?.ID ?? -1);
         }
 

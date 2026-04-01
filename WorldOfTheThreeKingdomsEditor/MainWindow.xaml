@@ -4,8 +4,10 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:WorldOfTheThreeKingdomsEditor"
+        xmlns:converters="clr-namespace:WorldOfTheThreeKingdomsEditor.Converters"
         mc:Ignorable="d"
-        Title="中华三国志剧本编辑器" Height="600" Width="1024" WindowState="Maximized">
+        Title="中华三国志剧本编辑器" Height="600" Width="1024" WindowState="Maximized"
+        DataContext="{Binding RelativeSource={RelativeSource Self}}">
     <Window.CommandBindings>
         <CommandBinding Command="Open" Executed="OpenCommandBinding_Executed"/>
         <CommandBinding Command="Save" Executed="SaveCommandBinding_Executed"/>
@@ -14,6 +16,8 @@
         <CommandBinding Command="Delete" Executed="DeleteCommandBinding_Executed"/>
     </Window.CommandBindings>
     <Window.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        <converters:InverseBoolConverter x:Key="InverseBoolConverter"/>
         <ContextMenu x:Key="dgNomalMenu" >
             <MenuItem  Header="新增此类" Click="MenuAdd_Click"   ></MenuItem>
             <MenuItem  Header="编辑选中" Click="MenuEdit_Click"   ></MenuItem>
@@ -24,7 +28,8 @@
             <MenuItem Header="粘贴" Command="Paste" InputGestureText="Ctrl+V"/>
         </ContextMenu>
     </Window.Resources>
-    <DockPanel>
+    <Grid>
+        <DockPanel IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBoolConverter}}">
         <Menu Name="sss" DockPanel.Dock="Top">
             <MenuItem Header="档案">
                 <MenuItem Header="读取剧本" Command="Open" InputGestureText="Ctrl+O"/>
@@ -343,4 +348,15 @@
             </TabItem>
         </TabControl>
     </DockPanel>
+    
+    <!-- 🔥 进度遮罩层：加载/保存时显示 -->
+    <Grid Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}" 
+          Panel.ZIndex="1000">
+        <Rectangle Fill="Black" Opacity="0.5"/>
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <ProgressBar IsIndeterminate="True" Width="200" Height="20" Margin="0,0,0,10"/>
+            <TextBlock Text="加载中，请稍候..." Foreground="White" FontSize="14" HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Grid>
 </Window>

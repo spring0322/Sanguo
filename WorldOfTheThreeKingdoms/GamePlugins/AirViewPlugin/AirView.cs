@@ -85,6 +85,8 @@ namespace AirViewPlugin
         
         // 🔥 调试标志：避免每帧输出日志（2026-03-18）
         private bool _textureErrorLogged = false;
+        private bool _hasObservedSkyEyeState = false;
+        private bool _lastSkyEyeState = false;
 
         internal void AddDisableRects()
         {
@@ -572,6 +574,7 @@ namespace AirViewPlugin
             
             // 🎯 优化：增加帧计数器
             _frameCounter++;
+            RefreshStrategicMinimapIfSkyEyeStateChanged();
             
             // ✅ 修复：使用 InputManager 的缓存状态，确保帧内同步
             bool isHovering = this.MapPosition.Contains(InputManager.Position);
@@ -683,6 +686,34 @@ namespace AirViewPlugin
         public void MarkArchitectureCacheDirty()
         {
             _architectureCacheDirty = true;
+        }
+
+        private void RefreshStrategicMinimapIfSkyEyeStateChanged()
+        {
+            if (Session.Current?.Scenario == null)
+            {
+                return;
+            }
+
+            bool currentSkyEyeState = Session.GlobalVariables.SkyEye;
+            if (!_hasObservedSkyEyeState)
+            {
+                _lastSkyEyeState = currentSkyEyeState;
+                _hasObservedSkyEyeState = true;
+                return;
+            }
+
+            if (_lastSkyEyeState == currentSkyEyeState)
+            {
+                return;
+            }
+
+            _lastSkyEyeState = currentSkyEyeState;
+            if (Session.MainGame?.mainGameScreen?.Plugins?.AirViewPlugin is global::AirViewPlugin.AirViewPlugin airViewPlugin)
+            {
+                System.Diagnostics.Debug.WriteLine($"[AirView] 天眼状态变更，刷新小地图: SkyEye={currentSkyEyeState}");
+                airViewPlugin.CreateStrategicMinimap(Session.Current.Scenario);
+            }
         }
 
         // 专门用来计算显示区域的方法

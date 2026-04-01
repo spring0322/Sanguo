@@ -239,7 +239,7 @@ namespace GameObjects
         {
             if (this.AreaInfluenceList != null)
             {
-                List<AreaInfluenceData> list = new List<AreaInfluenceData>();
+                List<AreaInfluenceData> list = [];
                 foreach (AreaInfluenceData data in this.AreaInfluenceList)
                 {
                     if (data.Owner == owner)
@@ -249,8 +249,22 @@ namespace GameObjects
                 }
                 foreach (AreaInfluenceData data in list)
                 {
+                    // 🔥 Fail-Fast：数据完整性验证
+                    // 日期：2026-03-30
+                    // 原因：AreaInfluenceData.Owner 和 Troop.BelongedFaction 是核心数据，不应为 null
+                    if (data.Owner == null)
+                    {
+                        throw new InvalidOperationException(
+                            $"数据损坏：AreaInfluenceData.Owner 为 null（Kind={data.Kind}）");
+                    }
+                    
                     if (troop != null)
                     {
+                        if (troop.BelongedFaction == null)
+                        {
+                            throw new InvalidOperationException(
+                                $"数据损坏：Troop {troop.ID} 的 BelongedFaction 为 null");
+                        }
                         data.PurifyAreaInfluence(troop);
                     }
                     this.AreaInfluenceList.Remove(data);

@@ -18,6 +18,17 @@ namespace GameManager
     [DataContract]
     public class Setting
     {
+        private static readonly string[] WindowedResolutionCandidates =
+        [
+            "2560*1440",
+            "1920*1080",
+            "1600*900",
+            "1368*768",
+            "1280*720",
+            "1024*768",
+            "1000*620"
+        ];
+
         [DataMember]
         public string UserGuid { get; set; }
         [DataMember]
@@ -471,16 +482,19 @@ namespace GameManager
                     {
                         Session.Resolution = Platform.PreferResolution;
                     }
-                    
+
+                    string normalizedResolution = NormalizeResolution(Current.Resolution, Current.DisplayMode);
+                    Current.Resolution = normalizedResolution;
+
                     // 验证Resolution格式
-                    if (!String.IsNullOrEmpty(Current.Resolution) && Current.Resolution.Contains("*"))
+                    if (!String.IsNullOrEmpty(normalizedResolution) && normalizedResolution.Contains("*"))
                     {
-                        var parts = Current.Resolution.Split('*');
+                        var parts = normalizedResolution.Split('*');
                         if (parts.Length >= 2)
                         {
                             if (int.TryParse(parts[0].Trim(), out int width) && int.TryParse(parts[1].Trim(), out int height))
                             {
-                                Session.RealResolution = Session.Resolution = Current.Resolution;
+                                Session.RealResolution = Session.Resolution = normalizedResolution;
                             }
                             else
                             {
@@ -537,6 +551,91 @@ namespace GameManager
                     Current.Resolution = "1280*720";
                 }
             }
+        }
+
+        private static string NormalizeResolution(string resolution, string displayMode)
+        {
+            if (!TryParseResolution(resolution, out int width, out int height))
+            {
+                return GetSafeWindowedResolution();
+            }
+
+            if (!String.Equals(displayMode, "Window", StringComparison.OrdinalIgnoreCase))
+            {
+                return resolution;
+            }
+
+            try
+            {
+                var workingArea = Platform.Current.GetWorkingArea();
+                if (workingArea.X > 0 && workingArea.Y > 0)
+                {
+                    float maxWidth = workingArea.X * 0.85f;
+                    float maxHeight = workingArea.Y * 0.85f;
+                    if (width >= workingArea.X || height >= workingArea.Y || width > maxWidth || height > maxHeight)
+                    {
+                        string safeResolution = GetSafeWindowedResolution();
+                        System.Diagnostics.Debug.WriteLine($"[Setting] 检测到窗口模式分辨率过大 {width}x{height}，自动修正为 {safeResolution}");
+                        return safeResolution;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Setting] 归一化分辨率失败: {ex.Message}");
+            }
+
+            return resolution;
+        }
+
+        private static string GetSafeWindowedResolution()
+        {
+            try
+            {
+                var workingArea = Platform.Current.GetWorkingArea();
+                int maxWidth = (int)(workingArea.X * 0.85f);
+                int maxHeight = (int)(workingArea.Y * 0.85f);
+                if (maxWidth > 0 && maxHeight > 0)
+                {
+                    for (int i = 0; i < WindowedResolutionCandidates.Length; i++)
+                    {
+                        string candidate = WindowedResolutionCandidates[i];
+                        if (TryParseResolution(candidate, out int candidateWidth, out int candidateHeight) &&
+                            candidateWidth <= maxWidth &&
+                            candidateHeight <= maxHeight)
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Setting] 获取安全窗口分辨率失败: {ex.Message}");
+            }
+
+            return "1280*720";
+        }
+
+        private static bool TryParseResolution(string resolution, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            if (String.IsNullOrWhiteSpace(resolution))
+            {
+                return false;
+            }
+
+            string[] parts = resolution.Split('*');
+            if (parts.Length < 2)
+            {
+                return false;
+            }
+
+            return int.TryParse(parts[0].Trim(), out width) &&
+                   int.TryParse(parts[1].Trim(), out height) &&
+                   width > 0 &&
+                   height > 0;
         }
 
     }

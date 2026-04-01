@@ -15,7 +15,6 @@ using System.Windows.Shapes;
 using System.Data;
 using GameObjects.FactionDetail;
 using GameObjects.TroopDetail;
-using Newtonsoft.Json;
 
 namespace WorldOfTheThreeKingdomsEditor
 {
@@ -56,18 +55,12 @@ namespace WorldOfTheThreeKingdomsEditor
                 faction.BaseMilitaryKindsString = "0 1 3";
                 faction.UpgradingTechnique = -1;
                 faction.TransferingMilitaries = new MilitaryList();
-                faction.TransferingMilitariesString = "";
                 faction.TransferingMilitaryCount = 0;
-                faction.AvailableTechniquesString = "";
-                faction.PreferredTechniqueKinds = new List<int>() { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+                faction.PreferredTechniqueKinds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
                 faction.PlanTechniqueString = -1;
                 faction.GetGeneratorPersonCountString = "0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0";
-                faction.InformationsString = "";
-                faction.LegionsString = "";
-                faction.MilitariesString = "";
-                faction.RoutewaysString = "";
-                faction.SectionsString = "";
-                faction.TroopListString = "";
+                // 🔥 移除废弃字段：这些字段已不再使用
+                // 日期：2026-04-01
             }
             //this.Closed += NewFactionWindow_Closed;
             leadertemp = this.faction.Leader;
@@ -706,7 +699,7 @@ namespace WorldOfTheThreeKingdomsEditor
 
         private void BtEditchrhi_Click(object sender, RoutedEventArgs e)
         {
-            List<CheckBox> list = new List<CheckBox>();
+            List<CheckBox> list = [];
             for (int i = lbArchis.Items.Count - 1; i >= 0; i--)
             {
                 CheckBox checkBox = lbArchis.Items[i] as CheckBox;
@@ -809,7 +802,8 @@ namespace WorldOfTheThreeKingdomsEditor
                     if (a.BelongedFaction != null && a.BelongedFaction != faction)
                     {
                         a.BelongedFaction.Architectures.Remove(a);
-                        a.BelongedFaction.ArchitecturesString = a.BelongedFaction.Architectures.SaveToString();
+                        // 🔥 移除废弃字段：ArchitecturesString 已改用 ArchitectureIDs
+                        // 日期：2026-04-01
                         if (a == a.BelongedFaction.Capital)
                         {
                             a.BelongedFaction.Capital = null;
@@ -819,7 +813,7 @@ namespace WorldOfTheThreeKingdomsEditor
                     a.BelongedFaction = faction;
                 }
                 faction.Architectures = architectureListtemp;
-                faction.ArchitecturesString = faction.Architectures.SaveToString();
+                // 🔥 移除废弃字段：ArchitecturesString 已改用 ArchitectureIDs
                 faction.BaseMilitaryKinds = baseMilitaryKindstemp;
                 faction.BaseMilitaryKindsString = faction.BaseMilitaryKinds.SaveToString();
                 faction.AvailableTechniques = availableTechniquestemp;
