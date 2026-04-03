@@ -90,7 +90,7 @@ namespace SanguoSeason.Encryption
                 //Create AES algorithm with 256 bit key and 128-bit block size 
                 aes = new AesManaged();
                 aes.Key = rfc2898.GetBytes(aes.KeySize / 8);
-                rfc2898.Reset(); //neede to be WinRT compatible
+                rfc2898.Reset(); //needed to be WinRT compatible
                 aes.IV = rfc2898.GetBytes(aes.BlockSize / 8);
 
                 //Create Memory and Crypto Streams 
