@@ -367,7 +367,9 @@ public static class UtilityAIExecutor
         float score = (profile.DpsAptitude * 0.8f) + (profile.TankAptitude * 1.0f);
 
         // 基于目标剩余兵力的评估
-        float healthRatio = (float)target.Quantity / target.Army.Quantity;
+        // 防止存档/运行时异常数据导致除零，避免 NaN 传播污染效用评分
+        int targetMaxQuantity = Math.Max(1, target.Army.Quantity);
+        float healthRatio = (float)target.Quantity / targetMaxQuantity;
         score += (1.0f - healthRatio) * 500f; // 优先攻击残血
 
         // 如果对面处于混乱状态，普攻收益也会增加（但不如战法加得多）
@@ -416,13 +418,15 @@ public static class UtilityAIExecutor
         float supportAptitude)
     {
         // 如果队友满血，治疗收益为负数（避免浪费行动）
-        if (target.Quantity >= target.Army.Quantity)
+        int targetMaxQuantity = Math.Max(1, target.Army.Quantity);
+
+        if (target.Quantity >= targetMaxQuantity)
         {
             return -1000f;
         }
 
         // 队友损失的兵力越多，治疗的效用分呈指数级飙升
-        float lostRatio = 1.0f - ((float)target.Quantity / target.Army.Quantity);
+        float lostRatio = 1.0f - ((float)target.Quantity / targetMaxQuantity);
 
         // 基础分数 = 辅助倾向 * 2.0 + 损失比例 * 3000
         // 假设残血队友就在身边，这个分数可能会瞬间碾压去打人的分数
